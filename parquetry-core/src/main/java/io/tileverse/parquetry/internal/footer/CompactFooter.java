@@ -21,6 +21,7 @@ import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
+import java.util.BitSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalDouble;
@@ -44,8 +45,9 @@ import io.tileverse.parquetry.schema.ColumnPath;
  *
  * <p>One blob replaces the tree of wire records otherwise retained by a parsed footer for as long as a file stays open:
  * a lane per row group, a fixed-width record per (row group, leaf column) pair, a sparse section for the chunks with
- * native geospatial bounds, and an arena holding the statistics min/max bytes verbatim. Every read is offset
- * arithmetic, and {@link #chunk(int, int)} hands out a {@link ChunkMeta} window rather than a rehydrated object.
+ * native geospatial bounds, and an arena holding verbatim the statistics min/max bytes kept by {@link ChunkBounds}.
+ * Each read is offset arithmetic, and {@link #chunk(int, int)} hands out a {@link ChunkMeta} window rather than a
+ * rehydrated object.
  *
  * <p>Deliberately dropped: encodings, encoding statistics, size statistics, column key/value metadata, sorting columns,
  * the deprecated {@code file_offset}, crypto metadata, and the statistics distinct count and exactness flags. Nothing
@@ -99,6 +101,12 @@ public final class CompactFooter {
     static final int FLAG_HAS_GEO_ZMAX = 0x8;
     static final int FLAG_HAS_GEO_MMIN = 0x10;
     static final int FLAG_HAS_GEO_MMAX = 0x20;
+
+    /**
+     * Set on each chunk of a leaf column whose statistics bounds follow an order not applied by this reader; see
+     * {@link UnorderedBounds}.
+     */
+    static final int FLAG_BOUNDS_UNORDERED = 0x40;
 
     private static final int GEO_ENTRY_BYTES = 64;
     static final int GEO_XMIN = 0;
@@ -159,8 +167,11 @@ public final class CompactFooter {
      */
     public static CompactFooter encode(FileMetaData footer, LeafIndex leaves) {
         List<RowGroup> rowGroups = footer.rowGroups();
-        SectionSizes sizes = measureSections(rowGroups);
-        return new CompactFooter(new BlobWriter(rowGroups.size(), leaves, sizes).write(rowGroups));
+        ChunkBounds bounds = ChunkBounds.of(footer);
+        SectionSizes sizes = measureSections(rowGroups, bounds);
+        BitSet unorderedLeaves = UnorderedBounds.leavesOf(footer);
+        return new CompactFooter(
+                new BlobWriter(rowGroups.size(), leaves, sizes, unorderedLeaves, bounds).write(rowGroups));
     }
 
     /** The number of row groups in the encoded footer. */
@@ -289,12 +300,12 @@ public final class CompactFooter {
     /**
      * The variable-length sections needed by a footer, measured before the blob is allocated.
      *
-     * @param arenaBytes total statistics min/max bytes across every chunk
+     * @param arenaBytes total bytes of the statistics bounds kept for the chunks
      * @param geoEntries number of chunks with a native geospatial bounding box
      */
     private record SectionSizes(long arenaBytes, int geoEntries) {}
 
-    private static SectionSizes measureSections(List<RowGroup> rowGroups) {
+    private static SectionSizes measureSections(List<RowGroup> rowGroups, ChunkBounds bounds) {
         long arenaBytes = 0L;
         int geoEntries = 0;
         for (RowGroup rowGroup : rowGroups) {
@@ -304,22 +315,13 @@ public final class CompactFooter {
                     continue;
                 }
                 ColumnMetaData meta = chunkMeta.orElseThrow();
-                arenaBytes += statisticsBytes(meta);
+                arenaBytes += bounds.min(meta).byteSize() + bounds.max(meta).byteSize();
                 if (geoBoundingBox(meta).isPresent()) {
                     geoEntries++;
                 }
             }
         }
         return new SectionSizes(arenaBytes, geoEntries);
-    }
-
-    private static long statisticsBytes(ColumnMetaData meta) {
-        Optional<Statistics> statistics = meta.statistics();
-        if (statistics.isEmpty()) {
-            return 0L;
-        }
-        Statistics stats = statistics.orElseThrow();
-        return stats.preferredMin().byteSize() + stats.preferredMax().byteSize();
     }
 
     private static Optional<BoundingBox> geoBoundingBox(ColumnMetaData meta) {
@@ -344,11 +346,16 @@ public final class CompactFooter {
         private final long chunkTableOffset;
         private final long geoSectionOffset;
         private final long arenaOffset;
+        private final BitSet unorderedLeaves;
+        private final ChunkBounds bounds;
         private int nextGeoEntry;
         private int nextArenaByte;
 
-        BlobWriter(int rowGroupCount, LeafIndex leaves, SectionSizes sizes) {
+        BlobWriter(
+                int rowGroupCount, LeafIndex leaves, SectionSizes sizes, BitSet unorderedLeaves, ChunkBounds bounds) {
             this.leaves = leaves;
+            this.unorderedLeaves = unorderedLeaves;
+            this.bounds = bounds;
             this.rowGroupCount = rowGroupCount;
             this.leafCount = leaves.size();
             this.rowGroupSectionOffset = HEADER_BYTES;
@@ -427,7 +434,8 @@ public final class CompactFooter {
             writeChunkTypes(base, meta, site);
             writeChunkStatistics(base, meta);
             int geoFlags = writeChunkGeoBbox(base, meta);
-            blob.set(JAVA_BYTE, base + CHUNK_FLAGS, (byte) (FLAG_CHUNK_PRESENT | geoFlags));
+            int orderFlag = unorderedLeaves.get(leaf) ? FLAG_BOUNDS_UNORDERED : 0;
+            blob.set(JAVA_BYTE, base + CHUNK_FLAGS, (byte) (FLAG_CHUNK_PRESENT | geoFlags | orderFlag));
         }
 
         /**
@@ -535,15 +543,8 @@ public final class CompactFooter {
         }
 
         private void writeChunkStatistics(long base, ColumnMetaData meta) {
-            Optional<Statistics> statistics = meta.statistics();
-            if (statistics.isEmpty()) {
-                blob.set(INT32, base + CHUNK_MIN_OFFSET, ABSENT_INT);
-                blob.set(INT32, base + CHUNK_MAX_OFFSET, ABSENT_INT);
-                return;
-            }
-            Statistics stats = statistics.orElseThrow();
-            writeStatisticValue(base + CHUNK_MIN_OFFSET, base + CHUNK_MIN_LENGTH, stats.preferredMin());
-            writeStatisticValue(base + CHUNK_MAX_OFFSET, base + CHUNK_MAX_LENGTH, stats.preferredMax());
+            writeStatisticValue(base + CHUNK_MIN_OFFSET, base + CHUNK_MIN_LENGTH, bounds.min(meta));
+            writeStatisticValue(base + CHUNK_MAX_OFFSET, base + CHUNK_MAX_LENGTH, bounds.max(meta));
         }
 
         private void writeStatisticValue(long offsetLane, long lengthLane, MemorySegment value) {

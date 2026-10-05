@@ -48,7 +48,7 @@ final class DictionaryPageHeaderDeserializer {
             lastFieldId = fh.fieldId();
             switch (fh.fieldId()) {
                 case 1 -> numValues = r.readI32();
-                case 2 -> encoding = Encoding.valueOf(r.readI32());
+                case 2 -> encoding = PageHeaderEncodings.read(r, "DictionaryPageHeader.encoding");
                 case 3 -> isSorted = fh.type() == CompactType.BOOLEAN_TRUE;
                 default -> r.skipField(fh.type());
             }

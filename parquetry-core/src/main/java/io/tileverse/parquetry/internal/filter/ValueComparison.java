@@ -29,15 +29,60 @@ import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.schema.UuidConverter;
 
 /**
- * Shared comparison and ordering core for the filter evaluators. The record-level, statistics, and column-index
- * evaluators route their value comparisons through here, and the dictionary evaluator routes its unsigned binary
- * ordering through {@link #compareBytes}, keeping one definition of type coercion and Parquet's unsigned binary
- * ordering. The dictionary evaluator keeps its own compare switch because it adds a timestamp-vs-long coercion arm that
- * the boxed comparison here does not have.
+ * Shared comparison and ordering core for the filter evaluators. The record-level, vectorized, dictionary, statistics,
+ * and column-index evaluators route their value comparisons through here, keeping one definition of type coercion,
+ * Parquet's unsigned binary ordering, and the IEEE 754 rules for floating-point values.
  */
 public final class ValueComparison {
 
     private ValueComparison() {}
+
+    /**
+     * Whether {@code op} holds between a record cell and a predicate literal. A null cell matches no comparison. A
+     * floating-point cell against a floating-point literal follows {@link ComparisonOperator#holds(double, double)};
+     * the other pairs follow {@link #compareBoxed}.
+     */
+    public static boolean holds(ComparisonOperator op, Object cell, Value literal) {
+        if (cell == null) {
+            return false;
+        }
+        if ((cell instanceof Float || cell instanceof Double) && isFloating(literal)) {
+            double value = ((Number) cell).doubleValue();
+            return op.holds(value, floatingValue(literal));
+        }
+        return op.holds(compareBoxed(cell, literal));
+    }
+
+    /** Whether {@code literal} is a {@link Value.FloatVal} or a {@link Value.DoubleVal}. */
+    public static boolean isFloating(Value literal) {
+        return literal instanceof Value.FloatVal || literal instanceof Value.DoubleVal;
+    }
+
+    /** Whether {@code literal} is a floating-point NaN. */
+    public static boolean isNaN(Value literal) {
+        return isFloating(literal) && Double.isNaN(floatingValue(literal));
+    }
+
+    /**
+     * The value of a floating-point literal, a float widened to double exactly. A column scan reads it once and
+     * compares each cell through {@link ComparisonOperator#holds(double, double)}.
+     *
+     * @throws IllegalArgumentException when {@code literal} is not {@link #isFloating floating-point}
+     */
+    public static double floatingValue(Value literal) {
+        if (literal instanceof Value.FloatVal(float value)) {
+            return value;
+        }
+        if (literal instanceof Value.DoubleVal(double value)) {
+            return value;
+        }
+        throw notFloating(literal);
+    }
+
+    /** Built apart from {@link #floatingValue}, keeping the message construction out of a per-cell method. */
+    private static IllegalArgumentException notFloating(Value literal) {
+        return new IllegalArgumentException("not a floating-point literal: " + literal);
+    }
 
     /**
      * Compares a boxed record value (Boolean/Integer/Long/Float/Double/String/MemorySegment/LocalDate/LocalDateTime)
@@ -59,10 +104,10 @@ public final class ValueComparison {
             // bound against an int predicate, and an int-column actual bound against a long predicate.
             case Value.IntVal(int bv) when actual instanceof Long av -> Long.compare(av, bv);
             case Value.LongVal(long bv) when actual instanceof Integer av -> Long.compare(av, bv);
-            case Value.FloatVal(float bv) when actual instanceof Float av -> Float.compare(av, bv);
-            case Value.DoubleVal(double bv) when actual instanceof Double av -> Double.compare(av, bv);
-            case Value.DoubleVal(double bv) when actual instanceof Float av -> Double.compare(av, bv);
-            case Value.FloatVal(float bv) when actual instanceof Double av -> Double.compare(av, bv);
+            case Value.FloatVal(float bv) when actual instanceof Float av -> compareFloating(av, bv);
+            case Value.DoubleVal(double bv) when actual instanceof Double av -> compareFloating(av, bv);
+            case Value.DoubleVal(double bv) when actual instanceof Float av -> compareFloating(av, bv);
+            case Value.FloatVal(float bv) when actual instanceof Double av -> compareFloating(av, bv);
             case Value.StringVal(String bv) when actual instanceof String av -> av.compareTo(bv);
             case Value.StringVal(String bv)
             when actual instanceof MemorySegment av ->
@@ -76,6 +121,8 @@ public final class ValueComparison {
             when actual instanceof Integer av -> Integer.compare(av, (int) bv.toEpochDay());
             case Value.TimestampVal(LocalDateTime bv, boolean _)
             when actual instanceof LocalDateTime av -> av.compareTo(bv);
+            case Value.TimestampVal(LocalDateTime bv, boolean _)
+            when actual instanceof MemorySegment av && isInt96Cell(av) -> Int96Timestamps.compare(av, bv);
             case Value.DecimalVal(BigDecimal bv) when actual instanceof BigDecimal av -> av.compareTo(bv);
             case Value.TimeVal(LocalTime bv) when actual instanceof LocalTime av -> av.compareTo(bv);
             case Value.UuidVal(UUID bv) when actual instanceof MemorySegment av -> compareSegmentToUuidValue(av, bv);
@@ -100,10 +147,10 @@ public final class ValueComparison {
             // Int and long widen to each other for Iceberg's lossless int-to-long promotion.
             case Value.IntVal(int qv) when bound instanceof Value.LongVal(long bv) -> Long.compare(qv, bv);
             case Value.LongVal(long qv) when bound instanceof Value.IntVal(int bv) -> Long.compare(qv, bv);
-            case Value.FloatVal(float qv) when bound instanceof Value.FloatVal(float bv) -> Float.compare(qv, bv);
-            case Value.DoubleVal(double qv) when bound instanceof Value.DoubleVal(double bv) -> Double.compare(qv, bv);
-            case Value.DoubleVal(double qv) when bound instanceof Value.FloatVal(float bv) -> Double.compare(qv, bv);
-            case Value.FloatVal(float qv) when bound instanceof Value.DoubleVal(double bv) -> Double.compare(qv, bv);
+            case Value.FloatVal(float qv) when bound instanceof Value.FloatVal(float bv) -> compareFloating(qv, bv);
+            case Value.DoubleVal(double qv) when bound instanceof Value.DoubleVal(double bv) -> compareFloating(qv, bv);
+            case Value.DoubleVal(double qv) when bound instanceof Value.FloatVal(float bv) -> compareFloating(qv, bv);
+            case Value.FloatVal(float qv) when bound instanceof Value.DoubleVal(double bv) -> compareFloating(qv, bv);
             case Value.StringVal(String qv)
             when bound instanceof Value.BinaryVal(MemorySegment bv) ->
                 compareBytes(MemorySegment.ofArray(qv.getBytes(StandardCharsets.UTF_8)), bv);
@@ -160,26 +207,6 @@ public final class ValueComparison {
     }
 
     /**
-     * Compares a primitive {@code double} against a {@link Value} without boxing; agrees with {@link #compareBoxed}.
-     */
-    public static int compareDouble(double actual, Value bound) {
-        return switch (bound) {
-            case Value.DoubleVal(double bv) -> Double.compare(actual, bv);
-            case Value.FloatVal(float bv) -> Double.compare(actual, bv);
-            default -> 0;
-        };
-    }
-
-    /** Compares a primitive {@code float} against a {@link Value} without boxing; agrees with {@link #compareBoxed}. */
-    public static int compareFloat(float actual, Value bound) {
-        return switch (bound) {
-            case Value.FloatVal(float bv) -> Float.compare(actual, bv);
-            case Value.DoubleVal(double bv) -> Double.compare(actual, bv);
-            default -> 0;
-        };
-    }
-
-    /**
      * Compares a primitive {@code boolean} against a {@link Value} without boxing; agrees with {@link #compareBoxed}.
      */
     public static int compareBoolean(boolean actual, Value bound) {
@@ -188,17 +215,28 @@ public final class ValueComparison {
 
     /**
      * Compares a binary {@link MemorySegment} actual value against a predicate-side {@link Value}, mirroring the
-     * {@link Value.BinaryVal} and {@link Value.StringVal} arms of {@link #compareBoxed}. Returns 0 for unknown bound
-     * kinds.
+     * {@link Value.BinaryVal}, {@link Value.StringVal}, {@link Value.UuidVal} and INT96 {@link Value.TimestampVal} arms
+     * of {@link #compareBoxed}. Returns 0 for unknown bound kinds.
      */
+    @SuppressWarnings("java:S7475") // palantirJavaFormat 2.90 cannot parse bare _ in nested record patterns
     public static int compareBinary(MemorySegment actual, Value bound) {
         return switch (bound) {
             case Value.BinaryVal(MemorySegment bv) -> compareBytes(actual, bv);
             case Value.StringVal(String bv) ->
                 compareBytes(actual, MemorySegment.ofArray(bv.getBytes(StandardCharsets.UTF_8)));
             case Value.UuidVal(UUID bv) -> compareSegmentToUuidValue(actual, bv);
+            case Value.TimestampVal(LocalDateTime bv, boolean _)
+            when isInt96Cell(actual) -> Int96Timestamps.compare(actual, bv);
             default -> 0;
         };
+    }
+
+    /**
+     * Whether a binary cell compared against a timestamp literal is an INT96 timestamp. A timestamp predicate reaches a
+     * binary cell only on an INT96 column, and the width check keeps a malformed cell from being read past its end.
+     */
+    private static boolean isInt96Cell(MemorySegment cell) {
+        return cell.byteSize() == Int96Timestamps.CELL_BYTES;
     }
 
     /**
@@ -213,6 +251,18 @@ public final class ValueComparison {
             return UuidConverter.compareSegmentToUuid(segment, uuid);
         }
         return compareBytes(segment, UuidConverter.toReadOnlySegment(uuid));
+    }
+
+    /**
+     * Orders two floating-point values numerically, with {@code -0.0} equal to {@code +0.0}. NaN sorts after the
+     * numbers and equal to itself, keeping the order total; a predicate decides what NaN means through
+     * {@link ComparisonOperator#holds(double, double)}.
+     */
+    static int compareFloating(double a, double b) {
+        if (a == b) {
+            return 0;
+        }
+        return Double.compare(a, b);
     }
 
     /** Lexicographic unsigned byte comparison, mirroring Parquet's default ColumnOrder for binary columns. */

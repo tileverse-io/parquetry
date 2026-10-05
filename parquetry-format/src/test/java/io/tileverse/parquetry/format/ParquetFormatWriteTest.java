@@ -465,14 +465,23 @@ class ParquetFormatWriteTest {
 
     @Test
     void columnOrderRoundTrips() {
-        // ColumnOrder is reached through FileMetaData.columnOrders; exercise the only case (TypeDefined).
+        // ColumnOrder is reached through FileMetaData.columnOrders; exercise each case, an unknown one included.
         FileMetaData original = FileMetaData.builder()
                 .version(2)
-                .schema(List.of(rootSchema(1), leafSchema("c1", PhysicalType.INT64)))
+                .schema(List.of(
+                        rootSchema(4),
+                        leafSchema("c1", PhysicalType.INT64),
+                        leafSchema("c2", PhysicalType.DOUBLE),
+                        leafSchema("c3", PhysicalType.INT96),
+                        leafSchema("c4", PhysicalType.BYTE_ARRAY)))
                 .numRows(0L)
                 .rowGroups(List.of())
                 .keyValueMetadata(List.of())
-                .columnOrders(Optional.of(List.of(new ColumnOrder.TypeDefined())))
+                .columnOrders(Optional.of(List.of(
+                        new ColumnOrder.TypeDefined(),
+                        new ColumnOrder.Ieee754TotalOrder(),
+                        new ColumnOrder.Int96TimestampOrder(),
+                        new ColumnOrder.Unknown((short) 42))))
                 .build();
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();

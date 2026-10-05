@@ -70,6 +70,10 @@ import tools.jackson.databind.json.JsonMapper;
  * value-vs-typed_value and non-object conflicts). The reader's posture over the three {@code -INVALID} object-conflict
  * fixtures is strict: they reject rather than reading the shredded value.
  *
+ * <p>The four {@code -INVALID} fixtures missing the {@code value} column in their Variant group are read instead, as
+ * allowed by the corpus: without a {@code value} column the shredded value has nothing to conflict with, and each case
+ * must reconstruct to its expected bytes like a valid one.
+ *
  * <p>A lockstep check asserts the extracted directory and {@code cases.json} agree on the set of {@code .parquet}
  * fixtures: a corpus refresh that adds a file forces a conscious classification here rather than silently going
  * untested.
@@ -86,6 +90,13 @@ class ShreddedVariantReadConformanceIT {
      * its filtered form and hence the lazy levels assembly path under test.
      */
     private static final Predicate ALL_ROWS = new Predicate.IsNotNull(ID_COLUMN);
+
+    /** The {@code -INVALID} fixtures missing the {@code value} column, read to their shredded value. */
+    private static final Set<String> READ_DESPITE_MISSING_VALUE_COLUMN = Set.of(
+            "case-041-INVALID.parquet",
+            "case-131-INVALID.parquet",
+            "case-132-INVALID.parquet",
+            "case-138-INVALID.parquet");
 
     @TempDir
     static Path corpusDir;
@@ -115,7 +126,11 @@ class ShreddedVariantReadConformanceIT {
         if (testCase.get("error_message") != null) {
             return false;
         }
-        return !((String) parquetFile).contains("-INVALID");
+        return !isRejectedInvalidCase((String) parquetFile);
+    }
+
+    private static boolean isRejectedInvalidCase(String parquetFile) {
+        return parquetFile.contains("-INVALID") && !READ_DESPITE_MISSING_VALUE_COLUMN.contains(parquetFile);
     }
 
     @ParameterizedTest(name = "{0}")
@@ -152,7 +167,7 @@ class ShreddedVariantReadConformanceIT {
         if (testCase.get("error_message") != null) {
             return true;
         }
-        return ((String) parquetFile).contains("-INVALID");
+        return isRejectedInvalidCase((String) parquetFile);
     }
 
     @ParameterizedTest(name = "{0}")

@@ -418,13 +418,15 @@ public final class StacDataset implements GeoParquetDataset {
     /**
      * The dataset-level declared box answering an unfiltered bounds query without a scan: the STAC collection extent
      * when the data CRS is the GeoParquet WGS84 default (a STAC extent is WGS84 by spec, and a dataset in another CRS
-     * cannot use it), else a single part's own geo metadata box.
+     * cannot use it), else a single part's own geo metadata box. Either box is answered as its planar enclosure,
+     * spanning the full longitude range when the declared box wraps the antimeridian; a box without an extent answers
+     * nothing.
      */
     private Optional<BoundingBox> declaredBounds() {
-        if (collectionBounds.isPresent() && crsIsWgs84Default()) {
-            return collectionBounds;
-        }
-        return singlePartMetadataBox();
+        Optional<BoundingBox> declared =
+                collectionBounds.isPresent() && crsIsWgs84Default() ? collectionBounds : singlePartMetadataBox();
+        Optional<BoundingBox> withExtent = declared.filter(BoundingBox::hasExtent);
+        return withExtent.map(BoundingBox::planarEnclosure);
     }
 
     /**

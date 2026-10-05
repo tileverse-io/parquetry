@@ -135,15 +135,12 @@ final class BloomFilterEvaluator {
         if (bloom.isEmpty()) {
             return new PruningDecision.NotApplied(TIER, "Eq " + col.dot() + ": no bloom filter loaded");
         }
-        FilterPipeline.ColumnBloom cb = bloom.get();
-        OptionalLong hash = hashFor(v, cb.kind(), cb.logicalType());
-        if (hash.isEmpty()) {
-            return new PruningDecision.NotApplied(TIER, "Eq " + col.dot() + ": value/kind not hashable for bloom");
-        }
-        if (cb.bloom().mightContain(hash.getAsLong())) {
-            return new PruningDecision.Inconclusive(TIER, "Eq " + col.dot() + ": value may be present");
-        }
-        return new PruningDecision.Eliminated(TIER, "Eq " + col.dot() + ": value definitely absent");
+        return switch (probe(bloom.get(), v)) {
+            case NOT_HASHABLE ->
+                new PruningDecision.NotApplied(TIER, "Eq " + col.dot() + ": value/kind not hashable for bloom");
+            case MAYBE_PRESENT -> new PruningDecision.Inconclusive(TIER, "Eq " + col.dot() + ": value may be present");
+            case ABSENT -> new PruningDecision.Eliminated(TIER, "Eq " + col.dot() + ": value definitely absent");
+        };
     }
 
     /**
@@ -157,16 +154,64 @@ final class BloomFilterEvaluator {
         }
         FilterPipeline.ColumnBloom cb = bloom.get();
         for (Value v : values) {
-            OptionalLong hash = hashFor(v, cb.kind(), cb.logicalType());
-            if (hash.isEmpty()) {
+            Probe probe = probe(cb, v);
+            if (probe == Probe.NOT_HASHABLE) {
                 return new PruningDecision.NotApplied(TIER, "In " + col.dot() + ": value/kind not hashable for bloom");
             }
-            if (cb.bloom().mightContain(hash.getAsLong())) {
+            if (probe == Probe.MAYBE_PRESENT) {
                 return new PruningDecision.Inconclusive(
                         TIER, "In " + col.dot() + ": at least one value may be present");
             }
         }
         return new PruningDecision.Eliminated(TIER, "In " + col.dot() + ": every value definitely absent");
+    }
+
+    /** What the bloom filter tells about the cells equal to a predicate value. */
+    private enum Probe {
+        ABSENT,
+        MAYBE_PRESENT,
+        NOT_HASHABLE
+    }
+
+    /**
+     * Probes the bloom for the cells equal to {@code v}. A NaN literal equals NaN cells of any payload, each payload
+     * hashing apart, and the bloom never rules it out. A floating-point zero equals both zeros; their hashes differ,
+     * and both are probed.
+     */
+    private static Probe probe(FilterPipeline.ColumnBloom cb, Value v) {
+        if (ValueComparison.isNaN(v)) {
+            return Probe.NOT_HASHABLE;
+        }
+        Probe probe = probeHash(cb, v);
+        if (probe == Probe.ABSENT && isFloatingZero(v)) {
+            return probeHash(cb, otherZero(v));
+        }
+        return probe;
+    }
+
+    private static Probe probeHash(FilterPipeline.ColumnBloom cb, Value v) {
+        OptionalLong hash = hashFor(v, cb.kind(), cb.logicalType());
+        if (hash.isEmpty()) {
+            return Probe.NOT_HASHABLE;
+        }
+        return cb.bloom().mightContain(hash.getAsLong()) ? Probe.MAYBE_PRESENT : Probe.ABSENT;
+    }
+
+    private static boolean isFloatingZero(Value v) {
+        return switch (v) {
+            case Value.FloatVal(float value) -> value == 0.0f;
+            case Value.DoubleVal(double value) -> value == 0.0d;
+            default -> false;
+        };
+    }
+
+    /** The zero of the opposite sign; negating a zero flips its sign bit. */
+    private static Value otherZero(Value zero) {
+        return switch (zero) {
+            case Value.FloatVal(float value) -> new Value.FloatVal(-value);
+            case Value.DoubleVal(double value) -> new Value.DoubleVal(-value);
+            default -> throw new IllegalArgumentException("not a floating-point zero: " + zero);
+        };
     }
 
     /**

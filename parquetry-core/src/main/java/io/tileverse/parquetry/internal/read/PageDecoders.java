@@ -18,6 +18,10 @@ package io.tileverse.parquetry.internal.read;
 import java.util.function.IntSupplier;
 
 import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.format.MalformedFileException;
+import io.tileverse.parquetry.format.UnsupportedFeatureException;
+import io.tileverse.parquetry.internal.read.page.AlpDoubleDecoder;
+import io.tileverse.parquetry.internal.read.page.AlpFloatDecoder;
 import io.tileverse.parquetry.internal.read.page.ByteStreamSplitDoubleDecoder;
 import io.tileverse.parquetry.internal.read.page.ByteStreamSplitFloatDecoder;
 import io.tileverse.parquetry.internal.read.page.DeltaBinaryPackedInt32Decoder;
@@ -71,6 +75,7 @@ final class PageDecoders {
         return switch (encoding) {
             case PLAIN -> new PlainFloatDecoder();
             case BYTE_STREAM_SPLIT -> new ByteStreamSplitFloatDecoder();
+            case ALP -> new AlpFloatDecoder();
             case RLE_DICTIONARY, PLAIN_DICTIONARY -> requireDictionaryDecoder(dict, "FLOAT");
             default -> throw unsupported(encoding, "FLOAT");
         };
@@ -80,6 +85,7 @@ final class PageDecoders {
         return switch (encoding) {
             case PLAIN -> new PlainDoubleDecoder();
             case BYTE_STREAM_SPLIT -> new ByteStreamSplitDoubleDecoder();
+            case ALP -> new AlpDoubleDecoder();
             case RLE_DICTIONARY, PLAIN_DICTIONARY -> requireDictionaryDecoder(dict, "DOUBLE");
             default -> throw unsupported(encoding, "DOUBLE");
         };
@@ -154,14 +160,13 @@ final class PageDecoders {
 
     private static PageDecoder<?> requireDictionaryDecoder(Dictionary<?> dict, String kindLabel) {
         if (dict == null) {
-            throw new IllegalStateException(
-                    "Dictionary-encoded data page requires a loaded Dictionary; none supplied for " + kindLabel);
+            throw new MalformedFileException("A dictionary-encoded " + kindLabel
+                    + " data page needs a dictionary page, but its column chunk has none");
         }
         return new RleDictionaryPageDecoder<>(dict);
     }
 
-    private static UnsupportedOperationException unsupported(Encoding encoding, String kindLabel) {
-        return new UnsupportedOperationException(
-                "BatchColumnReader has no decoder wired for encoding " + encoding + " on " + kindLabel);
+    private static UnsupportedFeatureException unsupported(Encoding encoding, String kindLabel) {
+        return new UnsupportedFeatureException("No decoder for encoding " + encoding + " on " + kindLabel + " values");
     }
 }

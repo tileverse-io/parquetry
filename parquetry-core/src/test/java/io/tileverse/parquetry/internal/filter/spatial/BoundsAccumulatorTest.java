@@ -61,6 +61,60 @@ class BoundsAccumulatorTest {
     }
 
     @Test
+    void aBoxWrappingTheAntimeridianWidensTheExtentToTheFullLongitudeRange() {
+        BoundsAccumulator accumulator = new BoundsAccumulator();
+
+        accumulator.union(box(-10, 0, 10, 5));
+        accumulator.union(box(170, 10, -170, 20));
+
+        BoundingBox extent = accumulator.snapshot().orElseThrow();
+        assertThat(extent.xmin()).isEqualTo(-180);
+        assertThat(extent.ymin()).isZero();
+        assertThat(extent.xmax()).isEqualTo(180);
+        assertThat(extent.ymax()).isEqualTo(20);
+    }
+
+    @Test
+    void aBoxWrappingTheAntimeridianIsCoveredOnlyByTheFullLongitudeRange() {
+        BoundsAccumulator accumulator = new BoundsAccumulator();
+        BoundingBox wrapping = box(170, 10, -170, 20);
+
+        accumulator.union(box(-100, 0, 100, 50));
+        assertThat(accumulator.covers(wrapping)).isFalse();
+
+        accumulator.union(box(-180, 0, 180, 50));
+        assertThat(accumulator.covers(wrapping)).isTrue();
+    }
+
+    @Test
+    void theEnvelopeOfAnEmptyGeometryAddsNothing() {
+        BoundsAccumulator accumulator = new BoundsAccumulator();
+
+        accumulator.unionXy(
+                Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY);
+
+        assertThat(accumulator.snapshot()).isEmpty();
+    }
+
+    @Test
+    void aBoxWithoutAnExtentNeitherInvertsNorWidensTheExtent() {
+        BoundsAccumulator accumulator = new BoundsAccumulator();
+        BoundingBox noExtent = box(
+                Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY);
+
+        accumulator.union(noExtent);
+        assertThat(accumulator.snapshot()).isEmpty();
+
+        accumulator.union(box(30, 10, 40, 20));
+        accumulator.union(noExtent);
+        BoundingBox extent = accumulator.snapshot().orElseThrow();
+        assertThat(extent.xmin()).isEqualTo(30);
+        assertThat(extent.ymin()).isEqualTo(10);
+        assertThat(extent.xmax()).isEqualTo(40);
+        assertThat(extent.ymax()).isEqualTo(20);
+    }
+
+    @Test
     void zSurvivesOnlyWhenEveryContributionHasIt() {
         BoundsAccumulator accumulator = new BoundsAccumulator();
 

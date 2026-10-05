@@ -22,10 +22,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.catalog.CatalogOptions;
 import io.tileverse.parquetry.catalog.FilesetCatalog;
@@ -38,10 +43,15 @@ import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.BoundingBox;
+import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
 import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
 import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.observe.QueryObserver;
+import io.tileverse.parquetry.observe.RowGroupRead;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.testkit.TestCorpus;
+import io.tileverse.parquetry.testsupport.FooterRewrite;
 import io.tileverse.parquetry.testsupport.PointParquet;
 
 /**
@@ -143,6 +153,113 @@ class FilesetDatasetBoundsTest {
         assertThat(outer.ymax()).isGreaterThanOrEqualTo(inner.ymax());
     }
 
+    /**
+     * A GEOGRAPHY-aware writer declares the extent of points at longitudes 175 and -175 as a box wrapping the
+     * antimeridian. The unfiltered answer and its estimate are both the planar enclosure of that declared box.
+     */
+    @Test
+    void aDeclaredBboxWrappingTheAntimeridianIsReportedAsItsPlanarEnclosure() throws Exception {
+        double[][] points = {{175.0, -5.0}, {-175.0, 5.0}};
+        Path planar = PointParquet.writePoints(
+                root.resolve("planar.parquet"), "geometry", GeoParquetMetadataMode.V1_1_ONLY, points);
+        BoundingBox wrapping =
+                BoundingBox.builder().xmin(175).xmax(-175).ymin(-5).ymax(5).build();
+        Path file = FooterRewrite.rewrite(
+                planar, root.resolve("wrapping.parquet"), FooterRewrite.geoMetadataBbox("geometry", wrapping));
+        BoundingBox enclosure =
+                BoundingBox.builder().xmin(-180).xmax(180).ymin(-5).ymax(5).build();
+        CatalogOptions options =
+                CatalogOptions.builder().datasetName("wrapping").build();
+        try (FilesetCatalog catalog = FilesetCatalog.open(LocalFileSource.file(file), options)) {
+            ParquetDataset dataset = onlyDataset(catalog);
+
+            Optional<BoundingBox> bounds = dataset.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
+            Optional<BoundingBox> estimated = dataset.estimatedBounds(Predicate.ALWAYS_TRUE);
+
+            assertSameBox2d(bounds.orElseThrow(), enclosure);
+            assertSameBox2d(estimated.orElseThrow(), enclosure);
+        }
+    }
+
+    /**
+     * Two copies of the corpus file under Hive partitions: the predicate keeps the empty geometries of one copy and the
+     * points of the other. The fan-out union is the extent of the points, neither inverted nor widened by the copy that
+     * matched only empty geometries.
+     */
+    @Test
+    void aFileMatchingOnlyEmptyGeometriesAddsNothingToTheDatasetBounds() throws Exception {
+        for (String kind : List.of("empty", "point")) {
+            Path partition = Files.createDirectories(root.resolve("kind=" + kind));
+            TestCorpus.extractFile("parquet-testing/data/geospatial/geospatial.parquet", partition);
+        }
+        Predicate emptiesAndPoints = Pred.or(
+                Pred.and(Pred.col("kind").eq("empty"), Pred.col("group").eq("empty-geometries")),
+                Pred.and(Pred.col("kind").eq("point"), Pred.col("group").eq("point")));
+        BoundingBox points =
+                BoundingBox.builder().xmin(30).xmax(40).ymin(10).ymax(20).build();
+        try (FilesetCatalog catalog =
+                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+            ParquetDataset dataset = onlyDataset(catalog);
+
+            Optional<BoundingBox> bounds = dataset.bounds(emptiesAndPoints, ReadOptions.DEFAULTS);
+
+            assertSameBox2d(bounds.orElseThrow(), points);
+        }
+    }
+
+    /**
+     * A file without a declared bbox could hold geometries anywhere, leaving the dataset without declared bounds. The
+     * answer then comes from the per-file boxes, native or covering, and reads no row group.
+     */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("undeclaringEdits")
+    void aFileWithoutADeclaredBboxLeavesTheDeclaredBoundsUnknown(
+            String label, GeoParquetMetadataMode mode, UnaryOperator<FileMetaData> undeclare) throws Exception {
+        Path data = Files.createDirectories(root.resolve("data"));
+        double[][] westPoints = {{0, 0}, {10, 10}};
+        double[][] eastPoints = {{100, 0}, {110, 10}};
+        PointParquet.writePoints(data.resolve("west.parquet"), "geometry", mode, westPoints);
+        Path east = PointParquet.writePoints(root.resolve("east.parquet"), "geometry", mode, eastPoints);
+        FooterRewrite.rewrite(east, data.resolve("east.parquet"), undeclare);
+        RowGroupReadCounter counter = new RowGroupReadCounter();
+        ReadOptions observed = ReadOptions.builder().queryObserver(counter).build();
+        BoundingBox bothFiles =
+                BoundingBox.builder().xmin(0).xmax(110).ymin(0).ymax(10).build();
+        try (FilesetCatalog catalog =
+                FilesetCatalog.open(LocalFileSource.directory(data, "*.parquet"), CatalogOptions.defaults())) {
+            ParquetDataset dataset = onlyDataset(catalog);
+
+            Optional<BoundingBox> bounds = dataset.bounds(Predicate.ALWAYS_TRUE, observed);
+            Optional<BoundingBox> estimated = dataset.estimatedBounds(Predicate.ALWAYS_TRUE);
+
+            assertSameBox2d(bounds.orElseThrow(), bothFiles);
+            assertSameBox2d(estimated.orElseThrow(), bothFiles);
+            assertThat(counter.reads())
+                    .as("the per-file boxes answer without a scan")
+                    .isZero();
+        }
+    }
+
+    /**
+     * The covering case keeps the geo metadata of its file: a GeoParquet 1.x file holds its geometry annotation there,
+     * and without it the file would no longer share the schema of the other file.
+     */
+    static Stream<Arguments> undeclaringEdits() {
+        return Stream.of(
+                Arguments.of(
+                        "native boxes, a file without geo metadata",
+                        GeoParquetMetadataMode.V2_0_ONLY,
+                        FooterRewrite.geoMetadataRemoved()),
+                Arguments.of(
+                        "native boxes, a file without a bbox",
+                        GeoParquetMetadataMode.V2_0_ONLY,
+                        FooterRewrite.geoMetadataBboxRemoved("geometry")),
+                Arguments.of(
+                        "covering boxes, a file without a bbox",
+                        GeoParquetMetadataMode.V1_1_ONLY,
+                        FooterRewrite.geoMetadataBboxRemoved("geometry")));
+    }
+
     @Test
     void noMatchIsEmpty() throws Exception {
         try (FilesetCatalog catalog = openCatalog()) {
@@ -224,6 +341,21 @@ class FilesetDatasetBoundsTest {
             Path dir = Files.createDirectories(root.resolve("region=" + REGIONS.get(i)));
             Path file = dir.resolve("points.parquet");
             PointParquet.writePoints(file, "geometry", GeoParquetMetadataMode.DUAL_V1_1_AND_V2_0, POINTS_PER_REGION[i]);
+        }
+    }
+
+    /** Counts the row groups read by the queries observed through it. */
+    private static final class RowGroupReadCounter implements QueryObserver {
+
+        private final AtomicInteger reads = new AtomicInteger();
+
+        @Override
+        public void onRowGroupRead(RowGroupRead event) {
+            reads.incrementAndGet();
+        }
+
+        int reads() {
+            return reads.get();
         }
     }
 }

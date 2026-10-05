@@ -30,7 +30,8 @@ import lombok.Builder;
  * structures were written. {@link Statistics} are optional.
  *
  * @param type physical {@link PhysicalType} of this column's values
- * @param encodings set of every {@link Encoding} used by any page in this column chunk (data, dictionary, and levels)
+ * @param encodings the {@link Encoding}s used by the pages of this column chunk (data, dictionary, and levels); a
+ *     reader leaves out the wire codes unknown to parquetry
  * @param pathInSchema dotted path from the schema root to this leaf column, one segment per nesting level
  * @param codec compression {@link CompressionCodec} applied to this chunk's pages
  * @param numValues total number of values in this column chunk, including nulls
@@ -45,7 +46,8 @@ import lombok.Builder;
  * @param dictionaryPageOffset byte offset of the column's dictionary page; unset when the chunk is not
  *     dictionary-encoded ({@code dictionary_page_offset} in the thrift schema)
  * @param statistics optional column-chunk-level {@link Statistics}; empty when the writer recorded none
- * @param encodingStats per-({@link PageType}, {@link Encoding}) page counts; empty list when not written
+ * @param encodingStats per-({@link PageType}, {@link Encoding}) page counts; empty list when not written. A reader
+ *     leaves out the counts of an encoding unknown to parquetry
  * @param bloomFilterOffset byte offset of this column's bloom filter; unset when no bloom filter was written
  *     ({@code bloom_filter_offset} in the thrift schema)
  * @param bloomFilterLength byte length of this column's bloom filter including header; unset when no bloom filter was

@@ -58,6 +58,9 @@ public final class DictionaryDecoder {
     // The wildcard return is intentional: the concrete element type is chosen at runtime by PrimitiveKind.
     @SuppressWarnings("java:S1452")
     public static Dictionary<?> read(MemorySegment page, PrimitiveKind kind, int valueCount, OptionalInt typeLength) {
+        if (valueCount < 0) {
+            throw new MalformedFileException("header declares a negative value count of " + valueCount);
+        }
         return switch (kind) {
             case BOOLEAN -> readBooleans(page, valueCount);
             case INT32 -> readInts(page, valueCount);
@@ -84,24 +87,28 @@ public final class DictionaryDecoder {
     }
 
     private static Dictionary.IntDict readInts(MemorySegment page, int n) {
+        FixedWidthValues.requireBytesFor(page, n, Integer.BYTES, "INT32");
         int[] values = new int[n];
         MemorySegment.copy(page, INT32, 0L, values, 0, n);
         return new Dictionary.IntDict(IntBuffer.wrap(values).asReadOnlyBuffer());
     }
 
     private static Dictionary.LongDict readLongs(MemorySegment page, int n) {
+        FixedWidthValues.requireBytesFor(page, n, Long.BYTES, "INT64");
         long[] values = new long[n];
         MemorySegment.copy(page, INT64, 0L, values, 0, n);
         return new Dictionary.LongDict(LongBuffer.wrap(values).asReadOnlyBuffer());
     }
 
     private static Dictionary.FloatDict readFloats(MemorySegment page, int n) {
+        FixedWidthValues.requireBytesFor(page, n, Float.BYTES, "FLOAT");
         float[] values = new float[n];
         MemorySegment.copy(page, FLOAT, 0L, values, 0, n);
         return new Dictionary.FloatDict(FloatBuffer.wrap(values).asReadOnlyBuffer());
     }
 
     private static Dictionary.DoubleDict readDoubles(MemorySegment page, int n) {
+        FixedWidthValues.requireBytesFor(page, n, Double.BYTES, "DOUBLE");
         double[] values = new double[n];
         MemorySegment.copy(page, DOUBLE, 0L, values, 0, n);
         return new Dictionary.DoubleDict(DoubleBuffer.wrap(values).asReadOnlyBuffer());
@@ -114,9 +121,22 @@ public final class DictionaryDecoder {
     }
 
     private static Dictionary.BinaryDict readBinary(MemorySegment page, int n) {
+        requireLengthPrefixes(page, n);
         PlainBinaryDecoder decoder = new PlainBinaryDecoder();
         decoder.load(page, n);
         return new Dictionary.BinaryDict(consolidate(decoder, n));
+    }
+
+    /**
+     * Each PLAIN BYTE_ARRAY entry starts with a 4-byte length prefix. Checking that the page holds that many prefixes
+     * before the entry views are allocated keeps a corrupt value count from sizing the allocation.
+     */
+    private static void requireLengthPrefixes(MemorySegment page, int n) {
+        long prefixBytes = (long) n * Integer.BYTES;
+        if (page.byteSize() < prefixBytes) {
+            throw new MalformedFileException(n + " BYTE_ARRAY dictionary entries need at least " + prefixBytes
+                    + " bytes of length prefixes but the page holds " + page.byteSize());
+        }
     }
 
     private static Dictionary.FixedLenBinaryDict readFixedLenBinary(MemorySegment page, int n, int length) {

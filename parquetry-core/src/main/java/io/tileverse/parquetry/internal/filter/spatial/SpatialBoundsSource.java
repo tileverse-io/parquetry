@@ -47,8 +47,8 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
  * file as a whole. Native wins unconditionally. Then covering. Then geo JSON bbox. Else empty.
  *
  * <p>{@link BoundingBox#wrapsAntimeridian()} applies at this layer too: aggregators that take the union across files
- * must split such a bbox into two non-wrapping pieces before joining. {@code SpatialBoundsSource} returns the bbox
- * exactly as it was written; it does not normalize.
+ * union the {@link BoundingBox#planarEnclosure() planar enclosures} of the boxes. {@code SpatialBoundsSource} does not
+ * normalize a box it reads: row-group bounds come back exactly as written, wrapping boxes included.
  */
 public sealed interface SpatialBoundsSource
         permits NativeStatsSource,
@@ -57,7 +57,10 @@ public sealed interface SpatialBoundsSource
                 EmptyBoundsSource,
                 SuppliedBoundsSource {
 
-    /** Bounds for {@code geometryColumn} across the whole file, or {@link Optional#empty()} when not known. */
+    /**
+     * Bounds for {@code geometryColumn} across the whole file, or {@link Optional#empty()} when not known. A backing
+     * with per-row-group bounds knows the file bounds only when each row group has a box.
+     */
     Optional<BoundingBox> fileBounds(ColumnPath geometryColumn);
 
     /**

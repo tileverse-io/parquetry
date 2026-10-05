@@ -16,12 +16,18 @@
 package io.tileverse.parquetry.internal.read.page;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayOutputStream;
 import java.lang.foreign.MemorySegment;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.ParquetLayouts;
 
 class DeltaBinaryPackedDecoderTest {
@@ -260,5 +266,47 @@ class DeltaBinaryPackedDecoderTest {
 
     private static void writeZigzagVarint(ByteArrayOutputStream out, long value) {
         writeUVarint(out, (value << 1) ^ (value >> 63));
+    }
+
+    static Stream<Arguments> malformedStreams() {
+        // each vector is a stream (block size, miniblock count, total count, first value, blocks) and the failure
+        return Stream.of(
+                Arguments.of(new byte[] {0x08, 0x00, 0x01, 0x00}, "miniblock count of 0"),
+                Arguments.of(new byte[] {0x00, 0x01, 0x01, 0x00}, "block size of 0"),
+                Arguments.of(new byte[] {0x08, 0x03, 0x01, 0x00}, "splits blocks of 8 values into 3 miniblocks"),
+                // 128 miniblocks per block, each needing a width byte, with one byte after the header counts
+                Arguments.of(
+                        new byte[] {(byte) 0x80, 0x01, (byte) 0x80, 0x01, 0x05, 0x00},
+                        "declares 128 miniblocks per block but only 1 bytes follow it"),
+                // 5 values declared, the stream ends after the first value
+                Arguments.of(new byte[] {0x08, 0x01, 0x05, 0x00}, "stream ends after 4 bytes"),
+                // a block with one miniblock declaring a 65-bit width
+                Arguments.of(new byte[] {0x08, 0x01, 0x02, 0x00, 0x00, 0x41}, "miniblock bit width 65 exceeds 64"));
+    }
+
+    @ParameterizedTest
+    @MethodSource("malformedStreams")
+    void malformedStreamIsAFormatError(byte[] stream, String failure) {
+        assertThatThrownBy(() -> decodeAll(stream))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining(failure);
+    }
+
+    private static void decodeAll(byte[] stream) {
+        DeltaBinaryPackedDecoder decoder = new DeltaBinaryPackedDecoder();
+        decoder.load(MemorySegment.ofArray(stream));
+        for (int i = 0; i < decoder.totalValueCount(); i++) {
+            decoder.next();
+        }
+    }
+
+    @Test
+    void streamDeclaringFewerValuesThanThePageNeedsIsAFormatError() {
+        PageDecoder<Integer> decoder = new DeltaBinaryPackedInt32Decoder();
+        MemorySegment stream = MemorySegment.ofArray(new byte[] {0x08, 0x01, 0x01, 0x00});
+
+        assertThatThrownBy(() -> decoder.load(stream, 2))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("declares 1 values but its page needs 2");
     }
 }

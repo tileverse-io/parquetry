@@ -76,8 +76,9 @@ final class SpatialReadGates {
     /**
      * The row-group gate for this read, present only when {@code options} supplies a probe and the file has a primary
      * geometry column. The gate drops a survivor whose geometry bounds the probe reports as already covered through the
-     * read-only {@link SpatialReadProbe#probeRegion}; a survivor with no recorded bounds is never dropped. A substitute
-     * answered to that consultation is rejected with an {@link UnsupportedOperationException}.
+     * read-only {@link SpatialReadProbe#probeRegion}; a survivor without recorded bounds, or with bounds wrapping the
+     * antimeridian, is never dropped. A substitute answered to that consultation is rejected with an
+     * {@link UnsupportedOperationException}.
      */
     Optional<RowGroupGate> rowGroupGate(List<RowGroupSurvivor> survivors, ReadOptions options) {
         return probeFor(options).map(probe -> {
@@ -132,9 +133,19 @@ final class SpatialReadGates {
         List<Optional<Bbox>> bounds = new ArrayList<>(survivors.size());
         for (RowGroupSurvivor survivor : survivors) {
             Optional<BoundingBox> box = boundsSource.rowGroupBounds(geometry, survivor.index());
-            bounds.add(box.map(SpatialReadGates::toBbox));
+            Optional<BoundingBox> rectangle = box.filter(SpatialReadGates::isPlanarRectangle);
+            bounds.add(rectangle.map(SpatialReadGates::toBbox));
         }
         return bounds;
+    }
+
+    /**
+     * Whether {@code box} bounds a single planar rectangle: each minimum at or below its maximum. A box wrapping the
+     * antimeridian fails, as does a NaN bound; offered to the probe, an inverted x interval would read as the gap
+     * between the two longitude ranges of the box instead of the ranges themselves.
+     */
+    private static boolean isPlanarRectangle(BoundingBox box) {
+        return box.xmin() <= box.xmax() && box.ymin() <= box.ymax();
     }
 
     /**

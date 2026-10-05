@@ -44,7 +44,8 @@ public interface ParquetDataset extends ParquetReader {
      * {@code predicate}, answered from dataset-level and file-level statistics alone - declared extents and per-file
      * boxes - never by reading geometry data. The box may be wider than the exact bounds; a caller that needs the exact
      * answer uses {@link #bounds}. Empty when the statistics cannot support an estimate (a matching file with no
-     * declared box) or when no file survives the predicate.
+     * declared box) or when no file survives the predicate. Like {@link #bounds}, the box has finite edges and never
+     * wraps the antimeridian.
      *
      * <p>Consumers with a bounds contract that tolerates approximation (a GeoTools {@code getBounds}, a WFS
      * {@code ows:BoundedBy}) prefer this answer: it costs metadata already resolved, where the exact answer may scan.

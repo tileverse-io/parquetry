@@ -26,6 +26,7 @@ import static io.tileverse.parquetry.jackson.JacksonRecords.uuidLeaf;
 import static io.tileverse.parquetry.jackson.JacksonRecords.validBits;
 import static io.tileverse.parquetry.jackson.JacksonRecords.variant;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.StringWriter;
 import java.lang.foreign.Arena;
@@ -48,6 +49,7 @@ import io.tileverse.parquetry.columnar.MapVector;
 import io.tileverse.parquetry.columnar.StructVector;
 import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.columnar.VariantVector;
+import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.internal.variant.VariantEncoder;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -58,6 +60,7 @@ import io.tileverse.parquetry.schema.UuidConverter;
 
 import tools.jackson.core.JsonGenerator;
 import tools.jackson.core.ObjectWriteContext;
+import tools.jackson.core.StreamWriteConstraints;
 import tools.jackson.core.json.JsonFactory;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -68,8 +71,12 @@ class JsonRecordEncoderTest {
     private static final JsonMapper MAPPER = JsonMapper.shared();
 
     private static JsonNode encode(ParquetSchema schema, ParquetRecord row) {
+        return encode(FACTORY, schema, row);
+    }
+
+    private static JsonNode encode(JsonFactory factory, ParquetSchema schema, ParquetRecord row) {
         StringWriter writer = new StringWriter();
-        try (JsonGenerator generator = FACTORY.createGenerator(ObjectWriteContext.empty(), writer)) {
+        try (JsonGenerator generator = factory.createGenerator(ObjectWriteContext.empty(), writer)) {
             JsonRecordEncoder.writeObject(generator, schema, row);
         }
         return MAPPER.readTree(writer.toString());
@@ -236,5 +243,53 @@ class JsonRecordEncoderTest {
             assertThat(node.get("v").get("n").intValue()).isEqualTo(42);
             assertThat(node.get("v").get("label").stringValue()).isEqualTo("hi");
         }
+    }
+
+    @Test
+    void stopsADeepVariantAtTheViewDepthLimitWithoutExhaustingTheStack() {
+        SchemaNode.Group v = variant("v");
+        SchemaNode.Group rootGroup = root(v);
+        ParquetSchema schema = new ParquetSchema(rootGroup);
+        MemorySegment emptyDictionary = MemorySegment.ofArray(new byte[] {0x01, 0x00, 0x00});
+        MemorySegment deepValue = MemorySegment.ofArray(nestedArrayChain(600));
+
+        Validity present = validBits(1);
+        VariantVector variantVector = new VariantVector(
+                BinaryVector.materialized(new MemorySegment[] {emptyDictionary}, present),
+                BinaryVector.materialized(new MemorySegment[] {deepValue}, present),
+                present,
+                1);
+        Map<ColumnPath, ColumnVector> columns = Map.of(ColumnPath.of("v"), variantVector);
+        // The generator's own nesting limit is lifted: the Variant view alone must stop the recursive descent.
+        StreamWriteConstraints permissive =
+                StreamWriteConstraints.builder().maxNestingDepth(10_000).build();
+        JsonFactory permissiveFactory =
+                JsonFactory.builder().streamWriteConstraints(permissive).build();
+
+        try (DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1, Arena.ofConfined())) {
+            ParquetRecord row = batch.materialize(0);
+            assertThatThrownBy(() -> encode(permissiveFactory, schema, row))
+                    .isInstanceOf(ParquetFormatException.class)
+                    .hasMessageContaining("nesting depth");
+        }
+    }
+
+    /**
+     * A chain of {@code levels} single-element Variant arrays around a NULL leaf, each array taking six bytes: header,
+     * element count, then two-byte offsets 0 and the size of the nested value.
+     */
+    private static byte[] nestedArrayChain(int levels) {
+        int bytesPerLevel = 6;
+        int total = bytesPerLevel * levels + 1;
+        byte[] chain = new byte[total];
+        for (int level = 0; level < levels; level++) {
+            int position = level * bytesPerLevel;
+            int nestedSize = total - position - bytesPerLevel;
+            chain[position] = 0x07;
+            chain[position + 1] = 0x01;
+            chain[position + 4] = (byte) (nestedSize & 0xFF);
+            chain[position + 5] = (byte) ((nestedSize >> 8) & 0xFF);
+        }
+        return chain;
     }
 }

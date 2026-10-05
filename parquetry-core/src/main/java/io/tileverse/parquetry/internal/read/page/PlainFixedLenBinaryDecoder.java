@@ -41,6 +41,7 @@ public final class PlainFixedLenBinaryDecoder implements PageDecoder<MemorySegme
 
     @Override
     public void load(MemorySegment page, int valueCount) {
+        FixedWidthValues.requireBytesFor(page, valueCount, length, "FIXED_LEN_BYTE_ARRAY(" + length + ")");
         this.segment = page;
         this.offset = 0L;
     }

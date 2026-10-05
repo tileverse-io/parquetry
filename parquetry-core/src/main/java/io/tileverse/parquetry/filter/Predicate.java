@@ -28,6 +28,12 @@ import io.tileverse.parquetry.schema.ColumnPath;
  *
  * <p>Use pattern matching on the cases to evaluate or transform. The {@code Pred} fluent builder emits these records;
  * the normalizer and the 5-tier evaluator pipeline consume them.
+ *
+ * <p>FLOAT and DOUBLE values compare under IEEE 754 rules: {@code -0.0} equals {@code +0.0}, and {@link Lt},
+ * {@link LtEq}, {@link Gt} and {@link GtEq} match neither a NaN cell nor any cell against a NaN literal. A NaN literal
+ * in {@link Eq} or {@link In} matches the NaN cells, whatever their payload bits, and {@link NotEq} with a NaN literal
+ * matches the other non-null cells, while {@code NotEq} with a number matches the NaN cells. Negating an ordered
+ * comparison flips its operator, and the NaN cells stay unmatched either way.
  */
 public sealed interface Predicate {
 

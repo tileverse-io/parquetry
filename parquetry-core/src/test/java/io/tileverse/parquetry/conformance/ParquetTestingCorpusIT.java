@@ -57,7 +57,8 @@ import io.tileverse.parquetry.testsupport.CorpusFixtures;
  * <p>Files that exercise features parquetry doesn't yet support (Parquet Modular Encryption, repeated columns and other
  * nested shapes, intentionally-corrupt fixtures, exotic codecs) are listed in {@code parquet-testing-exclusions.txt}
  * with a one-line justification each. Adding a file to that list is the intended way to acknowledge a known gap;
- * un-excluding it requires shipping the feature that makes it pass.
+ * un-excluding it requires shipping the feature that makes it pass. Files read by parquetry but not by the oracle are
+ * listed in {@code parquet-testing-oracle-exclusions.txt} and skipped by this suite alone.
  *
  * <p>Runs under the failsafe phase (filename ends in {@code IT}) so {@code make test-unit} stays fast while {@code make
  * test-it} (or {@code make verify}) exercises the corpus end-to-end.
@@ -66,6 +67,7 @@ class ParquetTestingCorpusIT {
 
     private static final Path DATA_DIR = CorpusFixtures.parquetTestingData();
     private static final String EXCLUSIONS_RESOURCE = "/parquet-testing-exclusions.txt";
+    private static final String ORACLE_EXCLUSIONS_RESOURCE = "/parquet-testing-oracle-exclusions.txt";
 
     @Test
     void submoduleIsCheckedOut() {
@@ -128,7 +130,8 @@ class ParquetTestingCorpusIT {
         if (!Files.isDirectory(DATA_DIR)) {
             return Stream.empty(); // submodule not initialized; @Test submoduleIsCheckedOut will fail loudly
         }
-        Set<String> exclusions = loadExclusions();
+        Set<String> exclusions = loadExclusions(EXCLUSIONS_RESOURCE);
+        exclusions.addAll(loadExclusions(ORACLE_EXCLUSIONS_RESOURCE));
         Set<String> fixtures = new TreeSet<>();
         try (Stream<Path> entries = Files.list(DATA_DIR)) {
             entries.filter(Files::isRegularFile)
@@ -140,11 +143,11 @@ class ParquetTestingCorpusIT {
         return fixtures.stream();
     }
 
-    private static Set<String> loadExclusions() throws IOException {
+    private static Set<String> loadExclusions(String resource) throws IOException {
         Set<String> excluded = new HashSet<>();
-        try (InputStream in = ParquetTestingCorpusIT.class.getResourceAsStream(EXCLUSIONS_RESOURCE)) {
+        try (InputStream in = ParquetTestingCorpusIT.class.getResourceAsStream(resource)) {
             if (in == null) {
-                throw new IllegalStateException("Missing exclusions resource: " + EXCLUSIONS_RESOURCE);
+                throw new IllegalStateException("Missing exclusions resource: " + resource);
             }
             String content = new String(in.readAllBytes(), StandardCharsets.UTF_8);
             for (String rawLine : content.split("\n")) {

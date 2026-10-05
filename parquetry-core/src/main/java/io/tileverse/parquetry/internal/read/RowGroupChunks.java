@@ -145,13 +145,21 @@ public final class RowGroupChunks {
             return Optional.empty();
         }
         ChunkMeta chunk = maybeChunk.orElseThrow();
-        Optional<MemorySegment> minValue = chunk.minValue();
-        Optional<MemorySegment> maxValue = chunk.maxValue();
+        Optional<MemorySegment> minValue = orderedBound(chunk, chunk.minValue());
+        Optional<MemorySegment> maxValue = orderedBound(chunk, chunk.maxValue());
         OptionalLong nullCount = chunk.nullCount();
         if (!hasStatistics(minValue, maxValue, nullCount)) {
             return Optional.empty();
         }
         return primitiveKind(path).map(kind -> new ColumnStats(kind, minValue, maxValue, nullCount, logicalType(path)));
+    }
+
+    /** A bound in an order not applied by this reader is left out, as if the writer had recorded none. */
+    private static Optional<MemorySegment> orderedBound(ChunkMeta chunk, Optional<MemorySegment> bound) {
+        if (!chunk.boundsOrdered()) {
+            return Optional.empty();
+        }
+        return bound;
     }
 
     /**
@@ -307,8 +315,12 @@ public final class RowGroupChunks {
         if (ci.isEmpty() || oi.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(
-                new ColumnPageStats(kind.orElseThrow(), ci.orElseThrow(), oi.orElseThrow(), logicalType(path)));
+        return Optional.of(new ColumnPageStats(
+                kind.orElseThrow(), ci.orElseThrow(), oi.orElseThrow(), logicalType(path), boundsOrdered(path)));
+    }
+
+    private boolean boundsOrdered(ColumnPath path) {
+        return chunk(path).map(ChunkMeta::boundsOrdered).orElse(true);
     }
 
     private Optional<ColumnBloom> loadBloom(ColumnPath path) {

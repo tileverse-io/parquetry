@@ -66,9 +66,10 @@ public interface ParquetReader {
     /**
      * The exact bounding box of the rows matching {@code predicate}, over the primary geometry column. Computed like
      * {@link #count}: metadata answers what it can, and only the remainder reads the geometry column. Empty when there
-     * is no geometry column or no row matches. Cost is count-like, not constant. The box is exact relative to the
-     * file's declared geometry statistics, which are trusted as tight; a writer that declared rounded boxes widens the
-     * answer accordingly.
+     * is no geometry column or no matching row holds a geometry with an extent. Cost is count-like, not constant. The
+     * box is exact relative to the file's declared geometry statistics, trusted as tight; a writer that declared
+     * rounded boxes widens the answer accordingly. The box has finite edges and never wraps the antimeridian: a
+     * declared box wrapping it is reported as its {@link BoundingBox#planarEnclosure() planar enclosure}.
      */
     default Optional<BoundingBox> bounds(Predicate predicate, ReadOptions options) {
         return Optional.empty();

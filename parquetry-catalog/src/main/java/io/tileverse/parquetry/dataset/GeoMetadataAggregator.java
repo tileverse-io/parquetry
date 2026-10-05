@@ -29,7 +29,8 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
- * Unions the per-file GeoParquet metadata of one dataset's files into a single aggregated view.
+ * Unions the per-file GeoParquet metadata of one dataset's files into a single aggregated view. The input holds one
+ * entry per file of the dataset, empty for a file without readable geo metadata.
  *
  * <p>The column SET is the union of every file's columns, in first-seen order. For each column, {@code edges},
  * {@code orientation}, {@code epoch}, and {@code covering} are taken from the first file that contains that column.
@@ -39,6 +40,9 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
  * in the geo metadata, and an unvalidated mismatch would silently merge files in different CRSes). The aggregated bbox
  * is 2D: Z and M extents are intentionally dropped on union.
  *
+ * <p>A column's aggregated bbox is known only when each file of the dataset declares one. A file without geo metadata,
+ * without the column, or without its bbox could hold geometries anywhere, and leaves the aggregated bbox empty.
+ *
  * <p>The aggregate preserves the input's GeoParquet spec version subtype (a {@code V2} input yields a {@code V2}
  * aggregate), rather than forcing every result into one version.
  */
@@ -46,22 +50,31 @@ public final class GeoMetadataAggregator {
 
     private GeoMetadataAggregator() {}
 
-    public static Optional<GeoParquetMetadata> aggregate(List<GeoParquetMetadata> perFile) {
-        if (perFile.isEmpty()) {
+    public static Optional<GeoParquetMetadata> aggregate(List<Optional<GeoParquetMetadata>> perFile) {
+        List<GeoParquetMetadata> declaring = declaringFiles(perFile);
+        if (declaring.isEmpty()) {
             return Optional.empty();
         }
-        GeoParquetMetadata first = perFile.get(0);
-        String primary = requireConsistentPrimaryColumn(perFile, first.primaryColumn());
+        GeoParquetMetadata first = declaring.get(0);
+        String primary = requireConsistentPrimaryColumn(declaring, first.primaryColumn());
         Map<String, GeoColumn> mergedColumns = new LinkedHashMap<>();
-        for (String columnName : columnNamesAcrossFiles(perFile)) {
-            mergedColumns.put(columnName, mergeColumn(columnName, perFile));
+        for (String columnName : columnNamesAcrossFiles(declaring)) {
+            mergedColumns.put(columnName, mergeColumn(columnName, declaring, perFile));
         }
         return Optional.of(rebuildPreservingVersion(first, primary, mergedColumns));
     }
 
-    private static Set<String> columnNamesAcrossFiles(List<GeoParquetMetadata> perFile) {
+    private static List<GeoParquetMetadata> declaringFiles(List<Optional<GeoParquetMetadata>> perFile) {
+        List<GeoParquetMetadata> declaring = new ArrayList<>(perFile.size());
+        for (Optional<GeoParquetMetadata> file : perFile) {
+            file.ifPresent(declaring::add);
+        }
+        return declaring;
+    }
+
+    private static Set<String> columnNamesAcrossFiles(List<GeoParquetMetadata> declaring) {
         Set<String> names = new LinkedHashSet<>();
-        for (GeoParquetMetadata file : perFile) {
+        for (GeoParquetMetadata file : declaring) {
             names.addAll(file.columns().keySet());
         }
         return names;
@@ -76,8 +89,8 @@ public final class GeoMetadataAggregator {
         };
     }
 
-    private static String requireConsistentPrimaryColumn(List<GeoParquetMetadata> perFile, String primary) {
-        for (GeoParquetMetadata file : perFile) {
+    private static String requireConsistentPrimaryColumn(List<GeoParquetMetadata> declaring, String primary) {
+        for (GeoParquetMetadata file : declaring) {
             if (!primary.equals(file.primaryColumn())) {
                 throw new IllegalStateException("files disagree on the GeoParquet primary column: '" + primary
                         + "' vs '" + file.primaryColumn() + "'");
@@ -95,18 +108,17 @@ public final class GeoMetadataAggregator {
         }
     }
 
-    private static GeoColumn mergeColumn(String columnName, List<GeoParquetMetadata> perFile) {
-        GeoColumn template = firstColumnNamed(columnName, perFile);
+    private static GeoColumn mergeColumn(
+            String columnName, List<GeoParquetMetadata> declaring, List<Optional<GeoParquetMetadata>> perFile) {
+        GeoColumn template = firstColumnNamed(columnName, declaring);
         Set<String> geometryTypes = new LinkedHashSet<>();
-        Optional<BoundingBox> bbox = Optional.empty();
-        for (GeoParquetMetadata file : perFile) {
+        for (GeoParquetMetadata file : declaring) {
             GeoColumn column = file.columns().get(columnName);
             if (column == null) {
                 continue;
             }
             requireConsistentCrsAndEncoding(columnName, template, column);
             geometryTypes.addAll(column.geometryTypes());
-            bbox = unionBbox(bbox, column.bbox());
         }
         return GeoColumn.builder()
                 .encoding(template.encoding())
@@ -114,20 +126,42 @@ public final class GeoMetadataAggregator {
                 .crs(template.crs())
                 .edges(template.edges())
                 .orientation(template.orientation())
-                .bbox(bbox)
+                .bbox(bboxDeclaredByEachFile(columnName, perFile))
                 .epoch(template.epoch())
                 .covering(template.covering())
                 .build();
     }
 
-    private static GeoColumn firstColumnNamed(String columnName, List<GeoParquetMetadata> perFile) {
-        for (GeoParquetMetadata file : perFile) {
+    private static GeoColumn firstColumnNamed(String columnName, List<GeoParquetMetadata> declaring) {
+        for (GeoParquetMetadata file : declaring) {
             GeoColumn column = file.columns().get(columnName);
             if (column != null) {
                 return column;
             }
         }
         throw new IllegalStateException("no file contains geo column '" + columnName + "'");
+    }
+
+    /**
+     * The union of the bbox declared for {@code columnName} by each file, or empty as soon as one file declares none. A
+     * declared bbox without an extent ({@link BoundingBox#hasExtent()}) adds nothing to the union.
+     */
+    private static Optional<BoundingBox> bboxDeclaredByEachFile(
+            String columnName, List<Optional<GeoParquetMetadata>> perFile) {
+        Optional<BoundingBox> union = Optional.empty();
+        for (Optional<GeoParquetMetadata> file : perFile) {
+            Optional<BoundingBox> declared = declaredBbox(file, columnName);
+            if (declared.isEmpty()) {
+                return Optional.empty();
+            }
+            union = unionBbox(union, declared.filter(BoundingBox::hasExtent));
+        }
+        return union;
+    }
+
+    private static Optional<BoundingBox> declaredBbox(Optional<GeoParquetMetadata> file, String columnName) {
+        Optional<GeoColumn> column = file.map(geo -> geo.columns().get(columnName));
+        return column.flatMap(GeoColumn::bbox);
     }
 
     private static Optional<BoundingBox> unionBbox(Optional<BoundingBox> acc, Optional<BoundingBox> next) {

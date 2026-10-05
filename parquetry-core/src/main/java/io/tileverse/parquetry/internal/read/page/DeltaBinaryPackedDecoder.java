@@ -19,6 +19,8 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
 
+import io.tileverse.parquetry.format.MalformedFileException;
+
 /**
  * Shared DELTA_BINARY_PACKED decode engine. Works on {@code long} internally; INT32 and INT64 decoders delegate here.
  *
@@ -34,8 +36,11 @@ import java.lang.foreign.MemorySegment;
  */
 final class DeltaBinaryPackedDecoder {
 
+    private static final int MAX_VARINT_SHIFT = 63;
+
     private MemorySegment segment;
     private long position;
+    private long limit;
 
     // Header fields
     private int blockSize;
@@ -59,19 +64,52 @@ final class DeltaBinaryPackedDecoder {
     void load(MemorySegment page) {
         this.segment = page;
         this.position = 0L;
-        this.blockSize = (int) readVarint();
-        this.miniblocksPerBlock = (int) readVarint();
+        this.limit = page.byteSize();
+        this.blockSize = readHeaderCount("block size", 1L);
+        this.miniblocksPerBlock = readHeaderCount("miniblock count", 1L);
+        requireMiniblocksDivideBlock();
         this.valuesPerMiniblock = blockSize / miniblocksPerBlock;
-        this.totalValueCount = (int) readVarint();
+        this.totalValueCount = readHeaderCount("total value count", 0L);
+        requireWidthBytesForEachMiniblock();
         long firstValue = readZigzagVarint();
         this.lastValue = firstValue;
         this.valuesEmitted = 0;
         // Sentinel values trigger "fetch new block" on first call to next() after the first value
         this.miniblockIndex = miniblocksPerBlock;
         this.positionInMiniblock = valuesPerMiniblock;
-        this.currentMiniblockWidths = new int[miniblocksPerBlock];
+        // A stream of at most one value holds no block, hence no miniblock widths to buffer.
+        this.currentMiniblockWidths = new int[totalValueCount > 1 ? miniblocksPerBlock : 0];
         this.bitBuffer = 0L;
         this.bitsInBuffer = 0;
+    }
+
+    /** Reads a header varint and requires it to lie in {@code [minimum, Integer.MAX_VALUE]}. */
+    private int readHeaderCount(String field, long minimum) {
+        long value = readVarint();
+        if (value < minimum || value > Integer.MAX_VALUE) {
+            throw new MalformedFileException("DELTA_BINARY_PACKED header declares a " + field + " of "
+                    + Long.toUnsignedString(value) + ", outside [" + minimum + ", " + Integer.MAX_VALUE + "]");
+        }
+        return (int) value;
+    }
+
+    private void requireMiniblocksDivideBlock() {
+        if (miniblocksPerBlock > blockSize || blockSize % miniblocksPerBlock != 0) {
+            throw new MalformedFileException("DELTA_BINARY_PACKED header splits blocks of " + blockSize
+                    + " values into " + miniblocksPerBlock + " miniblocks, an uneven split");
+        }
+    }
+
+    /**
+     * Each block after the first value opens with one bit-width byte per miniblock. A stream holding more than one
+     * value but fewer bytes than that declares more miniblocks than it can hold, and its count must not size the width
+     * buffer.
+     */
+    private void requireWidthBytesForEachMiniblock() {
+        if (totalValueCount > 1 && miniblocksPerBlock > limit - position) {
+            throw new MalformedFileException("DELTA_BINARY_PACKED header declares " + miniblocksPerBlock
+                    + " miniblocks per block but only " + (limit - position) + " bytes follow it");
+        }
     }
 
     /** Number of bytes consumed from the loaded segment so far. */
@@ -115,6 +153,17 @@ final class DeltaBinaryPackedDecoder {
     }
 
     /**
+     * Fails when the loaded stream declares fewer than {@code neededValues} values. Decoding past the declared count
+     * would read the padding of the last miniblock, or the bytes after the stream, as values.
+     */
+    void requireDeclaredValues(int neededValues) {
+        if (totalValueCount < neededValues) {
+            throw new MalformedFileException("DELTA_BINARY_PACKED stream declares " + totalValueCount
+                    + " values but its page needs " + neededValues);
+        }
+    }
+
+    /**
      * The number of values whose deltas have actual bit-packed data in the stream, which is {@code >=
      * totalValueCount()} because the last used miniblock is always written full-size (padded). Callers that pack
      * several DELTA_BINARY_PACKED segments back-to-back (as in DELTA_BYTE_ARRAY) drain this many values to position the
@@ -142,8 +191,17 @@ final class DeltaBinaryPackedDecoder {
     private void loadNextBlock() {
         currentMinDelta = readZigzagVarint();
         for (int i = 0; i < miniblocksPerBlock; i++) {
-            currentMiniblockWidths[i] = readByte();
+            currentMiniblockWidths[i] = readMiniblockWidth();
         }
+    }
+
+    /** A miniblock's bit width, at most the 64 bits of a decoded delta. */
+    private int readMiniblockWidth() {
+        int width = readByte();
+        if (width > Long.SIZE) {
+            throw miniblockWidthTooWide(width);
+        }
+        return width;
     }
 
     /**
@@ -179,8 +237,8 @@ final class DeltaBinaryPackedDecoder {
                 return result;
             }
             shift += 7;
-            if (shift > 70) {
-                throw new IllegalStateException("Varint too long in DELTA_BINARY_PACKED");
+            if (shift > MAX_VARINT_SHIFT) {
+                throw varintTooLong();
             }
         }
     }
@@ -190,7 +248,32 @@ final class DeltaBinaryPackedDecoder {
         return (raw >>> 1) ^ -(raw & 1);
     }
 
+    /**
+     * Reads the next byte. Running out of bytes means the stream holds fewer values than it declares. The segment's own
+     * bounds check detects it: translating that failure here costs nothing per byte, where a check of ours would repeat
+     * the segment's.
+     */
     private int readByte() {
-        return segment.get(JAVA_BYTE, position++) & 0xff;
+        try {
+            return segment.get(JAVA_BYTE, position++) & 0xff;
+        } catch (IndexOutOfBoundsException e) {
+            throw streamEnded(limit);
+        }
+    }
+
+    // The failures below are built out of line: the methods raising them run once per value or byte, and the JIT only
+    // inlines them into the decode loops while they stay small.
+
+    private static MalformedFileException streamEnded(long byteSize) {
+        return new MalformedFileException(
+                "DELTA_BINARY_PACKED stream ends after " + byteSize + " bytes, short of the values it declares");
+    }
+
+    private static MalformedFileException varintTooLong() {
+        return new MalformedFileException("DELTA_BINARY_PACKED stream holds a varint longer than 10 bytes");
+    }
+
+    private static MalformedFileException miniblockWidthTooWide(int width) {
+        return new MalformedFileException("DELTA_BINARY_PACKED miniblock bit width " + width + " exceeds " + Long.SIZE);
     }
 }

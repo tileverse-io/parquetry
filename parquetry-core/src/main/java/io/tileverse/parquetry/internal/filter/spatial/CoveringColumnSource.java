@@ -46,9 +46,9 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
  * row-group bbox: the {@code xmin} column's stats.min is the row group's xmin, the {@code xmax} column's stats.max is
  * the row group's xmax, and so on.
  *
- * <p>Construction precomputes per-row-group bboxes and a file-level union per geometry column. A geometry column whose
- * sidecar leaves cannot be resolved (path missing, non-numeric leaf, no stats on any row group) is dropped silently so
- * the dispatch falls through to the next tier.
+ * <p>Construction precomputes per-row-group bboxes and a file-level union per geometry column, known only when each row
+ * group has a box. A geometry column with unresolvable sidecar leaves (path missing, non-numeric leaf, no stats on any
+ * row group) is dropped silently, and the dispatch falls through to the next tier.
  */
 final class CoveringColumnSource implements SpatialBoundsSource {
 
@@ -79,7 +79,8 @@ final class CoveringColumnSource implements SpatialBoundsSource {
         if (perRowGroup.isEmpty()) {
             return Optional.empty();
         }
-        Map<ColumnPath, BoundingBox> fileLevel = unionAcrossRowGroups(perRowGroup);
+        Map<ColumnPath, BoundingBox> fileLevel =
+                PerRowGroupBoxes.fileLevelUnions(perRowGroup, CoveringColumnSource::union);
         return Optional.of(new CoveringColumnSource(Map.copyOf(perRowGroup), Map.copyOf(fileLevel)));
     }
 
@@ -97,7 +98,9 @@ final class CoveringColumnSource implements SpatialBoundsSource {
         return byGroup.get(rowGroupIndex);
     }
 
-    /** One box per geometry column and row group with usable sidecar stats, plus that column's file-level union. */
+    /**
+     * One box per geometry column and row group with usable sidecar stats, plus that column's known file-level union.
+     */
     @Override
     public int retainedBoxCount() {
         return fileLevel.size() + PerRowGroupBoxes.presentBoxes(perRowGroup);
@@ -199,44 +202,34 @@ final class CoveringColumnSource implements SpatialBoundsSource {
         return decodeDouble(axis.kind(), max);
     }
 
+    /** The axis chunk of {@code rowGroup}, empty when its bounds follow an order not applied by this reader. */
     private static Optional<ChunkMeta> chunkAt(CompactFooter footer, int rowGroup, AxisRef axis) {
-        return footer.chunkIfPresent(rowGroup, axis.leaf());
+        return footer.chunkIfPresent(rowGroup, axis.leaf()).filter(ChunkMeta::boundsOrdered);
     }
 
     /**
      * Decodes a Parquet PLAIN-encoded min/max value as a {@code double}. The Parquet spec writes FLOAT / DOUBLE
      * little-endian; other kinds (and short / malformed payloads) decode as empty, which leaves the row group's bbox
-     * unknown rather than wrong.
+     * unknown rather than wrong. A NaN value bounds nothing and decodes as empty too.
      */
     static OptionalDouble decodeDouble(PrimitiveKind kind, Optional<MemorySegment> raw) {
         if (raw.isEmpty()) {
             return OptionalDouble.empty();
         }
-        MemorySegment value = raw.orElseThrow();
+        OptionalDouble decoded = decodePlain(kind, raw.orElseThrow());
+        if (decoded.isPresent() && Double.isNaN(decoded.getAsDouble())) {
+            return OptionalDouble.empty();
+        }
+        return decoded;
+    }
+
+    private static OptionalDouble decodePlain(PrimitiveKind kind, MemorySegment value) {
         long size = value.byteSize();
         return switch (kind) {
             case DOUBLE -> size >= 8 ? OptionalDouble.of(value.get(DOUBLE, 0)) : OptionalDouble.empty();
             case FLOAT -> size >= 4 ? OptionalDouble.of(value.get(FLOAT, 0)) : OptionalDouble.empty();
             default -> OptionalDouble.empty();
         };
-    }
-
-    /** See {@link NativeStatsSource} for the same union policy and rationale. */
-    private static Map<ColumnPath, BoundingBox> unionAcrossRowGroups(
-            Map<ColumnPath, List<Optional<BoundingBox>>> perRowGroup) {
-        Map<ColumnPath, BoundingBox> result = HashMap.newHashMap(perRowGroup.size());
-        perRowGroup.forEach((path, list) -> {
-            BoundingBox acc = null;
-            for (Optional<BoundingBox> slot : list) {
-                if (slot.isPresent()) {
-                    acc = acc == null ? slot.orElseThrow() : union(acc, slot.orElseThrow());
-                }
-            }
-            if (acc != null) {
-                result.put(path, acc);
-            }
-        });
-        return result;
     }
 
     private static BoundingBox union(BoundingBox a, BoundingBox b) {

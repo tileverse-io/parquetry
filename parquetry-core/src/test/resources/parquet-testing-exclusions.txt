@@ -19,11 +19,9 @@ nation.dict-malformed.parquet                       # intentionally malformed di
 unknown-logical-type.parquet                        # intentionally unknown logical type
 incorrect_map_schema.parquet                        # intentionally malformed map schema per upstream README
 
-# Files no Java reader handles (golden-file follow-up): the parquet-java SimpleGroup oracle cannot read them.
-# large_string_map.brotli and non_hadoop_lz4_compressed are read correctly by parquetry; they lack a working oracle.
-fixed_length_byte_array.parquet            # parquet-java oracle throws ParquetDecodingException at block 0
-large_string_map.brotli.parquet            # parquet-java oracle trips on total_uncompressed_size = Integer.MAX_VALUE + 102; parquetry reads it (2 rows)
-non_hadoop_lz4_compressed.parquet          # parquet-java oracle cannot decode this raw LZ4 framing; parquetry reads it (raw-LZ4 fallback, matches pyarrow)
+# A string column chunk of more than 2 GB: too large to decode in the unit-test heap. parquetry reads it (2 rows);
+# the parquet-java oracle trips on total_uncompressed_size = Integer.MAX_VALUE + 102.
+large_string_map.brotli.parquet            # column chunk over 2 GB
 
 # FOLLOW-UP parquetry read bugs: the parquet-java oracle reads these, parquetry does not yet match.
 map_no_value.parquet                       # FOLLOW-UP: parquetry read bug (oracle reads int32-keyed map; parquetry throws)

@@ -30,8 +30,8 @@ import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
  * {@link SpatialBoundsSource} backed by the GeoParquet 2.0 native {@code GeospatialStatistics.bbox} recorded for each
- * column chunk. Most precise of the three tiers: per-row-group bounds are exact, and the file bounds are the union of
- * those.
+ * column chunk. Most precise of the three tiers: per-row-group bounds are exact, and the file bounds are their union,
+ * known only when each row group has a box.
  *
  * <p>Construction precomputes both the per-row-group bboxes and the file-level union. Lookups are then a single map
  * read. Callers that need to refresh after a footer change must build a new instance.
@@ -63,7 +63,8 @@ final class NativeStatsSource implements SpatialBoundsSource {
         if (perRowGroup.isEmpty()) {
             return Optional.empty();
         }
-        Map<ColumnPath, BoundingBox> fileLevel = unionAcrossRowGroups(perRowGroup);
+        Map<ColumnPath, BoundingBox> fileLevel =
+                PerRowGroupBoxes.fileLevelUnions(perRowGroup, NativeStatsSource::union);
         return Optional.of(new NativeStatsSource(Map.copyOf(perRowGroup), Map.copyOf(fileLevel)));
     }
 
@@ -81,7 +82,7 @@ final class NativeStatsSource implements SpatialBoundsSource {
         return byGroup.get(rowGroupIndex);
     }
 
-    /** One box per geometry column and row group with native statistics, plus that column's file-level union. */
+    /** One box per geometry column and row group with native statistics, plus that column's known file-level union. */
     @Override
     public int retainedBoxCount() {
         return fileLevel.size() + PerRowGroupBoxes.presentBoxes(perRowGroup);
@@ -125,34 +126,21 @@ final class NativeStatsSource implements SpatialBoundsSource {
         return boxes;
     }
 
+    /** The native box of a chunk, absent when the writer recorded none or recorded a NaN bound. */
     private static Optional<BoundingBox> boxAt(CompactFooter footer, int rowGroup, int leaf) {
         Optional<ChunkMeta> chunk = footer.chunkIfPresent(rowGroup, leaf);
-        return chunk.flatMap(ChunkMeta::geoExtent);
+        Optional<BoundingBox> recorded = chunk.flatMap(ChunkMeta::geoExtent);
+        return recorded.filter(box -> !box.hasNaNBound());
     }
 
     /**
-     * Returns the per-column union (file-level bbox) of every row-group bbox known to this source. Antimeridian-wrap
-     * boxes ({@link BoundingBox#wrapsAntimeridian()}) are passed through verbatim: combining wrap-aware boxes requires
-     * splitting them in two, and that policy belongs at the aggregator layer, not here.
+     * The union of two row-group boxes for the file-level box. A lone box is the union as written, even one wrapping
+     * the antimeridian ({@link BoundingBox#wrapsAntimeridian()}); a union involving a wrapping box spans the full
+     * longitude range (see {@link BoundingBox#planarEnclosure()}).
      */
-    private static Map<ColumnPath, BoundingBox> unionAcrossRowGroups(
-            Map<ColumnPath, List<Optional<BoundingBox>>> perRowGroup) {
-        Map<ColumnPath, BoundingBox> result = HashMap.newHashMap(perRowGroup.size());
-        perRowGroup.forEach((path, list) -> {
-            BoundingBox acc = null;
-            for (Optional<BoundingBox> slot : list) {
-                if (slot.isPresent()) {
-                    acc = acc == null ? slot.orElseThrow() : union(acc, slot.orElseThrow());
-                }
-            }
-            if (acc != null) {
-                result.put(path, acc);
-            }
-        });
-        return result;
-    }
-
-    private static BoundingBox union(BoundingBox a, BoundingBox b) {
+    private static BoundingBox union(BoundingBox first, BoundingBox second) {
+        BoundingBox a = first.planarEnclosure();
+        BoundingBox b = second.planarEnclosure();
         return new BoundingBox(
                 Math.min(a.xmin(), b.xmin()),
                 Math.max(a.xmax(), b.xmax()),

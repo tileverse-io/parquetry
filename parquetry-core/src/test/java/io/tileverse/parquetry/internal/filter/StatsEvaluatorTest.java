@@ -26,6 +26,7 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -172,6 +173,33 @@ class StatsEvaluatorTest {
     }
 
     @Test
+    void halfFloatBoundsLeaveAPresentValueUnpruned() {
+        // Ordered by value, -2.0 (0xC000) is the min and 1.0 (0x3C00) the max; as unsigned bytes -2.0 sorts above 1.0.
+        MemorySegment minusTwo =
+                MemorySegment.ofArray(new byte[] {0x00, (byte) 0xC0}).asReadOnly();
+        MemorySegment one = MemorySegment.ofArray(new byte[] {0x00, 0x3C}).asReadOnly();
+        FilterPipeline.ColumnStatsLookup cols = single(
+                "h", annotatedStats(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, minusTwo, one, new LogicalType.Float16Type()));
+        PruningDecision d = StatsEvaluator.evaluate(col("h").eq(minusTwo), cols, ROW_COUNT);
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void unsignedFullWidthIntegerBoundsLeaveAPresentValueUnpruned() {
+        // Unsigned, 3_000_000_000 is the max; its bits read as a signed int are negative.
+        int threeBillionBits = (int) 3_000_000_000L;
+        FilterPipeline.ColumnStatsLookup cols = single(
+                "u",
+                annotatedStats(
+                        PrimitiveKind.INT32,
+                        encodeInt(1),
+                        encodeInt(threeBillionBits),
+                        new LogicalType.IntType((byte) 32, false)));
+        PruningDecision d = StatsEvaluator.evaluate(col("u").gt(0), cols, ROW_COUNT);
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
     void andEliminatesIfAnyChildEliminates() {
         FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
         Predicate p = col("year").eq(2030).and(col("year").eq(2015));
@@ -219,6 +247,80 @@ class StatsEvaluatorTest {
         FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(1.0, 5.0, 0));
         PruningDecision d = StatsEvaluator.evaluate(col("price").lt(0.5), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void nanBoundIsIgnored() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(Double.NaN, 5.0, 0));
+        PruningDecision d = StatsEvaluator.evaluate(col("price").gt(10.0), cols, ROW_COUNT);
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void summaryLeavesANaNBoundOut() {
+        StatsEvaluator.ColumnSummary summary = StatsEvaluator.summarize(doubleStats(1.0, Double.NaN, 0));
+        assertThat(summary.min()).contains(new Value.DoubleVal(1.0));
+        assertThat(summary.max()).isEmpty();
+    }
+
+    @Test
+    void nanLiteralEqualityIsNotEliminatedByTheBounds() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(1.0, 5.0, 0));
+        PruningDecision d = StatsEvaluator.evaluate(col("price").eq(Double.NaN), cols, ROW_COUNT);
+        assertThat(d).isNotInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void inWithANaNLiteralIsNotEliminatedByTheBounds() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(1.0, 5.0, 0));
+        Predicate p = new Predicate.In(
+                ColumnPath.of("price"), List.of(new Value.DoubleVal(100.0), new Value.DoubleVal(Double.NaN)));
+        assertThat(StatsEvaluator.evaluate(p, cols, ROW_COUNT)).isNotInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void notEqOnASingleValueFloatColumnIsNotEliminated() {
+        // NaN cells lie outside [2.0, 2.0] and differ from 2.0
+        FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(2.0, 2.0, 0));
+        PruningDecision d = StatsEvaluator.evaluate(col("price").notEq(2.0), cols, ROW_COUNT);
+        assertThat(d).isNotInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void orderedComparisonAgainstANaNLiteralIsEliminated() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(1.0, 5.0, 0));
+        assertThat(StatsEvaluator.evaluate(col("price").lt(Double.NaN), cols, ROW_COUNT))
+                .isInstanceOf(PruningDecision.Eliminated.class);
+        assertThat(StatsEvaluator.evaluate(col("price").gtEq(Double.NaN), cols, ROW_COUNT))
+                .isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void zeroBoundsCompareEqualToEitherZero() {
+        FilterPipeline.ColumnStatsLookup fromPositiveZero = single("price", doubleStats(0.0, 5.0, 0));
+        FilterPipeline.ColumnStatsLookup toNegativeZero = single("price", doubleStats(-5.0, -0.0, 0));
+        assertThat(StatsEvaluator.evaluate(col("price").eq(-0.0), fromPositiveZero, ROW_COUNT))
+                .isNotInstanceOf(PruningDecision.Eliminated.class);
+        assertThat(StatsEvaluator.evaluate(col("price").gtEq(0.0), toNegativeZero, ROW_COUNT))
+                .isNotInstanceOf(PruningDecision.Eliminated.class);
+        assertThat(StatsEvaluator.evaluate(col("price").gt(0.0), toNegativeZero, ROW_COUNT))
+                .isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void notInWithValuesOutsideTheBoundsPassesAll() {
+        // No row matches the IN, hence each row, a null one included, matches its negation.
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 3));
+        Predicate notIn =
+                PredicateNormalizer.normalize(col("year").inInts(2030, 2040).negate());
+        assertThat(StatsEvaluator.evaluate(notIn, cols, ROW_COUNT)).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void notInWithAValueInsideTheBoundsIsNotDecided() {
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
+        Predicate notIn = PredicateNormalizer.normalize(col("year").inInts(2015).negate());
+        assertThat(StatsEvaluator.evaluate(notIn, cols, ROW_COUNT)).isInstanceOf(PruningDecision.NotApplied.class);
     }
 
     @Test

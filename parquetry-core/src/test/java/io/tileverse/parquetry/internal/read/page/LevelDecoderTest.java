@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.internal.read.page;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -27,6 +28,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+
+import io.tileverse.parquetry.format.MalformedFileException;
 
 class LevelDecoderTest {
 
@@ -320,6 +323,111 @@ class LevelDecoderTest {
         for (int row = 0; row < 5; row++) {
             assertThat(bitSet(bitmap, row)).as("row %d present", row).isTrue();
         }
+    }
+
+    static Stream<Arguments> malformedStreams() {
+        // each vector is a bit width, an encoded stream, the level count requested from it, and the expected failure
+        return Stream.of(
+                // RLE run header of 3 values with no value byte after it
+                Arguments.of(1, new byte[] {0x06}, 3, "end at byte 1"),
+                // bit-packed run of one group of 8 three-bit values with only one of its three bytes
+                Arguments.of(3, new byte[] {0x03, (byte) 0x88}, 8, "end at byte 2"),
+                // RLE run of 3 zeros, then 2 more levels requested than the stream holds
+                Arguments.of(1, new byte[] {0x06, 0x00}, 5, "end at byte 2"),
+                // RLE run of 3 repeating the value 2, beyond the 1-bit width
+                Arguments.of(1, new byte[] {0x06, 0x02}, 3, "hold the value 2, above their maximum 1"),
+                // bit-packed run of 2^28 groups, one more than an int can count as values
+                Arguments.of(
+                        1,
+                        new byte[] {(byte) 0x81, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x02},
+                        1,
+                        "bit-packed run of 268435456 groups"),
+                // RLE run of 2^31 values, one more than an int can count
+                Arguments.of(
+                        1,
+                        new byte[] {(byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x10, 0x00},
+                        1,
+                        "RLE run of 2147483648 values"),
+                Arguments.of(1, elevenByteVarint(), 1, "varint longer than 10 bytes"));
+    }
+
+    /** A run header varint of eleven bytes: ten continuation bytes, then a terminating zero. */
+    private static byte[] elevenByteVarint() {
+        byte[] varint = new byte[11];
+        Arrays.fill(varint, 0, 10, (byte) 0x80);
+        return varint;
+    }
+
+    @ParameterizedTest
+    @MethodSource("malformedStreams")
+    void malformedStreamFailsWithFormatErrorNamingTheStream(int bitWidth, byte[] stream, int count, String failure) {
+        LevelDecoder decoder = new LevelDecoder(bitWidth, "definition levels");
+        decoder.load(MemorySegment.ofArray(stream));
+        int[] dst = new int[count];
+
+        assertThatThrownBy(() -> decoder.decode(count, dst, 0))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageStartingWith("definition levels")
+                .hasMessageContaining(failure);
+    }
+
+    @Test
+    void truncatedStreamFailsTheValidityBitmapDecodeToo() {
+        LevelDecoder decoder = new LevelDecoder(1, "definition levels");
+        decoder.load(MemorySegment.ofArray(new byte[] {0x06, 0x01}));
+        MemorySegment bitmap = MemorySegment.ofArray(new byte[1]);
+
+        assertThatThrownBy(() -> decoder.decodeValidityBitmap(5, 1, bitmap))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("end at byte 2");
+    }
+
+    @Test
+    void runsOfZeroValuesYieldNothing() {
+        // RLE run of 0 values (header 0, value byte 0), bit-packed run of 0 groups (header 1), RLE run of 3 ones
+        byte[] stream = {0x00, 0x00, 0x01, 0x06, 0x01};
+        LevelDecoder decoder = new LevelDecoder(1);
+        decoder.load(MemorySegment.ofArray(stream));
+        int[] dst = new int[3];
+
+        decoder.decode(3, dst, 0);
+
+        assertThat(dst).containsExactly(1, 1, 1);
+    }
+
+    static Stream<Arguments> levelsAboveTheMaxLevel() {
+        // each vector is a max level, an encoded stream holding a level above it, and the level count requested
+        return Stream.of(
+                // max level 2 takes a 2-bit width; an RLE run of 4 repeats 3, a value fitting the width
+                Arguments.of(2, new byte[] {0x08, 0x03}, 4),
+                // a bit-packed group of 8 two-bit levels opening with 3
+                Arguments.of(2, new byte[] {0x03, 0x03, 0x00}, 8),
+                // max level 5 takes a 3-bit width; a bit-packed group opening with the levels 1 and 6
+                Arguments.of(5, new byte[] {0x03, 0x31, 0x00, 0x00}, 8));
+    }
+
+    @ParameterizedTest
+    @MethodSource("levelsAboveTheMaxLevel")
+    void levelAboveTheMaxLevelIsAFormatError(int maxLevel, byte[] stream, int count) {
+        LevelDecoder decoder = LevelDecoder.forMaxLevel(maxLevel, "definition levels");
+        decoder.load(MemorySegment.ofArray(stream));
+        int[] dst = new int[count];
+
+        assertThatThrownBy(() -> decoder.decode(count, dst, 0))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("above their maximum " + maxLevel);
+    }
+
+    @Test
+    void levelsUpToTheMaxLevelDecode() {
+        // max level 2: a bit-packed group of 8 two-bit levels [0, 1, 2, 0, 1, 2, 0, 0]
+        LevelDecoder decoder = LevelDecoder.forMaxLevel(2, "definition levels");
+        decoder.load(MemorySegment.ofArray(new byte[] {0x03, 0x24, 0x09}));
+        int[] dst = new int[8];
+
+        decoder.decode(8, dst, 0);
+
+        assertThat(dst).containsExactly(0, 1, 2, 0, 1, 2, 0, 0);
     }
 
     private static boolean bitSet(MemorySegment bitmap, int row) {

@@ -104,6 +104,12 @@ class DecoderFactoryConformanceTest {
                         Assumptions.abort("Column " + colName + " is not REQUIRED in " + name
                                 + " - skipped (scalar-column scope)");
                     }
+                    if (meta.pathInSchema().size() > 1) {
+                        // A required leaf under a repeated or optional group still has level prefixes, and this
+                        // flat decode would misread them as values.
+                        Assumptions.abort(
+                                "Column " + colName + " is nested in " + name + " - skipped (scalar-column scope)");
+                    }
 
                     PrimitiveKind kind = primitiveKindOf(meta.type());
                     OptionalInt typeLength = OptionalInt.empty();

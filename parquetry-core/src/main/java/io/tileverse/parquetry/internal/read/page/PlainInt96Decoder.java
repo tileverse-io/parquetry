@@ -32,6 +32,7 @@ public final class PlainInt96Decoder implements PageDecoder<MemorySegment> {
 
     @Override
     public void load(MemorySegment page, int valueCount) {
+        FixedWidthValues.requireBytesFor(page, valueCount, INT96_BYTES, "INT96");
         this.segment = page;
         this.offset = 0L;
     }

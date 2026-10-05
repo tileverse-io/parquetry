@@ -18,6 +18,7 @@ package io.tileverse.parquetry.internal.read.page;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
@@ -26,6 +27,7 @@ import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 class DictionaryDecoderTest {
@@ -133,5 +135,32 @@ class DictionaryDecoderTest {
         decoder.decodeFloats(6, dst, 0);
 
         assertThat(dst).containsExactly(1.5f, 2.5f, 3.5f, 1.5f, 2.5f, 3.5f);
+    }
+
+    @Test
+    void negativeValueCountIsAFormatError() {
+        MemorySegment page = MemorySegment.ofArray(new byte[16]);
+
+        assertThatThrownBy(() -> DictionaryDecoder.read(page, PrimitiveKind.FLOAT, -4, OptionalInt.empty()))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("negative value count of -4");
+    }
+
+    @Test
+    void fixedWidthPageShortOfItsEntriesIsAFormatError() {
+        MemorySegment page = MemorySegment.ofArray(new byte[12]);
+
+        assertThatThrownBy(() -> DictionaryDecoder.read(page, PrimitiveKind.INT64, 2, OptionalInt.empty()))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("2 INT64 values need 16 bytes but the page holds 12");
+    }
+
+    @Test
+    void binaryPageShortOfItsLengthPrefixesIsAFormatError() {
+        MemorySegment page = MemorySegment.ofArray(new byte[8]);
+
+        assertThatThrownBy(() -> DictionaryDecoder.read(page, PrimitiveKind.BYTE_ARRAY, 3, OptionalInt.empty()))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("3 BYTE_ARRAY dictionary entries need at least 12 bytes");
     }
 }

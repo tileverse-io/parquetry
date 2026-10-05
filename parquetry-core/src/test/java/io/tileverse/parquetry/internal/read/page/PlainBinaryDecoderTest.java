@@ -18,12 +18,19 @@ package io.tileverse.parquetry.internal.read.page;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import io.tileverse.parquetry.format.MalformedFileException;
 
 class PlainBinaryDecoderTest {
 
@@ -116,5 +123,51 @@ class PlainBinaryDecoderTest {
         assertThat(dst[0].toArray(JAVA_BYTE)).isEqualTo("foo".getBytes());
         assertThat(dst[1].toArray(JAVA_BYTE)).isEqualTo("hi".getBytes());
         assertThat(dst[2].toArray(JAVA_BYTE)).isEqualTo("hello".getBytes());
+    }
+
+    static Stream<Arguments> malformedBinaryPages() {
+        // each vector is a page, the values decoded from it, and the expected failure
+        return Stream.of(
+                // a length prefix cut short after two of its four bytes
+                Arguments.of(new byte[] {2, 0}, 1, "values end after 2 bytes"),
+                // a value announcing 5 bytes with 2 left in the page
+                Arguments.of(new byte[] {5, 0, 0, 0, 'a', 'b'}, 1, "declares a length of 5 but 2 bytes remain"),
+                // a negative length prefix
+                Arguments.of(
+                        new byte[] {(byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0xff}, 1, "declares a length of -1"),
+                // one complete value, then a second value requested from an exhausted page
+                Arguments.of(new byte[] {1, 0, 0, 0, 'a'}, 2, "values end after 5 bytes"));
+    }
+
+    @ParameterizedTest
+    @MethodSource("malformedBinaryPages")
+    void malformedPageFailsEachDecodeLaneWithAFormatError(byte[] page, int valueCount, String failure) {
+        assertThatThrownBy(() -> decodeValues(page, valueCount))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining(failure);
+        assertThatThrownBy(() -> decodeLayout(page, valueCount))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining(failure);
+        assertThatThrownBy(() -> skipValues(page, valueCount))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining(failure);
+    }
+
+    private static void decodeValues(byte[] page, int valueCount) {
+        PlainBinaryDecoder decoder = new PlainBinaryDecoder();
+        decoder.load(MemorySegment.ofArray(page), valueCount);
+        decoder.decodeBinary(valueCount, new MemorySegment[valueCount], 0);
+    }
+
+    private static void decodeLayout(byte[] page, int valueCount) {
+        PlainBinaryDecoder decoder = new PlainBinaryDecoder();
+        decoder.load(MemorySegment.ofArray(page), valueCount);
+        decoder.decodeBinaryLayout(valueCount, new int[valueCount], new int[valueCount], 0);
+    }
+
+    private static void skipValues(byte[] page, int valueCount) {
+        PlainBinaryDecoder decoder = new PlainBinaryDecoder();
+        decoder.load(MemorySegment.ofArray(page), valueCount);
+        decoder.skip(valueCount);
     }
 }

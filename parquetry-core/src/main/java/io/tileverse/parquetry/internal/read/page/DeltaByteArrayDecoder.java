@@ -19,6 +19,8 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
 
+import io.tileverse.parquetry.format.MalformedFileException;
+
 /**
  * DELTA_BYTE_ARRAY page decoder.
  *
@@ -57,6 +59,45 @@ public final class DeltaByteArrayDecoder implements PageDecoder<MemorySegment> {
         suffixOffset = 0L;
         previousValue = new byte[0];
         cursor = 0;
+        requireConsistentLengths(valueCount);
+    }
+
+    /**
+     * Checks the lengths of the first {@code valueCount} values before any is rebuilt: both streams hold them, each
+     * prefix reuses at most the previous value, and the suffixes fit the bytes after the two length streams.
+     */
+    private void requireConsistentLengths(int valueCount) {
+        if (prefixLengths.length < valueCount || suffixLengths.length < valueCount) {
+            throw new MalformedFileException("DELTA_BYTE_ARRAY page holds " + prefixLengths.length + " prefix and "
+                    + suffixLengths.length + " suffix lengths but needs " + valueCount + " of each");
+        }
+        long previousLength = 0L;
+        long suffixTotal = 0L;
+        for (int i = 0; i < valueCount; i++) {
+            int prefixLength = prefixLengths[i];
+            int suffixLength = suffixLengths[i];
+            if (prefixLength < 0 || prefixLength > previousLength || suffixLength < 0) {
+                throw inconsistentValueLengths(i, prefixLength, suffixLength, previousLength);
+            }
+            previousLength = (long) prefixLength + suffixLength;
+            suffixTotal += suffixLength;
+        }
+        if (suffixTotal > suffixBytes.byteSize()) {
+            throw suffixesBeyondPage(suffixTotal, suffixBytes.byteSize());
+        }
+    }
+
+    // Built out of line to keep the per-value loop above small.
+
+    private static MalformedFileException inconsistentValueLengths(
+            int value, int prefixLength, int suffixLength, long previousLength) {
+        return new MalformedFileException("DELTA_BYTE_ARRAY value " + value + " declares prefix length " + prefixLength
+                + " and suffix length " + suffixLength + " after a value of " + previousLength + " bytes");
+    }
+
+    private static MalformedFileException suffixesBeyondPage(long suffixTotal, long suffixBytes) {
+        return new MalformedFileException("DELTA_BYTE_ARRAY suffix lengths add up to " + suffixTotal
+                + " bytes but the page holds " + suffixBytes + " after them");
     }
 
     @Override

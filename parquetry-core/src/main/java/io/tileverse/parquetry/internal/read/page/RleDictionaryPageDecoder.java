@@ -19,6 +19,7 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
 
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.ParquetLayouts;
 
 /**
@@ -26,11 +27,14 @@ import io.tileverse.parquetry.format.ParquetLayouts;
  *
  * <p>Each value is an integer index into the column's {@link Dictionary}. Indexes are encoded with the RLE-Bit-Packed
  * hybrid; the bit width is stored as the first byte of the page payload (NOT in the page header). After reading the bit
- * width, the rest of the payload is delegated to a {@link LevelDecoder} configured at that bit width.
+ * width, the rest of the payload is delegated to a {@link LevelDecoder} configured at that bit width and bounded by the
+ * last dictionary entry. A decoded index outside the dictionary fails with a {@link MalformedFileException}.
  *
  * @param <T> the dictionary value type
  */
 public final class RleDictionaryPageDecoder<T> implements PageDecoder<T> {
+
+    private static final int MAX_INDEX_BIT_WIDTH = 32;
 
     private final Dictionary<T> dictionary;
     private LevelDecoder indexDecoder;
@@ -41,19 +45,35 @@ public final class RleDictionaryPageDecoder<T> implements PageDecoder<T> {
 
     /**
      * Load a data page. Reads the bit-width byte first, then hands the remaining bytes to a new {@link LevelDecoder}
-     * for index decoding.
+     * for index decoding. A page holding values must hold at least the bit-width byte, the width must lie in {@code [0,
+     * 32]}, and the dictionary must hold entries; a zero width is legal and makes all indices zero.
+     *
+     * <p>The index decoder itself checks each index against the last dictionary entry. A check in this decoder's loops
+     * would add a method layer between them and the index decoder's memory reads, and the JIT inlines those reads into
+     * the loops only up to a fixed call depth.
      */
     @Override
     public void load(MemorySegment page, int valueCount) {
+        if (page.byteSize() == 0) {
+            throw new MalformedFileException(
+                    valueCount + " dictionary-encoded values need an index stream but the page holds no bytes");
+        }
+        int dictionarySize = dictionary.size();
+        if (valueCount > 0 && dictionarySize == 0) {
+            throw new MalformedFileException(valueCount + " dictionary-encoded values reference an empty dictionary");
+        }
         int bitWidth = page.get(JAVA_BYTE, 0L) & 0xff;
-        indexDecoder = new LevelDecoder(bitWidth);
+        if (bitWidth > MAX_INDEX_BIT_WIDTH) {
+            throw new MalformedFileException(
+                    "Dictionary index bit width " + bitWidth + " exceeds " + MAX_INDEX_BIT_WIDTH);
+        }
+        indexDecoder = LevelDecoder.forMaxValue(bitWidth, dictionarySize - 1, "dictionary indices");
         indexDecoder.load(page.asSlice(1L));
     }
 
     @Override
     public T next() {
-        int index = indexDecoder.nextValue();
-        return dictionary.get(index);
+        return dictionary.get(indexDecoder.nextValue());
     }
 
     @Override

@@ -27,11 +27,12 @@ import lombok.Builder;
  *
  * <h2>Antimeridian wrap</h2>
  *
- * <p>Per the parquet-format Geospatial specification, when {@link #xmin()} is greater than {@link #xmax()} the box
- * <em>wraps the antimeridian</em>: a candidate longitude {@code x} matches when {@code x >= xmin || x <= xmax} rather
- * than the usual {@code x >= xmin && x <= xmax}. Callers that aggregate bounding boxes (for example computing a
- * dataset-wide extent) must split a wrapping box into two non-wrapping pieces before union; otherwise the union
- * collapses to a globe-spanning extent. {@link #wrapsAntimeridian()} exposes the case explicitly.
+ * <p>Per the parquet-format Geospatial specification, when {@link #xmin()} is greater than {@link #xmax()} a box with
+ * an extent ({@link #hasExtent()}) <em>wraps the antimeridian</em>: a candidate longitude {@code x} matches when
+ * {@code x >= xmin || x <= xmax} rather than the usual {@code x >= xmin && x <= xmax}. Callers that aggregate bounding
+ * boxes coordinate-wise (for example computing a dataset-wide extent) union their {@link #planarEnclosure()} instead; a
+ * plain min/max over the raw values can land inside the gap between the two longitude ranges and lose them.
+ * {@link #wrapsAntimeridian()} exposes the case explicitly.
  *
  * @param xmin minimum X coordinate (or wrap-start when {@link #wrapsAntimeridian()})
  * @param xmax maximum X coordinate (or wrap-end when {@link #wrapsAntimeridian()})
@@ -53,6 +54,9 @@ public record BoundingBox(
         OptionalDouble mmin,
         OptionalDouble mmax) {
 
+    private static final double WEST_LIMIT = -180;
+    private static final double EAST_LIMIT = 180;
+
     public BoundingBox {
         zmin = zmin == null ? OptionalDouble.empty() : zmin;
         zmax = zmax == null ? OptionalDouble.empty() : zmax;
@@ -61,10 +65,41 @@ public record BoundingBox(
     }
 
     /**
-     * Returns {@code true} when this box wraps the antimeridian (i.e. {@code xmin > xmax}). See the class-level note on
-     * aggregation semantics.
+     * Returns {@code true} when this box has an extent and wraps the antimeridian (i.e. {@code xmin > xmax}). A box
+     * without an extent, such as the inverted infinite box recorded for a chunk of empty geometries, never wraps. See
+     * the class-level note on aggregation semantics.
      */
     public boolean wrapsAntimeridian() {
-        return xmin > xmax;
+        return hasExtent() && xmin > xmax;
+    }
+
+    /**
+     * Whether this box bounds a region: finite X and Y bounds, with {@code ymin} at or below {@code ymax}. A box
+     * wrapping the antimeridian bounds one; a box with an infinite or NaN bound, or with inverted Y bounds, does not.
+     * The envelope of an empty geometry is such a box.
+     */
+    public boolean hasExtent() {
+        boolean finite =
+                Double.isFinite(xmin) && Double.isFinite(xmax) && Double.isFinite(ymin) && Double.isFinite(ymax);
+        return finite && ymin <= ymax;
+    }
+
+    /**
+     * The planar rectangle enclosing the vertices inside this box: this box when it does not wrap the antimeridian,
+     * otherwise the full longitude range {@code [-180, 180]} with this box's own y, Z and M extents. A wrapping box
+     * holds longitudes in {@code [xmin, 180]} and {@code [-180, xmax]}, and a geometry with vertices in both ranges has
+     * a planar envelope reaching across the gap between them. Wrapping is defined for geographic longitude in degrees
+     * alone, where the full range is {@code [-180, 180]}.
+     */
+    public BoundingBox planarEnclosure() {
+        if (!wrapsAntimeridian()) {
+            return this;
+        }
+        return new BoundingBox(WEST_LIMIT, EAST_LIMIT, ymin, ymax, zmin, zmax, mmin, mmax);
+    }
+
+    /** Whether an X or Y bound is NaN: such a box bounds no known region and proves nothing about its geometries. */
+    public boolean hasNaNBound() {
+        return Double.isNaN(xmin) || Double.isNaN(xmax) || Double.isNaN(ymin) || Double.isNaN(ymax);
     }
 }

@@ -23,6 +23,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 
 import io.tileverse.parquetry.format.DataPageHeader;
+import io.tileverse.parquetry.format.DataPageHeaderV2;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.PageType;
@@ -64,6 +65,31 @@ final class PageFixtures {
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty());
+    }
+
+    /** A chunk of one V1 data page with an empty payload and a header declaring {@code declaredValueCount} values. */
+    static MemorySegment v1PageDeclaring(int declaredValueCount) {
+        ByteArrayOutputStream chunk = new ByteArrayOutputStream();
+        ParquetFormat.writePageHeader(chunk, v1FlatHeader(declaredValueCount, 0));
+        return MemorySegment.ofArray(chunk.toByteArray()).asReadOnly();
+    }
+
+    /** A chunk of one V2 data page with an empty payload and a header declaring the given counts. */
+    static MemorySegment v2PageDeclaring(int numValues, int numNulls, int numRows) {
+        DataPageHeaderV2 v2 =
+                new DataPageHeaderV2(numValues, numNulls, numRows, Encoding.PLAIN, 0, 0, false, Optional.empty());
+        PageHeader header = new PageHeader(
+                PageType.DATA_PAGE_V2,
+                0,
+                0,
+                OptionalInt.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.of(v2));
+        ByteArrayOutputStream chunk = new ByteArrayOutputStream();
+        ParquetFormat.writePageHeader(chunk, header);
+        return MemorySegment.ofArray(chunk.toByteArray()).asReadOnly();
     }
 
     private static byte[] plainInt64Values(int valueCount) {

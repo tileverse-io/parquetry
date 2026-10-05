@@ -101,8 +101,14 @@ public final class CoveringPageBounds {
         return units;
     }
 
-    /** A page index is usable when it has at least one page and its column and offset indexes agree on the count. */
+    /**
+     * A page index is usable when its bounds follow an order applied by this reader, it has at least one page, and its
+     * column and offset indexes agree on the count.
+     */
     private static boolean consistent(ColumnPageStats stats) {
+        if (!stats.boundsOrdered()) {
+            return false;
+        }
         ColumnIndex index = stats.columnIndex();
         int pages = index.minValues().size();
         if (pages == 0) {

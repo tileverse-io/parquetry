@@ -17,6 +17,7 @@ package io.tileverse.parquetry.internal.read.page;
 
 import java.lang.foreign.MemorySegment;
 
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.ParquetLayouts;
 
 /**
@@ -30,11 +31,10 @@ import io.tileverse.parquetry.format.ParquetLayouts;
  * <p>{@link #skip(int)} advances the cursor without producing values. Thread-confined; one decoder per column reader
  * per page.
  *
- * <p>{@code valueCount} is the page header's {@code numValues} - the logical row count <em>including nulls</em>. PLAIN
- * encoding stores only the non-null values; an all-null OPTIONAL page therefore validly has {@code valueCount = N} and
- * zero value bytes; the column reader will not call {@link #next()} for those rows. Implementations must therefore not
- * cap the input buffer at {@code valueCount} (e.g. {@code asIntBuffer().limit(valueCount)}); the buffer's natural
- * capacity already reflects what was written. Over-consumption past that capacity should fail loudly.
+ * <p>{@code valueCount} is the number of values encoded in the payload: the non-null values of a data page, or the
+ * entries of a dictionary page. Encodings store only non-null values, hence an all-null page encodes none and its
+ * decoder is never loaded. A decoder fails with a {@link MalformedFileException} on a payload short of
+ * {@code valueCount} values: at load when its layout tells that cheaply, otherwise when decoding runs out of bytes.
  */
 public interface PageDecoder<T> {
 

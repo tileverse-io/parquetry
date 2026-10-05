@@ -32,7 +32,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
  *
  * <p>NULL comparisons follow SQL WHERE semantics collapsed to boolean: a value comparison against NULL evaluates to
  * {@code false} (not NULL). {@link Predicate.IsNull} and {@link Predicate.IsNotNull} are the only predicates whose
- * truth value depends on null presence.
+ * truth value depends on null presence. Floating-point comparisons follow IEEE 754, as documented on {@link Predicate}.
  *
  * <p>Assumes the predicate has been normalized (Not pushed to leaves, Always folded, And/Or flattened).
  */
@@ -78,30 +78,21 @@ public final class RecordLevelEvaluator {
             case Predicate.Not(Predicate.GeometryFilterPredicate(GeometryFilter<?> filter)) ->
                 negatedGeometryFilterHolds(filter, row);
             case Predicate.Not(Predicate child) -> !test(child, row);
-            case Predicate.Eq(ColumnPath col, Value v) -> ValueComparison.compareBoxed(row.value(col), v) == 0;
-            case Predicate.NotEq(ColumnPath col, Value v) -> {
-                Object got = row.value(col);
-                yield got != null && ValueComparison.compareBoxed(got, v) != 0;
-            }
-            case Predicate.Lt(ColumnPath col, Value v) -> {
-                Object got = row.value(col);
-                yield got != null && ValueComparison.compareBoxed(got, v) < 0;
-            }
-            case Predicate.LtEq(ColumnPath col, Value v) -> {
-                Object got = row.value(col);
-                yield got != null && ValueComparison.compareBoxed(got, v) <= 0;
-            }
-            case Predicate.Gt(ColumnPath col, Value v) -> {
-                Object got = row.value(col);
-                yield got != null && ValueComparison.compareBoxed(got, v) > 0;
-            }
-            case Predicate.GtEq(ColumnPath col, Value v) -> {
-                Object got = row.value(col);
-                yield got != null && ValueComparison.compareBoxed(got, v) >= 0;
-            }
+            case Predicate.Eq(ColumnPath col, Value v) ->
+                ValueComparison.holds(ComparisonOperator.EQ, row.value(col), v);
+            case Predicate.NotEq(ColumnPath col, Value v) ->
+                ValueComparison.holds(ComparisonOperator.NOT_EQ, row.value(col), v);
+            case Predicate.Lt(ColumnPath col, Value v) ->
+                ValueComparison.holds(ComparisonOperator.LT, row.value(col), v);
+            case Predicate.LtEq(ColumnPath col, Value v) ->
+                ValueComparison.holds(ComparisonOperator.LT_EQ, row.value(col), v);
+            case Predicate.Gt(ColumnPath col, Value v) ->
+                ValueComparison.holds(ComparisonOperator.GT, row.value(col), v);
+            case Predicate.GtEq(ColumnPath col, Value v) ->
+                ValueComparison.holds(ComparisonOperator.GT_EQ, row.value(col), v);
             case Predicate.In(ColumnPath col, List<Value> values) -> {
                 Object got = row.value(col);
-                yield got != null && values.stream().anyMatch(v -> ValueComparison.compareBoxed(got, v) == 0);
+                yield values.stream().anyMatch(v -> ValueComparison.holds(ComparisonOperator.EQ, got, v));
             }
             case Predicate.IsNull(ColumnPath col) -> row.value(col) == null;
             case Predicate.IsNotNull(ColumnPath col) -> row.value(col) != null;

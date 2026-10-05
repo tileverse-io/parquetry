@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.internal.write;
 
+import static io.tileverse.parquetry.format.ParquetLayouts.FLOAT;
 import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
 import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
@@ -73,7 +74,7 @@ class ColumnIndexBuilderTest {
         builder.appendPage(new PageStatistics(int32(11), int32(20), 1L, false));
         builder.appendPage(new PageStatistics(int32(21), int32(30), 0L, false));
 
-        ColumnIndex original = builder.finishChunk();
+        ColumnIndex original = builder.finishChunk().orElseThrow();
         ColumnIndex parsed = roundTrip(original);
 
         assertThat(parsed).usingRecursiveComparison(memorySegmentByContent()).isEqualTo(original);
@@ -89,7 +90,7 @@ class ColumnIndexBuilderTest {
         builder.appendPage(new PageStatistics(MemorySegment.NULL, MemorySegment.NULL, 7L, true));
         builder.appendPage(new PageStatistics(MemorySegment.NULL, MemorySegment.NULL, 3L, true));
 
-        ColumnIndex original = builder.finishChunk();
+        ColumnIndex original = builder.finishChunk().orElseThrow();
 
         assertThat(original.nullPages()).containsExactly(true, true, true);
         assertThat(original.minValues())
@@ -107,7 +108,7 @@ class ColumnIndexBuilderTest {
         builder.appendPage(new PageStatistics(MemorySegment.NULL, MemorySegment.NULL, 4L, true));
         builder.appendPage(new PageStatistics(int32(6), int32(9), 0L, false));
 
-        ColumnIndex parsed = roundTrip(builder.finishChunk());
+        ColumnIndex parsed = roundTrip(builder.finishChunk().orElseThrow());
 
         assertThat(parsed.nullPages()).containsExactly(false, true, false);
         assertThat(parsed.boundaryOrder())
@@ -123,7 +124,7 @@ class ColumnIndexBuilderTest {
         builder.appendPage(new PageStatistics(int32(3), int32(4), 0L, false));
         builder.appendPage(new PageStatistics(int32(5), int32(6), 0L, false));
 
-        ColumnIndex index = builder.finishChunk();
+        ColumnIndex index = builder.finishChunk().orElseThrow();
 
         assertThat(index.boundaryOrder()).isEqualTo(BoundaryOrder.ASCENDING);
     }
@@ -135,7 +136,7 @@ class ColumnIndexBuilderTest {
         builder.appendPage(new PageStatistics(int64(50L), int64(99L), 0L, false));
         builder.appendPage(new PageStatistics(int64(0L), int64(49L), 0L, false));
 
-        ColumnIndex index = builder.finishChunk();
+        ColumnIndex index = builder.finishChunk().orElseThrow();
 
         assertThat(index.boundaryOrder()).isEqualTo(BoundaryOrder.DESCENDING);
     }
@@ -147,7 +148,7 @@ class ColumnIndexBuilderTest {
         builder.appendPage(new PageStatistics(int32(5), int32(7), 0L, false));
         builder.appendPage(new PageStatistics(int32(20), int32(30), 0L, false));
 
-        ColumnIndex index = builder.finishChunk();
+        ColumnIndex index = builder.finishChunk().orElseThrow();
 
         assertThat(index.boundaryOrder()).isEqualTo(BoundaryOrder.UNORDERED);
     }
@@ -157,7 +158,7 @@ class ColumnIndexBuilderTest {
         ColumnIndexBuilder builder = new ColumnIndexBuilder(PrimitiveKind.INT32, null);
         builder.appendPage(new PageStatistics(int32(42), int32(42), 0L, false));
 
-        ColumnIndex index = builder.finishChunk();
+        ColumnIndex index = builder.finishChunk().orElseThrow();
 
         assertThat(index.boundaryOrder())
                 .as("a single page can't establish an order; UNORDERED is the safe value")
@@ -170,7 +171,7 @@ class ColumnIndexBuilderTest {
         builder.appendPage(new PageStatistics(bytes("apple"), bytes("banana"), 0L, false));
         builder.appendPage(new PageStatistics(bytes("cherry"), bytes("date"), 0L, false));
 
-        ColumnIndex index = builder.finishChunk();
+        ColumnIndex index = builder.finishChunk().orElseThrow();
 
         assertThat(index.boundaryOrder()).isEqualTo(BoundaryOrder.ASCENDING);
     }
@@ -182,7 +183,7 @@ class ColumnIndexBuilderTest {
         builder.appendPage(new PageStatistics(bytes("\1\2"), bytes("\3\4"), 0L, false));
         builder.appendPage(new PageStatistics(bytes("\5\6"), bytes("\7\10"), 0L, false));
 
-        ColumnIndex index = builder.finishChunk();
+        ColumnIndex index = builder.finishChunk().orElseThrow();
 
         assertThat(index.boundaryOrder())
                 .as("WKB bytes carry no meaningful order; geometry columns must stay UNORDERED")
@@ -194,10 +195,10 @@ class ColumnIndexBuilderTest {
         ColumnIndexBuilder builder = new ColumnIndexBuilder(PrimitiveKind.INT32, null);
         builder.appendPage(new PageStatistics(int32(1), int32(2), 0L, false));
         builder.appendPage(new PageStatistics(int32(3), int32(4), 0L, false));
-        ColumnIndex first = builder.finishChunk();
+        ColumnIndex first = builder.finishChunk().orElseThrow();
 
         builder.appendPage(new PageStatistics(int32(100), int32(200), 5L, false));
-        ColumnIndex second = builder.finishChunk();
+        ColumnIndex second = builder.finishChunk().orElseThrow();
 
         assertThat(first.nullPages()).hasSize(2);
         assertThat(second.nullPages()).hasSize(1);
@@ -211,16 +212,55 @@ class ColumnIndexBuilderTest {
         builder.reset();
         builder.appendPage(new PageStatistics(int32(10), int32(20), 0L, false));
 
-        ColumnIndex index = builder.finishChunk();
+        ColumnIndex index = builder.finishChunk().orElseThrow();
 
         assertThat(index.nullPages()).hasSize(1);
         assertThat(index.nullCounts()).contains(List.of(0L));
+    }
+
+    @Test
+    void chunkWithAPageOfNaNValuesOnlyHasNoColumnIndex() {
+        StatisticsAccumulator nanPage = StatisticsAccumulator.forKind(PrimitiveKind.FLOAT, null);
+        nanPage.updateFloat(Float.NaN);
+        nanPage.updateFloat(Float.NaN);
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(PrimitiveKind.FLOAT, null);
+        builder.appendPage(new PageStatistics(float32(1.0f), float32(2.0f), 0L, false));
+        builder.appendPage(nanPage.finishPage());
+
+        assertThat(builder.finishChunk()).isEmpty();
+    }
+
+    @Test
+    void chunkWithMixedNaNPagesKeepsItsColumnIndex() {
+        StatisticsAccumulator mixedPage = StatisticsAccumulator.forKind(PrimitiveKind.FLOAT, null);
+        mixedPage.updateFloat(Float.NaN);
+        mixedPage.updateFloat(3.0f);
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(PrimitiveKind.FLOAT, null);
+        builder.appendPage(mixedPage.finishPage());
+
+        assertThat(builder.finishChunk()).isPresent();
+    }
+
+    @Test
+    void builderServesTheNextChunkAfterOneWithoutColumnIndex() {
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(PrimitiveKind.FLOAT, null);
+        builder.appendPage(new PageStatistics(MemorySegment.NULL, MemorySegment.NULL, 0L, false));
+        builder.finishChunk();
+        builder.appendPage(new PageStatistics(float32(1.0f), float32(2.0f), 0L, false));
+
+        assertThat(builder.finishChunk()).isPresent();
     }
 
     private static ColumnIndex roundTrip(ColumnIndex original) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ParquetFormat.writeColumnIndex(out, original);
         return ParquetFormatDeserializer.readColumnIndex(new ByteArrayInputStream(out.toByteArray()));
+    }
+
+    private static MemorySegment float32(float value) {
+        byte[] buf = new byte[4];
+        MemorySegment.ofArray(buf).set(FLOAT, 0, value);
+        return MemorySegment.ofArray(buf).asReadOnly();
     }
 
     private static MemorySegment int32(int value) {

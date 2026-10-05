@@ -17,6 +17,8 @@ package io.tileverse.parquetry.internal.read.page;
 
 import java.lang.foreign.MemorySegment;
 
+import io.tileverse.parquetry.format.MalformedFileException;
+
 /**
  * DELTA_LENGTH_BYTE_ARRAY page decoder.
  *
@@ -38,6 +40,7 @@ public final class DeltaLengthByteArrayDecoder implements PageDecoder<MemorySegm
     public void load(MemorySegment page, int valueCount) {
         DeltaBinaryPackedDecoder lengthDecoder = new DeltaBinaryPackedDecoder();
         lengthDecoder.load(page);
+        lengthDecoder.requireDeclaredValues(valueCount);
 
         int totalLengths = lengthDecoder.totalValueCount();
         this.lengths = new int[totalLengths];
@@ -55,6 +58,32 @@ public final class DeltaLengthByteArrayDecoder implements PageDecoder<MemorySegm
         this.payloadStart = lengthDecoder.position();
         this.payload = page.asSlice(payloadStart);
         this.payloadOffset = 0L;
+        requireLengthsWithinPayload();
+    }
+
+    /** The decoded lengths must each be non-negative and together fit the payload bytes after the length stream. */
+    private void requireLengthsWithinPayload() {
+        long totalBytes = 0L;
+        for (int length : lengths) {
+            if (length < 0) {
+                throw negativeLength(length);
+            }
+            totalBytes += length;
+        }
+        if (totalBytes > payload.byteSize()) {
+            throw lengthsBeyondPayload(totalBytes, payload.byteSize());
+        }
+    }
+
+    // Built out of line to keep the per-value loop above small.
+
+    private static MalformedFileException negativeLength(int length) {
+        return new MalformedFileException("DELTA_LENGTH_BYTE_ARRAY page declares a negative value length " + length);
+    }
+
+    private static MalformedFileException lengthsBeyondPayload(long totalBytes, long payloadBytes) {
+        return new MalformedFileException("DELTA_LENGTH_BYTE_ARRAY lengths add up to " + totalBytes
+                + " bytes but the page holds " + payloadBytes + " after them");
     }
 
     @Override

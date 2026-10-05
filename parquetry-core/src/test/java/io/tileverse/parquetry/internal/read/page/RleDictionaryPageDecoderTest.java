@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.internal.read.page;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
@@ -26,6 +27,7 @@ import java.nio.LongBuffer;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.ParquetLayouts;
 
 class RleDictionaryPageDecoderTest {
@@ -326,6 +328,80 @@ class RleDictionaryPageDecoderTest {
         assertThat(dst.getAtIndex(ParquetLayouts.FLOAT, 4)).isEqualTo(1.5f);
         assertThat(dst.getAtIndex(ParquetLayouts.FLOAT, 5)).isEqualTo(2.5f);
         assertThat(decoder.next()).isEqualTo(3.5f);
+    }
+
+    @Test
+    void zeroBitWidthReadsEveryIndexAsTheFirstEntry() {
+        Dictionary.IntDict dict = new Dictionary.IntDict(intBuf(7));
+        // bit width 0: the index stream needs no bytes and all indices are 0
+        RleDictionaryPageDecoder<Integer> decoder = new RleDictionaryPageDecoder<>(dict);
+        decoder.load(MemorySegment.ofArray(new byte[] {0}), 5);
+        int[] dst = new int[5];
+
+        decoder.decodeInts(5, dst, 0);
+
+        assertThat(dst).containsOnly(7);
+    }
+
+    @Test
+    void bitWidthAboveThirtyTwoIsAFormatError() {
+        Dictionary.IntDict dict = new Dictionary.IntDict(intBuf(7));
+        RleDictionaryPageDecoder<Integer> decoder = new RleDictionaryPageDecoder<>(dict);
+        MemorySegment page = MemorySegment.ofArray(new byte[] {(byte) 254, 0x02, 0x00});
+
+        assertThatThrownBy(() -> decoder.load(page, 1))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("bit width 254");
+    }
+
+    @Test
+    void pageWithoutBitWidthByteIsAFormatError() {
+        Dictionary.IntDict dict = new Dictionary.IntDict(intBuf(7));
+        RleDictionaryPageDecoder<Integer> decoder = new RleDictionaryPageDecoder<>(dict);
+        MemorySegment page = MemorySegment.ofArray(new byte[0]);
+
+        assertThatThrownBy(() -> decoder.load(page, 3))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("holds no bytes");
+    }
+
+    @Test
+    void indexOutsideTheDictionaryIsAFormatError() {
+        Dictionary.IntDict dict = new Dictionary.IntDict(intBuf(10, 20, 30));
+        // bit width 2, RLE run of 2 repeating index 3, one past the dictionary's last entry
+        MemorySegment page = MemorySegment.ofArray(new byte[] {2, 0x04, 0x03});
+        RleDictionaryPageDecoder<Integer> decoder = new RleDictionaryPageDecoder<>(dict);
+        decoder.load(page, 2);
+        int[] indices = new int[2];
+
+        assertThatThrownBy(() -> decoder.decodeIndices(2, indices, 0))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("dictionary indices hold the value 3, above their maximum 2");
+    }
+
+    @Test
+    void bitPackedIndexOutsideTheDictionaryIsAFormatError() {
+        Dictionary.IntDict dict = new Dictionary.IntDict(intBuf(10, 20, 30));
+        // bit width 2, a bit-packed group of 8 indices [0, 1, 2, 3, 0, 0, 0, 0]: 3 is past the last entry
+        MemorySegment page = MemorySegment.ofArray(new byte[] {2, 0x03, (byte) 0xe4, 0x00});
+        RleDictionaryPageDecoder<Integer> decoder = new RleDictionaryPageDecoder<>(dict);
+        decoder.load(page, 4);
+        int[] values = new int[4];
+
+        assertThatThrownBy(() -> decoder.decodeInts(4, values, 0))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("dictionary indices hold the value 3, above their maximum 2");
+    }
+
+    @Test
+    void valuesReferencingAnEmptyDictionaryAreAFormatError() {
+        Dictionary.IntDict empty = new Dictionary.IntDict(intBuf());
+        PageDecoder<Integer> decoder = new RleDictionaryPageDecoder<>(empty);
+        MemorySegment page = MemorySegment.ofArray(new byte[] {0});
+
+        assertThatThrownBy(() -> decoder.load(page, 1))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("1 dictionary-encoded values reference an empty dictionary");
     }
 
     private static IntBuffer intBuf(int... values) {

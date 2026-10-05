@@ -17,12 +17,15 @@ package io.tileverse.parquetry.internal.read.page;
 
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayOutputStream;
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.Test;
+
+import io.tileverse.parquetry.format.MalformedFileException;
 
 class DeltaLengthByteArrayDecoderTest {
 
@@ -104,5 +107,27 @@ class DeltaLengthByteArrayDecoderTest {
             out.write(v.getBytes(StandardCharsets.UTF_8));
         }
         return out.toByteArray();
+    }
+
+    @Test
+    void lengthsBeyondThePayloadAreAFormatError() {
+        // one length of 10 (zigzag 20) in a single-value DELTA_BINARY_PACKED stream, then 3 payload bytes
+        MemorySegment page = MemorySegment.ofArray(new byte[] {0x08, 0x01, 0x01, 0x14, 'a', 'b', 'c'});
+        DeltaLengthByteArrayDecoder decoder = new DeltaLengthByteArrayDecoder();
+
+        assertThatThrownBy(() -> decoder.load(page, 1))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("lengths add up to 10 bytes but the page holds 3 after them");
+    }
+
+    @Test
+    void negativeLengthIsAFormatError() {
+        // one length of -1 (zigzag 1)
+        MemorySegment page = MemorySegment.ofArray(new byte[] {0x08, 0x01, 0x01, 0x01, 'a'});
+        DeltaLengthByteArrayDecoder decoder = new DeltaLengthByteArrayDecoder();
+
+        assertThatThrownBy(() -> decoder.load(page, 1))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("negative value length -1");
     }
 }

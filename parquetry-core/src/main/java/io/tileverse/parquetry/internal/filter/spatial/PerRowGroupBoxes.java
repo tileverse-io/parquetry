@@ -15,16 +15,19 @@
  */
 package io.tileverse.parquetry.internal.filter.spatial;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.BinaryOperator;
 
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
  * The row-group bounds precomputed by a {@link SpatialBoundsSource}: per geometry column, one slot per row group,
- * holding that row group's box where its bounds are known and {@link Optional#empty()} where they are not.
+ * holding that row group's box where its bounds are known and {@link Optional#empty()} where they are not. A box with a
+ * NaN bound counts as not known.
  */
 final class PerRowGroupBoxes {
 
@@ -41,5 +44,37 @@ final class PerRowGroupBoxes {
             }
         }
         return boxes;
+    }
+
+    /**
+     * The file-level box of each column: the {@code union} of its row-group boxes, absent for a column with a row group
+     * without a box. Such a row group could hold any geometry, and the file cannot bound it.
+     */
+    static Map<ColumnPath, BoundingBox> fileLevelUnions(
+            Map<ColumnPath, List<Optional<BoundingBox>>> perRowGroup, BinaryOperator<BoundingBox> union) {
+        Map<ColumnPath, BoundingBox> fileLevel = HashMap.newHashMap(perRowGroup.size());
+        perRowGroup.forEach(
+                (column, byGroup) -> unionOfEach(byGroup, union).ifPresent(box -> fileLevel.put(column, box)));
+        return fileLevel;
+    }
+
+    /**
+     * The union of the row-group boxes, or empty as soon as one row group has no box. A box without an extent, recorded
+     * for a row group holding no geometry with one, adds nothing.
+     */
+    private static Optional<BoundingBox> unionOfEach(
+            List<Optional<BoundingBox>> byGroup, BinaryOperator<BoundingBox> union) {
+        BoundingBox accumulated = null;
+        for (Optional<BoundingBox> slot : byGroup) {
+            if (slot.isEmpty()) {
+                return Optional.empty();
+            }
+            BoundingBox box = slot.orElseThrow();
+            if (!box.hasExtent()) {
+                continue;
+            }
+            accumulated = accumulated == null ? box : union.apply(accumulated, box);
+        }
+        return Optional.ofNullable(accumulated);
     }
 }

@@ -31,6 +31,11 @@ import io.tileverse.parquetry.format.BoundingBox;
  * if later contributions provide it. Under concurrent fan-outs with containment skips, which Z and M contributions are
  * seen can depend on completion order; the 2D extent never does.
  *
+ * <p>A metadata box wrapping the antimeridian ({@link BoundingBox#wrapsAntimeridian()}) takes part as its planar
+ * enclosure, the full longitude range with its own y extent (see {@link BoundingBox#planarEnclosure()}), in both unions
+ * and containment queries. A box or rectangle without an extent, such as the envelope of an empty geometry, adds
+ * nothing: the accumulated box has finite edges and never wraps.
+ *
  * <p>Callers apply two trust levels. A conservative metadata box may only justify skipping work, through
  * {@link #covers(BoundingBox)}: containment of an enclosure implies containment of whatever it encloses. A box may be
  * added to the extent without scanning only when it is the tight box of a unit whose rows all match the query.
@@ -58,21 +63,39 @@ public final class BoundsAccumulator {
     private double mMax;
     private boolean mPoisoned;
 
-    /** Expands the extent by the given box, combining Z and M only while every contribution keeps providing them. */
+    /**
+     * Expands the extent by the given box, combining Z and M only while the contributions keep providing them. A box
+     * without an extent ({@link BoundingBox#hasExtent()}) adds nothing.
+     */
     public synchronized void union(BoundingBox box) {
-        combineZ(box);
-        combineM(box);
-        expandXy(box.xmin(), box.ymin(), box.xmax(), box.ymax());
+        if (!box.hasExtent()) {
+            return;
+        }
+        BoundingBox planar = box.planarEnclosure();
+        combineZ(planar);
+        combineM(planar);
+        expandXy(planar.xmin(), planar.ymin(), planar.xmax(), planar.ymax());
     }
 
     /**
      * Expands the 2D extent by the given rectangle. This is the scan-fold entry; a scanned rectangle is 2D only, and
-     * one fold drops Z and M for good, exactly like a union with a box that lacks them.
+     * one fold drops Z and M for good, exactly like a union with a box that lacks them. A rectangle without an extent,
+     * such as the envelope of an empty geometry, adds nothing.
      */
     public synchronized void unionXy(double xLow, double yLow, double xHigh, double yHigh) {
+        if (!isRegion(xLow, yLow, xHigh, yHigh)) {
+            return;
+        }
         dropZ();
         dropM();
         expandXy(xLow, yLow, xHigh, yHigh);
+    }
+
+    /** Whether the rectangle bounds a region: finite edges, each minimum at or below its maximum. */
+    private static boolean isRegion(double xLow, double yLow, double xHigh, double yHigh) {
+        boolean finite =
+                Double.isFinite(xLow) && Double.isFinite(yLow) && Double.isFinite(xHigh) && Double.isFinite(yHigh);
+        return finite && xLow <= xHigh && yLow <= yHigh;
     }
 
     /**
@@ -82,7 +105,8 @@ public final class BoundsAccumulator {
         if (empty) {
             return false;
         }
-        return box.xmin() >= minX && box.xmax() <= maxX && box.ymin() >= minY && box.ymax() <= maxY;
+        BoundingBox planar = box.planarEnclosure();
+        return planar.xmin() >= minX && planar.xmax() <= maxX && planar.ymin() >= minY && planar.ymax() <= maxY;
     }
 
     /** Returns the accumulated box, or empty until the first union. */

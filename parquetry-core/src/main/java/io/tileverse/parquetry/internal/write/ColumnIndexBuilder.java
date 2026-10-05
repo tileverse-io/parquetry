@@ -89,10 +89,13 @@ public final class ColumnIndexBuilder {
     }
 
     /**
-     * Returns the {@link ColumnIndex} assembled from every {@link #appendPage} call since the last reset. Calling this
-     * method also clears internal state so the builder can be reused for the next column chunk.
+     * Returns the {@link ColumnIndex} assembled from the {@link #appendPage} calls since the last reset, empty when a
+     * page of an ordered column holds only NaN values. Such a page has no min or max, both required by a column index,
+     * and the format forbids writing a NaN into them. Calling this method also clears internal state, readying the
+     * builder for the next column chunk.
      */
-    public ColumnIndex finishChunk() {
+    public Optional<ColumnIndex> finishChunk() {
+        boolean bounded = boundsEachValuedPage();
         BoundaryOrder order = tracksOrdering ? computeBoundaryOrder() : BoundaryOrder.UNORDERED;
         ColumnIndex index = new ColumnIndex(
                 List.copyOf(nullPages),
@@ -103,7 +106,24 @@ public final class ColumnIndexBuilder {
                 Optional.empty(),
                 Optional.empty());
         reset();
-        return index;
+        return bounded ? Optional.of(index) : Optional.empty();
+    }
+
+    /**
+     * Whether each page holding a value has min and max bytes. An ordered column misses them only on a page of NaN
+     * values; a geometry column never records them.
+     */
+    private boolean boundsEachValuedPage() {
+        if (!tracksOrdering) {
+            return true;
+        }
+        for (int i = 0; i < nullPages.size(); i++) {
+            boolean isNullPage = nullPages.get(i).booleanValue();
+            if (!isNullPage && !hasOrderedBytes(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Clears every accumulated page entry; the builder behaves as freshly constructed. */

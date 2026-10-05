@@ -28,6 +28,7 @@ import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -49,6 +50,7 @@ import io.tileverse.parquetry.columnar.Levels;
 import io.tileverse.parquetry.columnar.LongVector;
 import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.format.CompressionCodec;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.internal.read.page.PageCursor;
@@ -946,6 +948,84 @@ class BatchColumnReaderTest {
                 }
             }
         }
+    }
+
+    // --- malformed pages ---
+
+    @Test
+    void pageDeclaringMoreValuesThanItsChunkIsAFormatError() throws IOException {
+        byte[] page = encodeV1Page(
+                4, encodeInt32sLittleEndian(new int[] {1, 2, 3, 4}), org.apache.parquet.format.Encoding.PLAIN);
+        FetchedColumnChunk chunk = heapChunk(PATH, page, /*numValues*/ 2, /*maxRep*/ 0, /*maxDef*/ 0);
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, requiredInt32Leaf());
+
+        assertThatThrownBy(() -> reader.readBatch(10, new ArrayList<>()))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("Column val data page 0 declares 4 values but its column chunk holds 2");
+    }
+
+    @Test
+    void requiredPageShortOfItsValueBytesFailsNamingTheColumnAndPage() throws IOException {
+        byte[] page = encodeV1Page(
+                4, encodeInt32sLittleEndian(new int[] {1, 2, 3}), org.apache.parquet.format.Encoding.PLAIN);
+        FetchedColumnChunk chunk = heapChunk(PATH, page, /*numValues*/ 4, /*maxRep*/ 0, /*maxDef*/ 0);
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, requiredInt32Leaf());
+
+        assertThatThrownBy(() -> reader.readBatch(10, new ArrayList<>()))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessage("Column val data page 0: 4 INT32 values need 16 bytes but the page holds 12");
+    }
+
+    @Test
+    void repeatedPageOpeningMidRowWithNoRowOpenIsAFormatError() throws IOException {
+        // repetition levels [1, 0]: the first value continues a row that never started
+        byte[] page = repeatedInt32Page(new int[] {1, 0}, new int[] {7, 8});
+        FetchedColumnChunk chunk = heapChunk(PATH, page, /*numValues*/ 2, /*maxRep*/ 1, /*maxDef*/ 1);
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, repeatedInt32Leaf());
+
+        assertThatThrownBy(reader::logicalRowsRemainingInCurrentPage)
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("Column val data page 0 opens with repetition level 1 but no row is open");
+    }
+
+    @Test
+    void repeatedPageContinuingTheRowOfThePageBeforeItReads() throws IOException {
+        // page 0 opens row 0 with [0, 1]; page 1 continues it with [1], then starts row 1 with [0]
+        byte[] page0 = repeatedInt32Page(new int[] {0, 1}, new int[] {1, 2});
+        byte[] page1 = repeatedInt32Page(new int[] {1, 0}, new int[] {3, 4});
+        FetchedColumnChunk chunk = heapChunk(PATH, concat(page0, page1), /*numValues*/ 4, /*maxRep*/ 1, /*maxDef*/ 1);
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, repeatedInt32Leaf());
+
+        BatchColumnReader.SpanningRow row = reader.readSpanningRow(new ArrayList<>());
+
+        assertThat(intsOf(row.repLevels())).containsExactly(0, 1, 1);
+        assertThat(VectorArrays.toArray((IntVector) row.vector())).containsExactly(1, 2, 3);
+    }
+
+    /**
+     * Encodes one V1 page of a {@code repeated int32} column: the repetition and definition level sections, each
+     * length-prefixed, then the values. Each value is present, at definition level 1.
+     */
+    private static byte[] repeatedInt32Page(int[] repLevels, int[] values) throws IOException {
+        int[] defLevels = new int[values.length];
+        Arrays.fill(defLevels, 1);
+        byte[] repBytes = rleEncodeBits(repLevels, /*maxLevel*/ 1);
+        byte[] defBytes = rleEncodeBits(defLevels, /*maxLevel*/ 1);
+        byte[] levelsAndValues = concat(
+                lengthPrefixed(repBytes), buildV1PayloadWithDefLevels(defBytes, encodeInt32sLittleEndian(values)));
+        return encodeV1Page(values.length, levelsAndValues, org.apache.parquet.format.Encoding.PLAIN);
+    }
+
+    private static byte[] lengthPrefixed(byte[] section) {
+        ByteBuffer buf = ByteBuffer.allocate(4 + section.length).order(LITTLE_ENDIAN);
+        buf.putInt(section.length);
+        buf.put(section);
+        return buf.array();
+    }
+
+    private static SchemaNode.Primitive repeatedInt32Leaf() {
+        return new SchemaNode.Primitive(
+                "val", Repetition.REPEATED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
     }
 
     // --- fixture helpers ---

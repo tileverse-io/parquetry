@@ -35,6 +35,7 @@ import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
+import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -69,6 +70,29 @@ public final class PointParquet {
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writer.writeBatch(pointBatch(schema, column, points));
+        }
+        return file;
+    }
+
+    /**
+     * Writes the same flat, single geometry-column GeoParquet file as {@link #writePoints}, with one row group per
+     * entry of {@code rowGroups} holding that entry's points.
+     *
+     * @return {@code file}, for caller convenience
+     */
+    public static Path writePointRowGroups(
+            Path file, String column, GeoParquetMetadataMode mode, double[][]... rowGroups) throws Exception {
+        ParquetSchema schema = flatGeometrySchema(column);
+        WriteOptions options = WriteOptions.builder()
+                .tempDir(file.getParent())
+                .geoParquetMetadata(mode)
+                .crsEpsg(column, 4326)
+                .rowGroupSize(RowGroupSize.rows(1))
+                .build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
+            for (double[][] points : rowGroups) {
+                writer.writeBatch(pointBatch(schema, column, points));
+            }
         }
         return file;
     }

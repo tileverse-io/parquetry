@@ -86,7 +86,8 @@ sound, not just useful. A false `MATCHED` would overcount. The guard
 - **`nullCount == 0`.** A null never satisfies a comparison. A column with any
   null cannot be all-match (`year > 5` is false for a null `year`).
 - **the column kind is exactly bounded:** `BOOLEAN`, `INT32`, `INT64`. `FLOAT` and
-  `DOUBLE` are excluded (a `NaN` breaks min/max ordering), and binary
+  `DOUBLE` are excluded (`NaN` cells lie outside min/max, and under IEEE 754 an
+  ordered comparison never matches them), and binary
   (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`) is excluded because its statistics may be
   truncated, leaving the stored max below the true max.
 

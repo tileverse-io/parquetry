@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.internal.filter;
 
 import static io.tileverse.parquetry.filter.Pred.col;
+import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
 import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
 import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -222,6 +223,33 @@ class ColumnIndexEvaluatorTest {
     }
 
     @Test
+    void notInKeepsThePagesHoldingOtherValues() {
+        // The middle page [2018, 2022] may hold 2020, yet it also holds the rows 2018, 2019, 2021 and 2022.
+        Predicate notIn = PredicateNormalizer.normalize(col("year").inInts(2020).negate());
+
+        PruningDecision d = ColumnIndexEvaluator.evaluate(notIn, year3Pages(), ROW_GROUP_ROWS);
+
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void negationInsideAConjunctionLeavesTheOtherLeavesNarrowing() {
+        Predicate p = PredicateNormalizer.normalize(
+                col("year").inInts(2020).negate().and(col("year").gt(2023)));
+
+        PruningDecision d = ColumnIndexEvaluator.evaluate(p, year3Pages(), ROW_GROUP_ROWS);
+
+        assertThat(((PruningDecision.NarrowedTo) d).ranges().ranges()).containsExactly(new Range(200, 299));
+    }
+
+    @Test
+    void consultedColumnsOmitsANegation() {
+        Predicate notIn = PredicateNormalizer.normalize(col("year").inInts(2020).negate());
+
+        assertThat(ColumnIndexEvaluator.consultedColumns(notIn)).isEmpty();
+    }
+
+    @Test
     void evaluateWarmsTheColumnsItIsAboutToAsk() {
         List<List<ColumnPath>> warmed = new ArrayList<>();
         FilterPipeline.ColumnPageStatsLookup pages = year3Pages();
@@ -242,7 +270,125 @@ class ColumnIndexEvaluatorTest {
         assertThat(warmed).containsExactly(List.of(ColumnPath.of("year")));
     }
 
+    @Test
+    void unorderedPageBoundsLeaveValueComparisonsUnpruned() {
+        FilterPipeline.ColumnPageStatsLookup cols = year3PagesInAnUnknownOrder();
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("year").eq(1999), cols, ROW_GROUP_ROWS);
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void unorderedPageBoundsKeepTheNullMarkersUsable() {
+        FilterPipeline.ColumnPageStatsLookup cols = year3PagesInAnUnknownOrder();
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("year").isNull(), cols, ROW_GROUP_ROWS);
+        assertThat(d).isInstanceOf(PruningDecision.NarrowedTo.class);
+        RowRanges r = ((PruningDecision.NarrowedTo) d).ranges();
+        assertThat(r.ranges()).containsExactly(new Range(100, 199));
+    }
+
+    @Test
+    void halfFloatPageBoundsLeaveValueComparisonsUnpruned() {
+        // 0x3C00 is 1.0 and 0xC000 is -2.0: an unsigned byte order would put -2.0 above 1.0.
+        MemorySegment one = MemorySegment.ofArray(new byte[] {0x00, 0x3C}).asReadOnly();
+        MemorySegment minusTwo =
+                MemorySegment.ofArray(new byte[] {0x00, (byte) 0xC0}).asReadOnly();
+        FilterPipeline.ColumnPageStatsLookup cols = singleColumn(
+                "h",
+                PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                List.of(false),
+                List.of(minusTwo),
+                List.of(one),
+                List.of(0L),
+                new LogicalType.Float16Type());
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("h").eq(minusTwo), cols, 100);
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void nanLiteralEqualityKeepsTheValuedPages() {
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").eq(Double.NaN), priceWithANaNPage(), 300);
+        assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void pageWithNaNBoundsSurvivesAnyComparison() {
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").gt(10.0), priceWithANaNPage(), 300);
+        assertThat(d).isInstanceOf(PruningDecision.NarrowedTo.class);
+        RowRanges r = ((PruningDecision.NarrowedTo) d).ranges();
+        assertThat(r.ranges()).containsExactly(new Range(100, 199));
+    }
+
+    @Test
+    void orderedComparisonAgainstANaNLiteralLeavesNoPage() {
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").lt(Double.NaN), priceWithANaNPage(), 300);
+        assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void notEqOnAFloatColumnKeepsTheValuedPages() {
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").notEq(-5.0), singleValuePricePages(), 200);
+        assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void zeroPageBoundsCompareEqualToEitherZero() {
+        PruningDecision above = ColumnIndexEvaluator.evaluate(col("price").gt(0.0), priceWithANaNPage(), 300);
+        assertThat(((PruningDecision.NarrowedTo) above).ranges().ranges())
+                .containsExactly(new Range(0, 99), new Range(100, 199));
+        PruningDecision atLeast = ColumnIndexEvaluator.evaluate(col("price").gtEq(0.0), priceWithANaNPage(), 300);
+        assertThat(atLeast).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
     // --- helpers ---
+
+    /**
+     * Three DOUBLE pages of 100 rows: [1.0, 5.0], a page of NaN values bounded by NaN as written under the IEEE 754
+     * total order, and [-5.0, -0.0].
+     */
+    private static FilterPipeline.ColumnPageStatsLookup priceWithANaNPage() {
+        return singleColumn(
+                "price",
+                PrimitiveKind.DOUBLE,
+                List.of(false, false, false),
+                List.of(encodeDouble(1.0), encodeDouble(Double.NaN), encodeDouble(-5.0)),
+                List.of(encodeDouble(5.0), encodeDouble(Double.NaN), encodeDouble(-0.0)),
+                List.of(0L, 100L, 200L));
+    }
+
+    /** Two DOUBLE pages of 100 rows, each bounded by -5.0 at both ends. */
+    private static FilterPipeline.ColumnPageStatsLookup singleValuePricePages() {
+        return singleColumn(
+                "price",
+                PrimitiveKind.DOUBLE,
+                List.of(false, false),
+                List.of(encodeDouble(-5.0), encodeDouble(-5.0)),
+                List.of(encodeDouble(-5.0), encodeDouble(-5.0)),
+                List.of(0L, 100L));
+    }
+
+    private static MemorySegment encodeDouble(double v) {
+        MemorySegment segment = MemorySegment.ofArray(new byte[8]);
+        segment.set(DOUBLE, 0, v);
+        return segment.asReadOnly();
+    }
+
+    /** The pages of {@link #year3Pages()} under a column order unknown to the reader; only page 1 holds nulls. */
+    private static FilterPipeline.ColumnPageStatsLookup year3PagesInAnUnknownOrder() {
+        ColumnIndex idx = new ColumnIndex(
+                List.of(false, false, false),
+                List.of(encodeInt(2010), encodeInt(2018), encodeInt(2025)),
+                List.of(encodeInt(2015), encodeInt(2022), encodeInt(2030)),
+                BoundaryOrder.ASCENDING,
+                Optional.of(List.of(0L, 5L, 0L)),
+                Optional.empty(),
+                Optional.empty());
+        List<PageLocation> pages =
+                List.of(new PageLocation(0L, 0, 0L), new PageLocation(0L, 0, 100L), new PageLocation(0L, 0, 200L));
+        OffsetIndex off = new OffsetIndex(pages, Optional.empty());
+        FilterPipeline.ColumnPageStats stats =
+                new FilterPipeline.ColumnPageStats(PrimitiveKind.INT32, idx, off, Optional.empty(), false);
+        return path -> path.equals(ColumnPath.of("year")) ? Optional.of(stats) : Optional.empty();
+    }
 
     private static FilterPipeline.ColumnPageStatsLookup year3Pages() {
         return singleColumn(

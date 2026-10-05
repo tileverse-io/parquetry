@@ -48,6 +48,7 @@ public final class ByteStreamSplitFloatDecoder implements PageDecoder<Float> {
 
     @Override
     public void load(MemorySegment page, int valueCount) {
+        FixedWidthValues.requireBytesFor(page, valueCount, BYTES_PER_VALUE, "BYTE_STREAM_SPLIT FLOAT");
         this.valueCount = valueCount;
         int total = valueCount * BYTES_PER_VALUE;
         this.streams = new byte[total];

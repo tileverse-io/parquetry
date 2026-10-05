@@ -20,6 +20,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
 import java.math.BigDecimal;
+import java.nio.DoubleBuffer;
+import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 import java.nio.charset.StandardCharsets;
@@ -87,6 +89,49 @@ class DictionaryEvaluatorTest {
         FilterPipeline.DictionaryLookup dicts = single("status", new Dictionary.IntDict(intBuf(1, 2, 3)));
         Predicate p = col("status").inInts(3, 7);
         assertThat(DictionaryEvaluator.evaluate(p, dicts)).isInstanceOf(PruningDecision.Inconclusive.class);
+    }
+
+    @Test
+    void nanLiteralEqualityMatchesANaNDictionaryValue() {
+        float payloadNaN = Float.intBitsToFloat(0x7FC00001);
+        FilterPipeline.DictionaryLookup dicts =
+                single("price", new Dictionary.FloatDict(FloatBuffer.wrap(new float[] {1.0f, payloadNaN})));
+        assertThat(DictionaryEvaluator.evaluate(col("price").eq(Double.NaN), dicts))
+                .isInstanceOf(PruningDecision.Inconclusive.class);
+    }
+
+    @Test
+    void nanLiteralEqualityWithoutANaNDictionaryValueIsEliminated() {
+        FilterPipeline.DictionaryLookup dicts =
+                single("price", new Dictionary.DoubleDict(DoubleBuffer.wrap(new double[] {1.0, 2.0})));
+        assertThat(DictionaryEvaluator.evaluate(col("price").eq(Double.NaN), dicts))
+                .isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void orderedComparisonSkipsANaNDictionaryValue() {
+        FilterPipeline.DictionaryLookup dicts =
+                single("price", new Dictionary.DoubleDict(DoubleBuffer.wrap(new double[] {1.0, Double.NaN})));
+        assertThat(DictionaryEvaluator.evaluate(col("price").gt(5.0), dicts))
+                .isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void notEqualToANumberMatchesANaNDictionaryValue() {
+        FilterPipeline.DictionaryLookup dicts =
+                single("price", new Dictionary.DoubleDict(DoubleBuffer.wrap(new double[] {2.0, Double.NaN})));
+        assertThat(DictionaryEvaluator.evaluate(col("price").notEq(2.0), dicts))
+                .isInstanceOf(PruningDecision.Inconclusive.class);
+    }
+
+    @Test
+    void zeroLiteralMatchesTheOtherZeroInTheDictionary() {
+        FilterPipeline.DictionaryLookup dicts =
+                single("price", new Dictionary.DoubleDict(DoubleBuffer.wrap(new double[] {-0.0, 3.0})));
+        assertThat(DictionaryEvaluator.evaluate(col("price").eq(0.0), dicts))
+                .isInstanceOf(PruningDecision.Inconclusive.class);
+        assertThat(DictionaryEvaluator.evaluate(col("price").lt(0.0), dicts))
+                .isInstanceOf(PruningDecision.Eliminated.class);
     }
 
     @Test

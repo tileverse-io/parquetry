@@ -100,7 +100,7 @@ public final class RowGroupFetcher {
         RowGroupChunks chunks = survivor.chunks();
         List<FetchUnit> units = new ArrayList<>();
         for (ColumnPath path : projectedSchema.leafColumns()) {
-            ChunkMeta meta = requireFetchableChunk(chunks, path);
+            ChunkMeta meta = requireFetchableChunk(chunks, path, source.size());
             if (mask.isPresent()) {
                 addUnitsFor(units, path, meta, mask.orElseThrow());
             } else {
@@ -378,10 +378,11 @@ public final class RowGroupFetcher {
     }
 
     /**
-     * The chunk of {@code path}, proven spannable by a fetch. The compact footer addresses a chunk by ordinal and keeps
-     * no column names, which is why both failures below are raised here, where the column has one.
+     * The chunk of {@code path}, proven spannable by a fetch from a source of {@code sourceSize} bytes. The compact
+     * footer addresses a chunk by ordinal and keeps no column names, which is why the failures below are raised here,
+     * where the column has one.
      */
-    private static ChunkMeta requireFetchableChunk(RowGroupChunks chunks, ColumnPath path) {
+    private static ChunkMeta requireFetchableChunk(RowGroupChunks chunks, ColumnPath path, long sourceSize) {
         ChunkMeta meta = requireMeta(chunks, path);
         int rowGroupIndex = chunks.rowGroupIndex();
         if (meta.compressedSizeBeyondRange()) {
@@ -393,7 +394,23 @@ public final class RowGroupFetcher {
             throw new MalformedFileException(
                     describe(rowGroupIndex, path) + " has an unsupported totalCompressedSize " + size);
         }
+        requireChunkInsideSource(meta, describe(rowGroupIndex, path), sourceSize);
         return meta;
+    }
+
+    /**
+     * A footer placing a chunk's bytes before the start of the file or past its end describes other bytes. Fetching
+     * such a chunk would fail as a short read, or hand the decoders bytes of no page. The check compares the size with
+     * the bytes left after the start, because a corrupt start near {@code Long.MAX_VALUE} would overflow the end
+     * offset.
+     */
+    private static void requireChunkInsideSource(ChunkMeta meta, String chunkDescription, long sourceSize) {
+        long start = meta.chunkStart();
+        int size = meta.totalCompressedSize();
+        if (start < 0 || start > sourceSize || size > sourceSize - start) {
+            throw new MalformedFileException(chunkDescription + " spans " + size + " bytes from offset " + start
+                    + ", outside the " + sourceSize + "-byte file");
+        }
     }
 
     private static ChunkMeta requireMeta(RowGroupChunks chunks, ColumnPath path) {

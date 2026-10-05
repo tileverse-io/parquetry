@@ -92,6 +92,60 @@ class SpatialBoundsSourceTest {
                 .contains(bbox(-180, 0, -100, 0));
     }
 
+    /** A row group without a box could hold any geometry: the file bounds are unknown, its row-group boxes stay. */
+    @Test
+    void nativeFileBoundsAreUnknownWhenARowGroupHasNoBox() {
+        BoundingBox rg0 = bbox(0, 10, 0, 10);
+        FileMetaData footer = footer(geometryRowGroupWithNative(rg0), noStatsRowGroup());
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schemaWithGeometry(), empty());
+
+        assertThat(source).isInstanceOf(NativeStatsSource.class);
+        assertThat(source.fileBounds(GEOMETRY)).isEmpty();
+        assertThat(source.rowGroupBounds(GEOMETRY, 0)).contains(rg0);
+        assertThat(source.rowGroupBounds(GEOMETRY, 1)).isEmpty();
+    }
+
+    /** The inverted infinite box of a chunk of empty geometries holds no extent and adds nothing to the file bounds. */
+    @Test
+    void aRowGroupBoxWithoutAnExtentAddsNothingToTheFileBounds() {
+        BoundingBox emptyGeometries = bbox(
+                Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY);
+        BoundingBox real = bbox(0, 10, 0, 10);
+        FileMetaData footer = footer(geometryRowGroupWithNative(emptyGeometries), geometryRowGroupWithNative(real));
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schemaWithGeometry(), empty());
+
+        assertThat(source.fileBounds(GEOMETRY)).contains(real);
+    }
+
+    /** A native box with a NaN bound bounds nothing known: its row group has no box and the file bounds are unknown. */
+    @Test
+    void aNativeBoxWithANaNBoundCountsAsNoBox() {
+        BoundingBox real = bbox(0, 10, 0, 10);
+        FileMetaData footer =
+                footer(geometryRowGroupWithNative(bbox(0, Double.NaN, 0, 10)), geometryRowGroupWithNative(real));
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schemaWithGeometry(), empty());
+
+        assertThat(source.rowGroupBounds(GEOMETRY, 0)).isEmpty();
+        assertThat(source.rowGroupBounds(GEOMETRY, 1)).contains(real);
+        assertThat(source.fileBounds(GEOMETRY)).isEmpty();
+    }
+
+    @Test
+    void coveringFileBoundsAreUnknownWhenARowGroupHasNoCoveringStatistics() {
+        ParquetSchema schema = schemaWithGeometryAndCoveringDoubles();
+        FileMetaData footer = footer(coveringRowGroup(0, 1, 2, 3), coveringRowGroupWithoutStatistics());
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schema, of(geoWithCoveringAndFileBbox()));
+
+        assertThat(source).isInstanceOf(CoveringColumnSource.class);
+        assertThat(source.fileBounds(GEOMETRY)).isEmpty();
+        assertThat(source.rowGroupBounds(GEOMETRY, 0)).contains(bbox(0, 1, 2, 3));
+        assertThat(source.rowGroupBounds(GEOMETRY, 1)).isEmpty();
+    }
+
     /**
      * A file with no geospatial statistics at all is ruled out of the native tier by the count of geospatial entries in
      * the packed footer, without a walk of the chunk table. The dispatch then moves on to the tier below.
@@ -149,6 +203,18 @@ class SpatialBoundsSourceTest {
         assertThat(source.fileBounds(GEOMETRY)).contains(bbox(0, 20, 2, 40));
     }
 
+    /** A NaN covering statistic bounds nothing: its row group is left without a box rather than with a NaN edge. */
+    @Test
+    void aNaNCoveringStatisticLeavesItsRowGroupWithoutABox() {
+        ParquetSchema schema = schemaWithGeometryAndCoveringDoubles();
+        FileMetaData footer = footer(coveringRowGroup(0, 1, 2, 3), coveringRowGroup(10, Double.NaN, 30, 40));
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schema, of(geoWithCoveringAndFileBbox()));
+
+        assertThat(source.rowGroupBounds(GEOMETRY, 0)).contains(bbox(0, 1, 2, 3));
+        assertThat(source.rowGroupBounds(GEOMETRY, 1)).isEmpty();
+    }
+
     @Test
     void geoJsonFileBboxUsedWhenNeitherNativeNorCoveringPresent() {
         FileMetaData footer = footer(noStatsRowGroup());
@@ -197,6 +263,29 @@ class SpatialBoundsSourceTest {
         assertThat(source.rowGroupBounds(GEOMETRY, 0))
                 .as("antimeridian-wrap bbox must round-trip verbatim; SpatialBoundsSource does not normalize")
                 .contains(wrap);
+    }
+
+    @Test
+    void aLoneWrappingRowGroupIsTheFileBoundsAsWritten() {
+        BoundingBox wrap = bbox(170, -170, -10, 10);
+        FileMetaData footer = footer(geometryRowGroupWithNative(wrap));
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schemaWithGeometry(), empty());
+
+        assertThat(source.fileBounds(GEOMETRY)).contains(wrap);
+    }
+
+    @Test
+    void aFileUnionWithAWrappingRowGroupSpansTheFullLongitudeRange() {
+        BoundingBox wrap = bbox(170, -170, -10, 10);
+        BoundingBox regular = bbox(-20, 20, 0, 30);
+        FileMetaData footer = footer(geometryRowGroupWithNative(wrap), geometryRowGroupWithNative(regular));
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schemaWithGeometry(), empty());
+
+        assertThat(source.fileBounds(GEOMETRY))
+                .as("the wrapped longitudes [170, 180] and [-180, -170] stay inside the union")
+                .contains(bbox(-180, 180, -10, 30));
     }
 
     /**
@@ -270,6 +359,16 @@ class SpatialBoundsSourceTest {
                 columnChunk(doubleStatsMeta("ymax", ymax, ymax))));
     }
 
+    /** The same shape as {@link #coveringRowGroup}, with no statistics on the four sidecar leaves. */
+    private static RowGroup coveringRowGroupWithoutStatistics() {
+        return rowGroup(List.of(
+                columnChunk(geometryMeta(empty())),
+                columnChunk(doubleMeta(List.of("xmin"), empty())),
+                columnChunk(doubleMeta(List.of("xmax"), empty())),
+                columnChunk(doubleMeta(List.of("ymin"), empty())),
+                columnChunk(doubleMeta(List.of("ymax"), empty()))));
+    }
+
     /** The same shape as {@link #coveringRowGroup}, with the four sidecar leaves nested under a {@code bbox} group. */
     private static RowGroup nestedCoveringRowGroup(double xmin, double xmax, double ymin, double ymax) {
         return rowGroup(List.of(
@@ -315,6 +414,10 @@ class SpatialBoundsSourceTest {
                 .minValue(littleEndianDouble(min))
                 .maxValue(littleEndianDouble(max))
                 .build();
+        return doubleMeta(path, of(stats));
+    }
+
+    private static ColumnMetaData doubleMeta(List<String> path, Optional<Statistics> stats) {
         return ColumnMetaData.builder()
                 .type(PhysicalType.DOUBLE)
                 .encodings(List.of(Encoding.PLAIN))
@@ -324,7 +427,7 @@ class SpatialBoundsSourceTest {
                 .totalUncompressedSize(8L)
                 .totalCompressedSize(8L)
                 .dataPageOffset(0L)
-                .statistics(of(stats))
+                .statistics(stats)
                 .build();
     }
 

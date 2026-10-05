@@ -17,11 +17,18 @@ package io.tileverse.parquetry.internal.read.page;
 
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import io.tileverse.parquetry.format.MalformedFileException;
 
 class RleBooleanDecoderTest {
 
@@ -101,5 +108,39 @@ class RleBooleanDecoderTest {
                 .containsExactly(
                         true, true, true, true, true, // RLE run of 5 trues
                         false, false, false, false, true, true, true, true); // bit-packed LSB-first
+    }
+
+    static Stream<Arguments> malformedRlePages() {
+        // each vector is a page and the expected failure
+        return Stream.of(
+                // a page shorter than its 4-byte length prefix
+                Arguments.of(new byte[] {1, 0}, "too short for its 4-byte length prefix"),
+                // a length prefix announcing 3 payload bytes with 1 present
+                Arguments.of(new byte[] {3, 0, 0, 0, 0x06}, "declares a payload of 3 bytes but holds 1"),
+                // a negative length prefix
+                Arguments.of(
+                        new byte[] {(byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0xff},
+                        "declares a payload of -1 bytes"));
+    }
+
+    @ParameterizedTest
+    @MethodSource("malformedRlePages")
+    void malformedLengthPrefixIsAFormatError(byte[] page, String failure) {
+        RleBooleanDecoder decoder = new RleBooleanDecoder();
+
+        assertThatThrownBy(() -> decoder.load(MemorySegment.ofArray(page), 1))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining(failure);
+    }
+
+    @Test
+    void payloadShortOfItsValuesIsAFormatErrorNamingTheStream() {
+        RleBooleanDecoder decoder = new RleBooleanDecoder();
+        // a 2-byte payload holding an RLE run of 3 trues, then a fourth value requested
+        decoder.load(MemorySegment.ofArray(new byte[] {2, 0, 0, 0, 0x06, 0x01}), 4);
+
+        assertThatThrownBy(() -> decoder.decodeBooleans(4, new boolean[4], 0))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageStartingWith("RLE boolean values end at byte 2");
     }
 }

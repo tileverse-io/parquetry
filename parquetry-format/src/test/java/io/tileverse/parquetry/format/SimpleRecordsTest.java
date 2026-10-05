@@ -49,8 +49,8 @@ class SimpleRecordsTest {
     }
 
     @Test
-    void columnOrderHasTypeDefinedVariant() {
-        ColumnOrder.TypeDefined o = new ColumnOrder.TypeDefined();
-        assertThat(o).isNotNull();
+    void unknownColumnOrderKeepsItsFieldId() {
+        ColumnOrder.Unknown order = new ColumnOrder.Unknown((short) 9);
+        assertThat(order.fieldId()).isEqualTo((short) 9);
     }
 }

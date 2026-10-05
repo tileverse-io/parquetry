@@ -16,11 +16,13 @@
 package io.tileverse.parquetry.internal.read.page;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.ParquetLayouts;
 
 class ByteStreamSplitFloatDecoderTest {
@@ -92,5 +94,15 @@ class ByteStreamSplitFloatDecoderTest {
             }
         }
         return out;
+    }
+
+    @Test
+    void pageShortOfItsStreamsIsAFormatError() {
+        ByteStreamSplitFloatDecoder decoder = new ByteStreamSplitFloatDecoder();
+        MemorySegment page = MemorySegment.ofArray(new byte[7]);
+
+        assertThatThrownBy(() -> decoder.load(page, 2))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("2 BYTE_STREAM_SPLIT FLOAT values need 8 bytes but the page holds 7");
     }
 }
