@@ -96,40 +96,70 @@ class PrimitiveDictionaryEncoderTest {
     }
 
     @Test
-    void floatNaNDeduplicatesCanonicallyAndKeepsFirstRawBits() throws IOException {
+    void floatDictionaryKeepsEachBitPatternApart() {
+        PrimitiveDictionaryEncoder tested = new PrimitiveDictionaryEncoder(PrimitiveKind.FLOAT, LIMIT);
+        float payloadNaN = Float.intBitsToFloat(0x7fc00001);
+        float negativeNaN = Float.intBitsToFloat(0xffc00000);
+        float[] values = {payloadNaN, Float.NaN, 1.5f, payloadNaN, -0.0f, +0.0f, 1.5f, Float.NaN, negativeNaN};
+        for (float v : values) {
+            tested.appendFloat(v);
+        }
+
+        // Each NaN pattern and each zero is an entry of its own: a cell reads back with its bits.
+        assertThat(rawBits(tested.floatCarrier()))
+                .containsExactly(
+                        0x7fc00001,
+                        Float.floatToRawIntBits(Float.NaN),
+                        Float.floatToRawIntBits(1.5f),
+                        Float.floatToRawIntBits(-0.0f),
+                        Float.floatToRawIntBits(+0.0f),
+                        0xffc00000);
+    }
+
+    @Test
+    void doubleDictionaryKeepsEachBitPatternApart() {
+        PrimitiveDictionaryEncoder tested = new PrimitiveDictionaryEncoder(PrimitiveKind.DOUBLE, LIMIT);
+        double payloadNaN = Double.longBitsToDouble(0x7ff8000000000001L);
+        double[] values = {2.5d, payloadNaN, Double.NaN, -0.0d, +0.0d, 2.5d, payloadNaN};
+        for (double v : values) {
+            tested.appendDouble(v);
+        }
+
+        assertThat(rawBits(tested.doubleCarrier()))
+                .containsExactly(
+                        Double.doubleToRawLongBits(2.5d),
+                        0x7ff8000000000001L,
+                        Double.doubleToRawLongBits(Double.NaN),
+                        Double.doubleToRawLongBits(-0.0d),
+                        Double.doubleToRawLongBits(+0.0d));
+    }
+
+    @Test
+    void floatPageMatchesTheReferenceEncoderOverOneNaNPattern() throws IOException {
         DictionaryAttemptEncoder<Float, float[]> reference = new DictionaryAttemptEncoder<>(
                 new PlainFloatEncoder(),
                 PrimitiveDictionaryEncoderTest::floatCarrierOf,
                 v -> (long) Float.BYTES,
                 LIMIT);
         PrimitiveDictionaryEncoder tested = new PrimitiveDictionaryEncoder(PrimitiveKind.FLOAT, LIMIT);
-        // Non-canonical quiet NaN FIRST: equality collapses all NaNs, the dictionary must keep THESE raw bits.
-        float oddNaN = Float.intBitsToFloat(0x7fc00001);
-        float[] values = {oddNaN, Float.NaN, 1.5f, oddNaN, -0.0f, +0.0f, 1.5f, Float.NaN};
+        float[] values = {Float.NaN, 1.5f, -0.0f, +0.0f, 1.5f, Float.NaN, Float.NEGATIVE_INFINITY};
         for (float v : values) {
             reference.appendValue(v);
             tested.appendFloat(v);
         }
         assertPageFlushIdentical(reference, tested, "float NaN/zero page");
-        float[] carrier = tested.floatCarrier();
-        // Distinct entries: NaN (one entry, first raw bits), 1.5f, -0.0f, +0.0f.
-        assertThat(carrier).hasSize(4);
-        assertThat(Float.floatToRawIntBits(carrier[0])).isEqualTo(0x7fc00001);
-        assertThat(Float.floatToRawIntBits(carrier[2])).isEqualTo(Float.floatToRawIntBits(-0.0f));
-        assertThat(Float.floatToRawIntBits(carrier[3])).isEqualTo(Float.floatToRawIntBits(+0.0f));
-        assertThat(carrier).isEqualTo(floatCarrierOf(reference.dictionaryValues()));
+        assertThat(tested.floatCarrier()).isEqualTo(floatCarrierOf(reference.dictionaryValues()));
     }
 
     @Test
-    void doubleParityWithNaNAndZeroes() throws IOException {
+    void doublePageMatchesTheReferenceEncoderOverOneNaNPattern() throws IOException {
         DictionaryAttemptEncoder<Double, double[]> reference = new DictionaryAttemptEncoder<>(
                 new PlainDoubleEncoder(),
                 PrimitiveDictionaryEncoderTest::doubleCarrierOf,
                 v -> (long) Double.BYTES,
                 LIMIT);
         PrimitiveDictionaryEncoder tested = new PrimitiveDictionaryEncoder(PrimitiveKind.DOUBLE, LIMIT);
-        double oddNaN = Double.longBitsToDouble(0x7ff8000000000001L);
-        double[] values = {2.5d, oddNaN, Double.NaN, -0.0d, +0.0d, 2.5d, oddNaN};
+        double[] values = {2.5d, Double.NaN, -0.0d, +0.0d, 2.5d, Double.NaN};
         for (double v : values) {
             reference.appendValue(v);
             tested.appendDouble(v);
@@ -161,6 +191,22 @@ class PrimitiveDictionaryEncoderTest {
     void rejectsNonNumericKinds() {
         assertThatThrownBy(() -> new PrimitiveDictionaryEncoder(PrimitiveKind.BYTE_ARRAY, LIMIT))
                 .isInstanceOf(ParquetWriteException.class);
+    }
+
+    private static int[] rawBits(float[] values) {
+        int[] bits = new int[values.length];
+        for (int i = 0; i < values.length; i++) {
+            bits[i] = Float.floatToRawIntBits(values[i]);
+        }
+        return bits;
+    }
+
+    private static long[] rawBits(double[] values) {
+        long[] bits = new long[values.length];
+        for (int i = 0; i < values.length; i++) {
+            bits[i] = Double.doubleToRawLongBits(values[i]);
+        }
+        return bits;
     }
 
     private static void assertPageFlushIdentical(
