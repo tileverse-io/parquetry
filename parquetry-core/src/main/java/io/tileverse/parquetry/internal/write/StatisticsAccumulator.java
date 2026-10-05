@@ -15,8 +15,6 @@
  */
 package io.tileverse.parquetry.internal.write;
 
-import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
-import static io.tileverse.parquetry.format.ParquetLayouts.FLOAT;
 import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
 import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
 
@@ -25,20 +23,20 @@ import java.lang.foreign.ValueLayout;
 import java.util.OptionalLong;
 
 import io.tileverse.parquetry.data.ParquetWriteException;
-import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.internal.write.page.PageStatistics;
 import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 import lombok.NonNull;
 
 /**
- * Per-column accumulator for the typed {@code min_value}, {@code max_value}, and {@code null_count} carried by
- * {@link Statistics} and by per-page {@link PageStatistics} snapshots.
+ * Per-column accumulator for the {@code min_value}, {@code max_value}, {@code null_count} and {@code nan_count} of
+ * {@link Statistics} and of the per-page {@link PageStatistics} snapshots.
  *
  * <p>Two snapshot operations cooperate on a single column-chunk pass: {@link #finishPage()} emits the per-page summary
  * for {@link ColumnIndexBuilder} without resetting the running state, while {@link #finishChunk()} produces the
- * column-chunk {@link Statistics} that lands in {@code ColumnMetaData}. Callers that drive the accumulator from several
+ * column-chunk {@link Statistics} written to {@code ColumnMetaData}. Callers that drive the accumulator from several
  * batches in pieces can merge sibling accumulators with {@link #merge(StatisticsAccumulator)} before publishing the
  * chunk snapshot.
  *
@@ -48,15 +46,14 @@ import lombok.NonNull;
  * ({@code INT96}). Binary retention copies the segment bytes only on the first observation or a strict min/max
  * improvement, never per cell, and the caller may reuse or release its source segment after the call returns.
  *
- * <p>Ordering mirrors the read-side stats evaluator: signed numeric comparison for the integer and floating kinds and
- * unsigned lexicographic byte comparison for {@code BYTE_ARRAY} / {@code FIXED_LEN_BYTE_ARRAY}, matching Parquet's
- * default {@code ColumnOrder}. Floating-point {@code NaN} values participate in null-count tracking but are excluded
- * from min/max because the Parquet stats contract forbids representing them in the {@code min_value}/{@code max_value}
- * bytes. {@code INT96} is intentionally unsupported: the format itself does not carry typed stats for it.
+ * <p>The bounds follow the {@link BoundsOrder} of the column. A column with an {@link BoundsOrder#UNDEFINED undefined}
+ * order tracks its null count and no bounds; geometry and geography columns are among them, and their bounding box and
+ * geometry types are kept by {@link GeospatialStatisticsAccumulator}.
  *
- * <p>Geometry and geography columns have no meaningful PLAIN-byte ordering, so {@link #forKind(PrimitiveKind,
- * LogicalType)} returns an accumulator that tracks {@code null_count} but never produces min/max; geometry-specific
- * bbox + type-set statistics live in {@link GeospatialStatisticsAccumulator}.
+ * <p>A FLOAT, DOUBLE or FLOAT16 column counts its NaN cells in {@code nan_count}, and as non-null cells too. Its bounds
+ * are its smallest and largest number, and a window holding no number has none. A zero bound is recorded as
+ * {@code -0.0} for a minimum and as {@code +0.0} for a maximum, as required by the format: readers disagree on the
+ * order of the two zeros, and a bound of the other sign would hide one of them.
  *
  * <p>Distinct counts are intentionally not tracked: the Parquet spec marks {@code distinct_count} as optional and any
  * write-side estimate would have to choose between an HLL approximation or an exact hash set; both are deferred until a
@@ -64,70 +61,88 @@ import lombok.NonNull;
  */
 public final class StatisticsAccumulator {
 
+    /** The order key of {@code +0.0} in a floating-point column: its bits are zero, and their key too. */
+    private static final long POSITIVE_ZERO_KEY = 0L;
+
     private final PrimitiveKind kind;
+    private final BoundsOrder order;
     private final boolean tracksMinMax;
     private final boolean legacyOrderMatchesModern;
+
+    /**
+     * XORed into an INT32 cell to obtain its order key, and into a key to obtain the cell back. Zero for a signed
+     * column. The sign bit for an unsigned column: with it flipped, signed comparison orders the cells as unsigned
+     * numbers.
+     */
+    private final int intSignFlip;
+
+    /** The INT64 counterpart of {@link #intSignFlip}. */
+    private final long longSignFlip;
+
+    /** The order key of {@code -0.0} in a floating-point column; unused by the other columns. */
+    private final long negativeZeroKey;
 
     private long nullCount;
     private long nonNullCount;
     private boolean hasMinMax;
 
-    private boolean booleanMin;
-    private boolean booleanMax;
-    private int intMin;
-    private int intMax;
-    private long longMin;
-    private long longMax;
-    private float floatMin;
-    private float floatMax;
-    private double doubleMin;
-    private double doubleMax;
+    /**
+     * Order keys of the smallest and largest cell of the window, for the orders comparing numbers: signed comparison of
+     * two keys orders their cells. A boolean, an integer, or the {@link TotalOrder} key of a floating-point number.
+     */
+    private long minKey;
+
+    private long maxKey;
+
+    /** The smallest and largest cell of the window, for the orders comparing bytes. */
     private MemorySegment binaryMin;
+
     private MemorySegment binaryMax;
 
-    private StatisticsAccumulator(PrimitiveKind kind, boolean tracksMinMax, boolean legacyOrderMatchesModern) {
+    private long nanCount;
+
+    private StatisticsAccumulator(PrimitiveKind kind, BoundsOrder order) {
         this.kind = kind;
-        this.tracksMinMax = tracksMinMax;
-        this.legacyOrderMatchesModern = legacyOrderMatchesModern;
+        this.order = order;
+        this.tracksMinMax = order.isDefined();
+        this.legacyOrderMatchesModern = legacyOrderMatchesModern(order);
+        this.intSignFlip = order == BoundsOrder.UNSIGNED_INT32 ? Integer.MIN_VALUE : 0;
+        this.longSignFlip = order == BoundsOrder.UNSIGNED_INT64 ? Long.MIN_VALUE : 0L;
+        this.negativeZeroKey = negativeZeroKey(order);
     }
 
-    /**
-     * Returns a fresh accumulator sized for {@code kind}. When {@code logicalType} is {@link LogicalType.Geometry} or
-     * {@link LogicalType.Geography} the accumulator skips min/max tracking even though the physical kind would normally
-     * support it; geometry stats live in {@link GeospatialStatisticsAccumulator}. Passing {@code null} for
-     * {@code logicalType} keeps min/max tracking enabled.
-     */
-    public static StatisticsAccumulator forKind(@NonNull PrimitiveKind kind, LogicalType logicalType) {
-        boolean tracksMinMax = supportsMinMax(kind) && !isGeometryLike(logicalType);
-        boolean legacyOrderMatchesModern = legacyOrderMatchesModern(kind, logicalType);
-        return new StatisticsAccumulator(kind, tracksMinMax, legacyOrderMatchesModern);
+    /** Returns a fresh accumulator for the cells of {@code leaf}, with bounds in the leaf's {@link BoundsOrder}. */
+    static StatisticsAccumulator forColumn(@NonNull SchemaNode.Primitive leaf) {
+        return new StatisticsAccumulator(leaf.kind(), BoundsOrder.of(leaf));
     }
 
-    private static boolean supportsMinMax(PrimitiveKind kind) {
-        return kind != PrimitiveKind.INT96;
-    }
-
-    private static boolean isGeometryLike(LogicalType logicalType) {
-        return logicalType instanceof LogicalType.Geometry || logicalType instanceof LogicalType.Geography;
+    private static long negativeZeroKey(BoundsOrder order) {
+        return switch (order) {
+            case FLOAT -> TotalOrder.key(Float.floatToRawIntBits(-0.0f));
+            case DOUBLE -> TotalOrder.key(Double.doubleToRawLongBits(-0.0));
+            case HALF_FLOAT -> HalfFloats.key(Float.floatToFloat16(-0.0f));
+            case BOOLEAN,
+                    SIGNED_INT32,
+                    UNSIGNED_INT32,
+                    SIGNED_INT64,
+                    UNSIGNED_INT64,
+                    UNSIGNED_BYTES,
+                    SIGNED_BYTES,
+                    UNDEFINED -> 0L;
+        };
     }
 
     /**
      * Decides whether the deprecated {@code min}/{@code max} fields may mirror the modern {@code min_value}/
-     * {@code max_value} bytes for this column. The legacy fields are spec-defined under SIGNED order for the binary
-     * kinds and for unsigned-integer logical types, while parquetry computes those bounds under unsigned lexicographic
-     * order. Mirroring is only sound when parquetry's computed order is signed and already matches the legacy contract:
-     * the signed numeric kinds, and INT32/INT64 only when no unsigned-integer logical type retypes them.
+     * {@code max_value} bytes for a column in {@code order}. A legacy reader ignoring {@code column_orders} reads the
+     * deprecated fields as signed numbers, and binary values as signed bytes. Mirroring is sound only for the orders
+     * agreeing with that reading, FLOAT and DOUBLE numbers among them.
      */
-    private static boolean legacyOrderMatchesModern(PrimitiveKind kind, LogicalType logicalType) {
-        return switch (kind) {
-            case BOOLEAN, FLOAT, DOUBLE -> true;
-            case INT32, INT64 -> !isUnsignedInteger(logicalType);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> false;
+    private static boolean legacyOrderMatchesModern(BoundsOrder order) {
+        return switch (order) {
+            case BOOLEAN, SIGNED_INT32, SIGNED_INT64, FLOAT, DOUBLE -> true;
+            case UNSIGNED_INT32, UNSIGNED_INT64, HALF_FLOAT, UNSIGNED_BYTES, SIGNED_BYTES, UNDEFINED -> false;
         };
-    }
-
-    private static boolean isUnsignedInteger(LogicalType logicalType) {
-        return logicalType instanceof LogicalType.IntType intType && !intType.isSigned();
     }
 
     /** Adds one non-null INT32 cell: counts the observation and folds it into min/max. */
@@ -135,7 +150,7 @@ public final class StatisticsAccumulator {
         requireValueKind(PrimitiveKind.INT32);
         nonNullCount++;
         if (tracksMinMax) {
-            updateInt32MinMax(value);
+            updateKeyMinMax(value ^ intSignFlip);
         }
     }
 
@@ -144,25 +159,31 @@ public final class StatisticsAccumulator {
         requireValueKind(PrimitiveKind.INT64);
         nonNullCount++;
         if (tracksMinMax) {
-            updateInt64MinMax(value);
+            updateKeyMinMax(value ^ longSignFlip);
         }
     }
 
-    /** Adds one non-null FLOAT cell: counts the observation and folds it into min/max. */
+    /** Adds one non-null FLOAT cell: counts the observation, and folds a number into min/max or counts a NaN. */
     public void updateFloat(float value) {
         requireValueKind(PrimitiveKind.FLOAT);
         nonNullCount++;
-        if (tracksMinMax) {
-            updateFloatMinMax(value);
+        if (Float.isNaN(value)) {
+            nanCount++;
+        } else if (tracksMinMax) {
+            int key = TotalOrder.key(Float.floatToRawIntBits(value));
+            updateKeyMinMax(key);
         }
     }
 
-    /** Adds one non-null DOUBLE cell: counts the observation and folds it into min/max. */
+    /** Adds one non-null DOUBLE cell: counts the observation, and folds a number into min/max or counts a NaN. */
     public void updateDouble(double value) {
         requireValueKind(PrimitiveKind.DOUBLE);
         nonNullCount++;
-        if (tracksMinMax) {
-            updateDoubleMinMax(value);
+        if (Double.isNaN(value)) {
+            nanCount++;
+        } else if (tracksMinMax) {
+            long key = TotalOrder.key(Double.doubleToRawLongBits(value));
+            updateKeyMinMax(key);
         }
     }
 
@@ -171,7 +192,7 @@ public final class StatisticsAccumulator {
         requireValueKind(PrimitiveKind.BOOLEAN);
         nonNullCount++;
         if (tracksMinMax) {
-            updateBooleanMinMax(value);
+            updateKeyMinMax(value ? 1L : 0L);
         }
     }
 
@@ -199,16 +220,26 @@ public final class StatisticsAccumulator {
     }
 
     /**
-     * Adds one non-null binary cell. The segment is compared in place against the retained bounds; its bytes are copied
-     * only on the first observation or a strict min/max improvement, never per cell.
+     * Adds one non-null binary cell. A FLOAT16 cell folds its number into min/max or counts as a NaN. Any other cell is
+     * compared in place against the retained bounds; its bytes are copied only on the first observation or a strict
+     * min/max improvement, never per cell.
      */
     public void updateBinary(@NonNull MemorySegment value) {
         requireBinaryKind();
         nonNullCount++;
-        if (!tracksMinMax) {
-            return;
+        if (order == BoundsOrder.HALF_FLOAT) {
+            updateHalfFloat(value);
+        } else if (tracksMinMax) {
+            updateBinaryMinMax(value);
         }
-        updateBinaryMinMax(value);
+    }
+
+    private void updateHalfFloat(MemorySegment cell) {
+        if (HalfFloats.isNaN(cell)) {
+            nanCount++;
+        } else {
+            updateKeyMinMax(HalfFloats.key(cell));
+        }
     }
 
     private void requireBinaryKind() {
@@ -217,80 +248,17 @@ public final class StatisticsAccumulator {
         }
     }
 
-    private void updateBooleanMinMax(boolean v) {
+    private void updateKeyMinMax(long key) {
         if (!hasMinMax) {
-            booleanMin = v;
-            booleanMax = v;
+            minKey = key;
+            maxKey = key;
             hasMinMax = true;
             return;
         }
-        if (Boolean.compare(v, booleanMin) < 0) {
-            booleanMin = v;
-        } else if (Boolean.compare(v, booleanMax) > 0) {
-            booleanMax = v;
-        }
-    }
-
-    private void updateInt32MinMax(int v) {
-        if (!hasMinMax) {
-            intMin = v;
-            intMax = v;
-            hasMinMax = true;
-            return;
-        }
-        if (v < intMin) {
-            intMin = v;
-        } else if (v > intMax) {
-            intMax = v;
-        }
-    }
-
-    private void updateInt64MinMax(long v) {
-        if (!hasMinMax) {
-            longMin = v;
-            longMax = v;
-            hasMinMax = true;
-            return;
-        }
-        if (v < longMin) {
-            longMin = v;
-        } else if (v > longMax) {
-            longMax = v;
-        }
-    }
-
-    private void updateFloatMinMax(float v) {
-        // NaN is excluded from min/max but already counted as a non-null observation.
-        if (Float.isNaN(v)) {
-            return;
-        }
-        if (!hasMinMax) {
-            floatMin = v;
-            floatMax = v;
-            hasMinMax = true;
-            return;
-        }
-        if (Float.compare(v, floatMin) < 0) {
-            floatMin = v;
-        } else if (Float.compare(v, floatMax) > 0) {
-            floatMax = v;
-        }
-    }
-
-    private void updateDoubleMinMax(double v) {
-        if (Double.isNaN(v)) {
-            return;
-        }
-        if (!hasMinMax) {
-            doubleMin = v;
-            doubleMax = v;
-            hasMinMax = true;
-            return;
-        }
-        if (Double.compare(v, doubleMin) < 0) {
-            doubleMin = v;
-        } else if (Double.compare(v, doubleMax) > 0) {
-            doubleMax = v;
+        if (key < minKey) {
+            minKey = key;
+        } else if (key > maxKey) {
+            maxKey = key;
         }
     }
 
@@ -302,10 +270,10 @@ public final class StatisticsAccumulator {
             hasMinMax = true;
             return;
         }
-        if (UnsignedLexOrder.compare(value, binaryMin) < 0) {
+        if (order.compare(value, binaryMin) < 0) {
             binaryMin = retainCopy(value);
         }
-        if (UnsignedLexOrder.compare(value, binaryMax) > 0) {
+        if (order.compare(value, binaryMax) > 0) {
             binaryMax = retainCopy(value);
         }
     }
@@ -316,126 +284,57 @@ public final class StatisticsAccumulator {
 
     /**
      * Merges {@code other} into this accumulator. Both accumulators must have been created for the same
-     * {@link PrimitiveKind} and the same min/max-tracking policy; otherwise a {@link ParquetWriteException} is raised
-     * because mixing kinds would corrupt the stored representation.
+     * {@link PrimitiveKind} and the same {@link BoundsOrder}; otherwise a {@link ParquetWriteException} is raised
+     * because mixing them would corrupt the stored representation.
      */
     public void merge(@NonNull StatisticsAccumulator other) {
-        if (other.kind != this.kind || other.tracksMinMax != this.tracksMinMax) {
+        requireSameColumnType(other);
+        nullCount += other.nullCount;
+        nonNullCount += other.nonNullCount;
+        nanCount += other.nanCount;
+        if (other.hasMinMax) {
+            mergeMinMax(other);
+        }
+    }
+
+    private void requireSameColumnType(StatisticsAccumulator other) {
+        if (other.kind != this.kind) {
             throw new ParquetWriteException(
                     "Cannot merge accumulators of different kinds: " + this.kind + " vs " + other.kind);
         }
-        nullCount += other.nullCount;
-        nonNullCount += other.nonNullCount;
-        if (!other.hasMinMax) {
-            return;
-        }
-        if (tracksMinMax) {
-            mergeMinMax(other);
+        if (other.order != this.order) {
+            throw new ParquetWriteException(
+                    "Cannot merge accumulators of different orders: " + this.order + " vs " + other.order);
         }
     }
 
     private void mergeMinMax(StatisticsAccumulator other) {
         if (!hasMinMax) {
             copyMinMaxFrom(other);
-            hasMinMax = true;
             return;
         }
-        switch (kind) {
-            case BOOLEAN -> mergeBooleanMinMax(other);
-            case INT32 -> mergeIntMinMax(other);
-            case INT64 -> mergeLongMinMax(other);
-            case FLOAT -> mergeFloatMinMax(other);
-            case DOUBLE -> mergeDoubleMinMax(other);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> mergeBinaryMinMax(other);
-            case INT96 -> {
-                /* unreachable */
-            }
-        }
-    }
-
-    private void mergeBooleanMinMax(StatisticsAccumulator other) {
-        if (Boolean.compare(other.booleanMin, booleanMin) < 0) {
-            booleanMin = other.booleanMin;
-        }
-        if (Boolean.compare(other.booleanMax, booleanMax) > 0) {
-            booleanMax = other.booleanMax;
-        }
-    }
-
-    private void mergeIntMinMax(StatisticsAccumulator other) {
-        if (other.intMin < intMin) {
-            intMin = other.intMin;
-        }
-        if (other.intMax > intMax) {
-            intMax = other.intMax;
-        }
-    }
-
-    private void mergeLongMinMax(StatisticsAccumulator other) {
-        if (other.longMin < longMin) {
-            longMin = other.longMin;
-        }
-        if (other.longMax > longMax) {
-            longMax = other.longMax;
-        }
-    }
-
-    private void mergeFloatMinMax(StatisticsAccumulator other) {
-        if (Float.compare(other.floatMin, floatMin) < 0) {
-            floatMin = other.floatMin;
-        }
-        if (Float.compare(other.floatMax, floatMax) > 0) {
-            floatMax = other.floatMax;
-        }
-    }
-
-    private void mergeDoubleMinMax(StatisticsAccumulator other) {
-        if (Double.compare(other.doubleMin, doubleMin) < 0) {
-            doubleMin = other.doubleMin;
-        }
-        if (Double.compare(other.doubleMax, doubleMax) > 0) {
-            doubleMax = other.doubleMax;
-        }
-    }
-
-    private void mergeBinaryMinMax(StatisticsAccumulator other) {
-        if (UnsignedLexOrder.compare(other.binaryMin, binaryMin) < 0) {
-            binaryMin = other.binaryMin;
-        }
-        if (UnsignedLexOrder.compare(other.binaryMax, binaryMax) > 0) {
-            binaryMax = other.binaryMax;
+        if (order.comparesBytes()) {
+            mergeBinaryMinMax(other);
+        } else {
+            minKey = Math.min(minKey, other.minKey);
+            maxKey = Math.max(maxKey, other.maxKey);
         }
     }
 
     private void copyMinMaxFrom(StatisticsAccumulator other) {
-        switch (kind) {
-            case BOOLEAN -> {
-                booleanMin = other.booleanMin;
-                booleanMax = other.booleanMax;
-            }
-            case INT32 -> {
-                intMin = other.intMin;
-                intMax = other.intMax;
-            }
-            case INT64 -> {
-                longMin = other.longMin;
-                longMax = other.longMax;
-            }
-            case FLOAT -> {
-                floatMin = other.floatMin;
-                floatMax = other.floatMax;
-            }
-            case DOUBLE -> {
-                doubleMin = other.doubleMin;
-                doubleMax = other.doubleMax;
-            }
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> {
-                binaryMin = other.binaryMin;
-                binaryMax = other.binaryMax;
-            }
-            case INT96 -> {
-                /* unreachable */
-            }
+        minKey = other.minKey;
+        maxKey = other.maxKey;
+        binaryMin = other.binaryMin;
+        binaryMax = other.binaryMax;
+        hasMinMax = true;
+    }
+
+    private void mergeBinaryMinMax(StatisticsAccumulator other) {
+        if (order.compare(other.binaryMin, binaryMin) < 0) {
+            binaryMin = other.binaryMin;
+        }
+        if (order.compare(other.binaryMax, binaryMax) > 0) {
+            binaryMax = other.binaryMax;
         }
     }
 
@@ -444,39 +343,19 @@ public final class StatisticsAccumulator {
      * keep accumulating; {@link #reset()} starts a fresh window.
      */
     public Statistics finishChunk() {
-        MemorySegment minSegment = encodedMin();
-        MemorySegment maxSegment = encodedMax();
+        MemorySegment minSegment = encodedLowerBound();
+        MemorySegment maxSegment = encodedUpperBound();
         return Statistics.builder()
                 .nullCount(OptionalLong.of(nullCount))
                 .distinctCount(OptionalLong.empty())
                 .minValue(minSegment)
                 .maxValue(maxSegment)
-                .isMinValueExact(minSegment != MemorySegment.NULL)
-                .isMaxValueExact(maxSegment != MemorySegment.NULL)
-                .min(legacyMinSegment(minSegment))
-                .max(legacyMaxSegment(maxSegment))
+                .isMinValueExact(lowerBoundIsExact())
+                .isMaxValueExact(upperBoundIsExact())
+                .min(legacyBound(minSegment))
+                .max(legacyBound(maxSegment))
+                .nanCount(recordedNaNCount())
                 .build();
-    }
-
-    /**
-     * Mirrors the modern {@code min_value} bytes into the deprecated {@code min} field only when parquetry's computed
-     * order matches the legacy SIGNED contract for this column. A legacy reader that ignores {@code column_orders}
-     * reads the deprecated fields under signed order; for the binary kinds and unsigned-integer logical types parquetry
-     * computes the bound under unsigned order, which a legacy reader would invert and mis-prune. Omitting the legacy
-     * field for those columns keeps the modern {@code min_value} as the only published bound.
-     */
-    private MemorySegment legacyMinSegment(MemorySegment modernMin) {
-        if (legacyOrderMatchesModern) {
-            return modernMin;
-        }
-        return MemorySegment.NULL;
-    }
-
-    private MemorySegment legacyMaxSegment(MemorySegment modernMax) {
-        if (legacyOrderMatchesModern) {
-            return modernMax;
-        }
-        return MemorySegment.NULL;
     }
 
     /**
@@ -484,10 +363,17 @@ public final class StatisticsAccumulator {
      * not modify the accumulator -- to start a new page window call {@link #reset()}.
      */
     public PageStatistics finishPage() {
-        MemorySegment minSegment = encodedMin();
-        MemorySegment maxSegment = encodedMax();
+        MemorySegment minSegment = encodedLowerBound();
+        MemorySegment maxSegment = encodedUpperBound();
         boolean isNullPage = nonNullCount == 0 && nullCount > 0;
-        return new PageStatistics(minSegment, maxSegment, nullCount, isNullPage);
+        return new PageStatistics(
+                minSegment,
+                maxSegment,
+                nullCount,
+                isNullPage,
+                recordedNaNCount(),
+                lowerBoundIsExact(),
+                upperBoundIsExact());
     }
 
     /** Returns the accumulator to its initial state. */
@@ -495,75 +381,106 @@ public final class StatisticsAccumulator {
         nullCount = 0;
         nonNullCount = 0;
         hasMinMax = false;
-        booleanMin = false;
-        booleanMax = false;
-        intMin = 0;
-        intMax = 0;
-        longMin = 0L;
-        longMax = 0L;
-        floatMin = 0f;
-        floatMax = 0f;
-        doubleMin = 0d;
-        doubleMax = 0d;
+        minKey = 0L;
+        maxKey = 0L;
         binaryMin = null;
         binaryMax = null;
+        nanCount = 0;
     }
 
-    private MemorySegment encodedMin() {
-        if (!tracksMinMax || !hasMinMax) {
+    /** The NaN count of the window, recorded for a floating-point column alone. */
+    private OptionalLong recordedNaNCount() {
+        if (order.isFloatingPoint()) {
+            return OptionalLong.of(nanCount);
+        }
+        return OptionalLong.empty();
+    }
+
+    /**
+     * The bytes of a modern bound to publish in its deprecated field too: the bound itself when the column's order
+     * agrees with the signed reading of a legacy reader, nothing otherwise; see
+     * {@link #legacyOrderMatchesModern(BoundsOrder)}.
+     */
+    private MemorySegment legacyBound(MemorySegment modernBound) {
+        if (legacyOrderMatchesModern) {
+            return modernBound;
+        }
+        return MemorySegment.NULL;
+    }
+
+    /** The smallest cell of the window, nothing for a window holding no ordered cell. */
+    private MemorySegment encodedLowerBound() {
+        if (!hasMinMax) {
             return MemorySegment.NULL;
         }
-        return switch (kind) {
-            case BOOLEAN -> readOnlyHeap(new byte[] {(byte) (booleanMin ? 1 : 0)});
-            case INT32 -> readOnlyHeap(encodeInt32(intMin));
-            case INT64 -> readOnlyHeap(encodeInt64(longMin));
-            case FLOAT -> readOnlyHeap(encodeFloat(floatMin));
-            case DOUBLE -> readOnlyHeap(encodeDouble(doubleMin));
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> binaryMin;
-            case INT96 -> MemorySegment.NULL;
+        return order.comparesBytes() ? binaryMin : encoded(lowerBoundKey());
+    }
+
+    /** The largest cell of the window, nothing for a window holding no ordered cell. */
+    private MemorySegment encodedUpperBound() {
+        if (!hasMinMax) {
+            return MemorySegment.NULL;
+        }
+        return order.comparesBytes() ? binaryMax : encoded(upperBoundKey());
+    }
+
+    /** Whether the lower bound is held by a cell of the window: not so for a {@code -0.0} written over {@code +0.0}. */
+    private boolean lowerBoundIsExact() {
+        return hasMinMax && lowerBoundKey() == minKey;
+    }
+
+    /** Whether the upper bound is held by a cell of the window: not so for a {@code +0.0} written over {@code -0.0}. */
+    private boolean upperBoundIsExact() {
+        return hasMinMax && upperBoundKey() == maxKey;
+    }
+
+    /**
+     * A floating-point minimum of zero is recorded as {@code -0.0}, regardless of the sign of the zeros in the window.
+     */
+    private long lowerBoundKey() {
+        boolean positiveZero = order.isFloatingPoint() && minKey == POSITIVE_ZERO_KEY;
+        return positiveZero ? negativeZeroKey : minKey;
+    }
+
+    /**
+     * A floating-point maximum of zero is recorded as {@code +0.0}, regardless of the sign of the zeros in the window.
+     */
+    private long upperBoundKey() {
+        boolean negativeZero = order.isFloatingPoint() && maxKey == negativeZeroKey;
+        return negativeZero ? POSITIVE_ZERO_KEY : maxKey;
+    }
+
+    /** The PLAIN bytes of the cell with the given order key. */
+    private MemorySegment encoded(long key) {
+        return switch (order) {
+            case BOOLEAN -> readOnlyHeap(new byte[] {(byte) key});
+            case SIGNED_INT32, UNSIGNED_INT32 -> encodedInt32((int) key ^ intSignFlip);
+            case SIGNED_INT64, UNSIGNED_INT64 -> encodedInt64(key ^ longSignFlip);
+            case FLOAT -> encodedInt32(TotalOrder.bits((int) key));
+            case DOUBLE -> encodedInt64(TotalOrder.bits(key));
+            case HALF_FLOAT -> encodedHalfFloat(HalfFloats.bits((int) key));
+            case UNSIGNED_BYTES, SIGNED_BYTES, UNDEFINED ->
+                throw new IllegalStateException("a column in " + order + " order has no order keys");
         };
     }
 
-    private MemorySegment encodedMax() {
-        if (!tracksMinMax || !hasMinMax) {
-            return MemorySegment.NULL;
-        }
-        return switch (kind) {
-            case BOOLEAN -> readOnlyHeap(new byte[] {(byte) (booleanMax ? 1 : 0)});
-            case INT32 -> readOnlyHeap(encodeInt32(intMax));
-            case INT64 -> readOnlyHeap(encodeInt64(longMax));
-            case FLOAT -> readOnlyHeap(encodeFloat(floatMax));
-            case DOUBLE -> readOnlyHeap(encodeDouble(doubleMax));
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> binaryMax;
-            case INT96 -> MemorySegment.NULL;
-        };
+    private static MemorySegment encodedInt32(int value) {
+        byte[] out = new byte[Integer.BYTES];
+        MemorySegment.ofArray(out).set(INT32, 0L, value);
+        return readOnlyHeap(out);
+    }
+
+    private static MemorySegment encodedInt64(long value) {
+        byte[] out = new byte[Long.BYTES];
+        MemorySegment.ofArray(out).set(INT64, 0L, value);
+        return readOnlyHeap(out);
+    }
+
+    private static MemorySegment encodedHalfFloat(short bits) {
+        return readOnlyHeap(HalfFloats.encode(bits));
     }
 
     private static MemorySegment readOnlyHeap(byte[] bytes) {
         return MemorySegment.ofArray(bytes).asReadOnly();
-    }
-
-    private static byte[] encodeInt32(int value) {
-        byte[] out = new byte[4];
-        MemorySegment.ofArray(out).set(INT32, 0L, value);
-        return out;
-    }
-
-    private static byte[] encodeInt64(long value) {
-        byte[] out = new byte[8];
-        MemorySegment.ofArray(out).set(INT64, 0L, value);
-        return out;
-    }
-
-    private static byte[] encodeFloat(float value) {
-        byte[] out = new byte[4];
-        MemorySegment.ofArray(out).set(FLOAT, 0L, value);
-        return out;
-    }
-
-    private static byte[] encodeDouble(double value) {
-        byte[] out = new byte[8];
-        MemorySegment.ofArray(out).set(DOUBLE, 0L, value);
-        return out;
     }
 }

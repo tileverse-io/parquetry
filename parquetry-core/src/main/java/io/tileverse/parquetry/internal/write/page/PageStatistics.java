@@ -16,24 +16,37 @@
 package io.tileverse.parquetry.internal.write.page;
 
 import java.lang.foreign.MemorySegment;
+import java.util.OptionalLong;
 
 import io.tileverse.parquetry.internal.write.ColumnIndexBuilder;
 import io.tileverse.parquetry.internal.write.StatisticsAccumulator;
 
 /**
- * Per-page snapshot emitted by {@link StatisticsAccumulator#finishPage()} for consumption by
- * {@link ColumnIndexBuilder}.
+ * Per-page snapshot emitted by {@link StatisticsAccumulator#finishPage()} for consumption by {@link ColumnIndexBuilder}
+ * and by the page header.
  *
- * <p>{@link #min()} and {@link #max()} hold the page's PLAIN-encoded min/max for the column's physical kind as a
- * read-only {@link MemorySegment}. {@link MemorySegment#NULL} marks "no min/max available" -- either the page produced
- * no non-null observation, or the column kind does not support ordering (geometry / geography / INT96).
+ * <p>{@link #min()} and {@link #max()} hold the page's PLAIN-encoded bounds as read-only {@link MemorySegment}s, or
+ * {@link MemorySegment#NULL} when the page holds no ordered value: only nulls, only NaN, or a column without a defined
+ * order.
  *
- * @param min PLAIN-encoded page minimum; {@link MemorySegment#NULL} when no ordering is defined
- * @param max PLAIN-encoded page maximum; {@link MemorySegment#NULL} when no ordering is defined
+ * @param min PLAIN-encoded lower bound of the page; {@link MemorySegment#NULL} without an ordered value
+ * @param max PLAIN-encoded upper bound of the page; {@link MemorySegment#NULL} without an ordered value
  * @param nullCount number of null cells observed during the page's accumulation window
  * @param isNullPage {@code true} when every cell in the page was null
+ * @param nanCount number of NaN cells observed during the page's accumulation window; empty for a column other than
+ *     FLOAT, DOUBLE and FLOAT16
+ * @param minExact whether {@code min} is held by a cell of the page; false without a bound, and for a zero written with
+ *     the sign required by the format over cells of the other sign
+ * @param maxExact the {@code max} counterpart of {@code minExact}
  */
-public record PageStatistics(MemorySegment min, MemorySegment max, long nullCount, boolean isNullPage) {
+public record PageStatistics(
+        MemorySegment min,
+        MemorySegment max,
+        long nullCount,
+        boolean isNullPage,
+        OptionalLong nanCount,
+        boolean minExact,
+        boolean maxExact) {
 
     public PageStatistics {
         if (min == null) {
@@ -41,6 +54,9 @@ public record PageStatistics(MemorySegment min, MemorySegment max, long nullCoun
         }
         if (max == null) {
             max = MemorySegment.NULL;
+        }
+        if (nanCount == null) {
+            nanCount = OptionalLong.empty();
         }
     }
 }

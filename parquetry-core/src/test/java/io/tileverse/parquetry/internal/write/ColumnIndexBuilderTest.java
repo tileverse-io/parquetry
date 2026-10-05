@@ -20,20 +20,21 @@ import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
 import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.lang.foreign.MemorySegment;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Optional;
+import java.util.OptionalLong;
 
 import org.assertj.core.api.recursive.comparison.RecursiveComparisonConfiguration;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.format.BoundaryOrder;
 import io.tileverse.parquetry.format.ColumnIndex;
-import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.codec.ParquetFormatDeserializer;
 import io.tileverse.parquetry.internal.write.page.PageStatistics;
@@ -69,10 +70,10 @@ class ColumnIndexBuilderTest {
 
     @Test
     void int32RoundTripPreservesNullPagesAndBoundsAndNullCounts() {
-        ColumnIndexBuilder builder = new ColumnIndexBuilder(PrimitiveKind.INT32, null);
-        builder.appendPage(new PageStatistics(int32(1), int32(10), 0L, false));
-        builder.appendPage(new PageStatistics(int32(11), int32(20), 1L, false));
-        builder.appendPage(new PageStatistics(int32(21), int32(30), 0L, false));
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.SIGNED_INT32);
+        builder.appendPage(page(int32(1), int32(10), 0L, false));
+        builder.appendPage(page(int32(11), int32(20), 1L, false));
+        builder.appendPage(page(int32(21), int32(30), 0L, false));
 
         ColumnIndex original = builder.finishChunk().orElseThrow();
         ColumnIndex parsed = roundTrip(original);
@@ -85,10 +86,10 @@ class ColumnIndexBuilderTest {
 
     @Test
     void allNullPagesEmitMemorySegmentNullForMinMax() {
-        ColumnIndexBuilder builder = new ColumnIndexBuilder(PrimitiveKind.INT64, null);
-        builder.appendPage(new PageStatistics(MemorySegment.NULL, MemorySegment.NULL, 5L, true));
-        builder.appendPage(new PageStatistics(MemorySegment.NULL, MemorySegment.NULL, 7L, true));
-        builder.appendPage(new PageStatistics(MemorySegment.NULL, MemorySegment.NULL, 3L, true));
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.SIGNED_INT64);
+        builder.appendPage(page(MemorySegment.NULL, MemorySegment.NULL, 5L, true));
+        builder.appendPage(page(MemorySegment.NULL, MemorySegment.NULL, 7L, true));
+        builder.appendPage(page(MemorySegment.NULL, MemorySegment.NULL, 3L, true));
 
         ColumnIndex original = builder.finishChunk().orElseThrow();
 
@@ -103,10 +104,10 @@ class ColumnIndexBuilderTest {
 
     @Test
     void mixedNullAndValuedPagesRoundTripCorrectly() {
-        ColumnIndexBuilder builder = new ColumnIndexBuilder(PrimitiveKind.INT32, null);
-        builder.appendPage(new PageStatistics(int32(0), int32(5), 1L, false));
-        builder.appendPage(new PageStatistics(MemorySegment.NULL, MemorySegment.NULL, 4L, true));
-        builder.appendPage(new PageStatistics(int32(6), int32(9), 0L, false));
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.SIGNED_INT32);
+        builder.appendPage(page(int32(0), int32(5), 1L, false));
+        builder.appendPage(page(MemorySegment.NULL, MemorySegment.NULL, 4L, true));
+        builder.appendPage(page(int32(6), int32(9), 0L, false));
 
         ColumnIndex parsed = roundTrip(builder.finishChunk().orElseThrow());
 
@@ -119,10 +120,10 @@ class ColumnIndexBuilderTest {
 
     @Test
     void ascendingInt32PagesYieldAscendingBoundaryOrder() {
-        ColumnIndexBuilder builder = new ColumnIndexBuilder(PrimitiveKind.INT32, null);
-        builder.appendPage(new PageStatistics(int32(1), int32(2), 0L, false));
-        builder.appendPage(new PageStatistics(int32(3), int32(4), 0L, false));
-        builder.appendPage(new PageStatistics(int32(5), int32(6), 0L, false));
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.SIGNED_INT32);
+        builder.appendPage(page(int32(1), int32(2), 0L, false));
+        builder.appendPage(page(int32(3), int32(4), 0L, false));
+        builder.appendPage(page(int32(5), int32(6), 0L, false));
 
         ColumnIndex index = builder.finishChunk().orElseThrow();
 
@@ -131,10 +132,10 @@ class ColumnIndexBuilderTest {
 
     @Test
     void descendingInt64PagesYieldDescendingBoundaryOrder() {
-        ColumnIndexBuilder builder = new ColumnIndexBuilder(PrimitiveKind.INT64, null);
-        builder.appendPage(new PageStatistics(int64(100L), int64(200L), 0L, false));
-        builder.appendPage(new PageStatistics(int64(50L), int64(99L), 0L, false));
-        builder.appendPage(new PageStatistics(int64(0L), int64(49L), 0L, false));
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.SIGNED_INT64);
+        builder.appendPage(page(int64(100L), int64(200L), 0L, false));
+        builder.appendPage(page(int64(50L), int64(99L), 0L, false));
+        builder.appendPage(page(int64(0L), int64(49L), 0L, false));
 
         ColumnIndex index = builder.finishChunk().orElseThrow();
 
@@ -143,10 +144,10 @@ class ColumnIndexBuilderTest {
 
     @Test
     void crossingMinMaxYieldsUnorderedBoundaryOrder() {
-        ColumnIndexBuilder builder = new ColumnIndexBuilder(PrimitiveKind.INT32, null);
-        builder.appendPage(new PageStatistics(int32(1), int32(10), 0L, false));
-        builder.appendPage(new PageStatistics(int32(5), int32(7), 0L, false));
-        builder.appendPage(new PageStatistics(int32(20), int32(30), 0L, false));
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.SIGNED_INT32);
+        builder.appendPage(page(int32(1), int32(10), 0L, false));
+        builder.appendPage(page(int32(5), int32(7), 0L, false));
+        builder.appendPage(page(int32(20), int32(30), 0L, false));
 
         ColumnIndex index = builder.finishChunk().orElseThrow();
 
@@ -155,8 +156,8 @@ class ColumnIndexBuilderTest {
 
     @Test
     void singleNonNullPageDefaultsToUnordered() {
-        ColumnIndexBuilder builder = new ColumnIndexBuilder(PrimitiveKind.INT32, null);
-        builder.appendPage(new PageStatistics(int32(42), int32(42), 0L, false));
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.SIGNED_INT32);
+        builder.appendPage(page(int32(42), int32(42), 0L, false));
 
         ColumnIndex index = builder.finishChunk().orElseThrow();
 
@@ -167,9 +168,9 @@ class ColumnIndexBuilderTest {
 
     @Test
     void byteArrayPagesUseUnsignedLexOrdering() {
-        ColumnIndexBuilder builder = new ColumnIndexBuilder(PrimitiveKind.BYTE_ARRAY, null);
-        builder.appendPage(new PageStatistics(bytes("apple"), bytes("banana"), 0L, false));
-        builder.appendPage(new PageStatistics(bytes("cherry"), bytes("date"), 0L, false));
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.UNSIGNED_BYTES);
+        builder.appendPage(page(bytes("apple"), bytes("banana"), 0L, false));
+        builder.appendPage(page(bytes("cherry"), bytes("date"), 0L, false));
 
         ColumnIndex index = builder.finishChunk().orElseThrow();
 
@@ -177,27 +178,44 @@ class ColumnIndexBuilderTest {
     }
 
     @Test
-    void geometryColumnsAlwaysReportUnorderedBoundaryOrder() {
-        ColumnIndexBuilder builder =
-                new ColumnIndexBuilder(PrimitiveKind.BYTE_ARRAY, new LogicalType.Geometry(Optional.empty()));
-        builder.appendPage(new PageStatistics(bytes("\1\2"), bytes("\3\4"), 0L, false));
-        builder.appendPage(new PageStatistics(bytes("\5\6"), bytes("\7\10"), 0L, false));
+    void chunkOfAColumnWithoutADefinedOrderHasNoColumnIndex() {
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.UNDEFINED);
+        builder.appendPage(page(MemorySegment.NULL, MemorySegment.NULL, 0L, false));
+        builder.appendPage(page(MemorySegment.NULL, MemorySegment.NULL, 2L, false));
+
+        assertThat(builder.finishChunk()).isEmpty();
+    }
+
+    @Test
+    void chunkOfOnlyNullPagesHasNoColumnIndexWithoutADefinedOrder() {
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.UNDEFINED);
+        builder.appendPage(page(MemorySegment.NULL, MemorySegment.NULL, 4L, true));
+        builder.appendPage(page(MemorySegment.NULL, MemorySegment.NULL, 6L, true));
+
+        assertThat(builder.finishChunk()).isEmpty();
+    }
+
+    @Test
+    void chunkOfOnlyNullPagesKeepsItsColumnIndexInADefinedOrder() {
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.SIGNED_INT32);
+        builder.appendPage(page(MemorySegment.NULL, MemorySegment.NULL, 4L, true));
+        builder.appendPage(page(MemorySegment.NULL, MemorySegment.NULL, 6L, true));
 
         ColumnIndex index = builder.finishChunk().orElseThrow();
 
-        assertThat(index.boundaryOrder())
-                .as("WKB bytes carry no meaningful order; geometry columns must stay UNORDERED")
-                .isEqualTo(BoundaryOrder.UNORDERED);
+        assertThat(index.nullPages()).containsExactly(true, true);
+        assertThat(index.nullCounts()).contains(List.of(4L, 6L));
+        assertThat(index.boundaryOrder()).isEqualTo(BoundaryOrder.UNORDERED);
     }
 
     @Test
     void finishChunkClearsBuilderForReuse() {
-        ColumnIndexBuilder builder = new ColumnIndexBuilder(PrimitiveKind.INT32, null);
-        builder.appendPage(new PageStatistics(int32(1), int32(2), 0L, false));
-        builder.appendPage(new PageStatistics(int32(3), int32(4), 0L, false));
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.SIGNED_INT32);
+        builder.appendPage(page(int32(1), int32(2), 0L, false));
+        builder.appendPage(page(int32(3), int32(4), 0L, false));
         ColumnIndex first = builder.finishChunk().orElseThrow();
 
-        builder.appendPage(new PageStatistics(int32(100), int32(200), 5L, false));
+        builder.appendPage(page(int32(100), int32(200), 5L, false));
         ColumnIndex second = builder.finishChunk().orElseThrow();
 
         assertThat(first.nullPages()).hasSize(2);
@@ -207,10 +225,10 @@ class ColumnIndexBuilderTest {
 
     @Test
     void resetClearsAccumulatedPages() {
-        ColumnIndexBuilder builder = new ColumnIndexBuilder(PrimitiveKind.INT32, null);
-        builder.appendPage(new PageStatistics(int32(1), int32(2), 0L, false));
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.SIGNED_INT32);
+        builder.appendPage(page(int32(1), int32(2), 0L, false));
         builder.reset();
-        builder.appendPage(new PageStatistics(int32(10), int32(20), 0L, false));
+        builder.appendPage(page(int32(10), int32(20), 0L, false));
 
         ColumnIndex index = builder.finishChunk().orElseThrow();
 
@@ -219,36 +237,144 @@ class ColumnIndexBuilderTest {
     }
 
     @Test
-    void chunkWithAPageOfNaNValuesOnlyHasNoColumnIndex() {
-        StatisticsAccumulator nanPage = StatisticsAccumulator.forKind(PrimitiveKind.FLOAT, null);
+    void chunkWithAPageOfOnlyNaNHasNoColumnIndex() {
+        StatisticsAccumulator nanPage = WriteFixtures.accumulator(PrimitiveKind.FLOAT, null);
         nanPage.updateFloat(Float.NaN);
         nanPage.updateFloat(Float.NaN);
-        ColumnIndexBuilder builder = new ColumnIndexBuilder(PrimitiveKind.FLOAT, null);
-        builder.appendPage(new PageStatistics(float32(1.0f), float32(2.0f), 0L, false));
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.FLOAT);
+        builder.appendPage(floatPage(1.0f, 2.0f));
         builder.appendPage(nanPage.finishPage());
 
         assertThat(builder.finishChunk()).isEmpty();
     }
 
     @Test
+    void floatColumnIndexRecordsTheNaNCountOfEachPage() {
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.FLOAT);
+        builder.appendPage(floatPage(1.0f, 2.0f));
+        builder.appendPage(floatPageWithNaNs(3.0f, 4.0f, 5L));
+
+        ColumnIndex parsed = roundTrip(builder.finishChunk().orElseThrow());
+
+        assertThat(parsed.nanCounts()).contains(List.of(0L, 5L));
+    }
+
+    @Test
+    void integerColumnIndexRecordsNoNaNCounts() {
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.SIGNED_INT32);
+        builder.appendPage(page(int32(1), int32(2), 0L, false));
+
+        ColumnIndex index = builder.finishChunk().orElseThrow();
+
+        assertThat(index.nanCounts()).isEmpty();
+    }
+
+    @Test
+    void floatPagesMeetingAtZeroAscend() {
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.FLOAT);
+        builder.appendPage(floatPage(-1.0f, 0.0f));
+        builder.appendPage(floatPage(-0.0f, 1.0f));
+
+        ColumnIndex index = builder.finishChunk().orElseThrow();
+
+        assertThat(index.boundaryOrder()).isEqualTo(BoundaryOrder.ASCENDING);
+    }
+
+    @Test
     void chunkWithMixedNaNPagesKeepsItsColumnIndex() {
-        StatisticsAccumulator mixedPage = StatisticsAccumulator.forKind(PrimitiveKind.FLOAT, null);
+        StatisticsAccumulator mixedPage = WriteFixtures.accumulator(PrimitiveKind.FLOAT, null);
         mixedPage.updateFloat(Float.NaN);
         mixedPage.updateFloat(3.0f);
-        ColumnIndexBuilder builder = new ColumnIndexBuilder(PrimitiveKind.FLOAT, null);
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.FLOAT);
         builder.appendPage(mixedPage.finishPage());
 
         assertThat(builder.finishChunk()).isPresent();
     }
 
     @Test
+    void chunkWithANonNullPageWithoutBoundsHasNoColumnIndex() {
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.SIGNED_INT32);
+        builder.appendPage(page(int32(1), int32(2), 0L, false));
+        builder.appendPage(page(MemorySegment.NULL, MemorySegment.NULL, 0L, false));
+
+        assertThat(builder.finishChunk()).isEmpty();
+    }
+
+    @Test
     void builderServesTheNextChunkAfterOneWithoutColumnIndex() {
-        ColumnIndexBuilder builder = new ColumnIndexBuilder(PrimitiveKind.FLOAT, null);
-        builder.appendPage(new PageStatistics(MemorySegment.NULL, MemorySegment.NULL, 0L, false));
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.SIGNED_INT32);
+        builder.appendPage(page(MemorySegment.NULL, MemorySegment.NULL, 0L, false));
         builder.finishChunk();
-        builder.appendPage(new PageStatistics(float32(1.0f), float32(2.0f), 0L, false));
+        builder.appendPage(page(int32(1), int32(2), 0L, false));
 
         assertThat(builder.finishChunk()).isPresent();
+    }
+
+    @Test
+    void floatPageWithoutANaNCountIsRejected() {
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.FLOAT);
+        PageStatistics uncounted = page(float32(1.0f), float32(2.0f), 0L, false);
+
+        assertThatThrownBy(() -> builder.appendPage(uncounted)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void unsignedPageBoundsAscendAcrossTheSignedRange() {
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.UNSIGNED_INT32);
+        builder.appendPage(page(int32(1), int32(100), 0L, false));
+        builder.appendPage(page(uint32(2_200_000_000L), uint32(3_000_000_000L), 0L, false));
+        builder.appendPage(page(uint32(3_500_000_000L), uint32(4_000_000_000L), 0L, false));
+
+        ColumnIndex index = builder.finishChunk().orElseThrow();
+
+        assertThat(index.boundaryOrder()).isEqualTo(BoundaryOrder.ASCENDING);
+    }
+
+    @Test
+    void decimalPageBoundsAscendFromNegativeToPositive() {
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.SIGNED_BYTES);
+        builder.appendPage(page(decimal(-9), decimal(-5), 0L, false));
+        builder.appendPage(page(decimal(-1), decimal(3), 0L, false));
+        builder.appendPage(page(decimal(4), decimal(8), 0L, false));
+
+        ColumnIndex index = builder.finishChunk().orElseThrow();
+
+        assertThat(index.boundaryOrder()).isEqualTo(BoundaryOrder.ASCENDING);
+    }
+
+    @Test
+    void halfFloatPageBoundsAscendByValue() {
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.HALF_FLOAT);
+        builder.appendPage(halfFloatPage(-2.0f, -1.0f));
+        builder.appendPage(halfFloatPage(-0.5f, 0.5f));
+        builder.appendPage(halfFloatPage(1.0f, 3.0f));
+
+        ColumnIndex index = builder.finishChunk().orElseThrow();
+
+        assertThat(index.boundaryOrder()).isEqualTo(BoundaryOrder.ASCENDING);
+    }
+
+    /** The statistics of a page of a FLOAT column holding no NaN cell and no null. */
+    private static PageStatistics floatPage(float min, float max) {
+        return floatPageWithNaNs(min, max, 0L);
+    }
+
+    /** The statistics of a page of a FLOAT column holding {@code nanCount} NaN cells and no null. */
+    private static PageStatistics floatPageWithNaNs(float min, float max, long nanCount) {
+        return new PageStatistics(float32(min), float32(max), 0L, false, OptionalLong.of(nanCount), true, true);
+    }
+
+    /** The statistics of a page of a FLOAT16 column holding no NaN cell and no null. */
+    private static PageStatistics halfFloatPage(float min, float max) {
+        MemorySegment minCell = WriteFixtures.halfFloat(min);
+        MemorySegment maxCell = WriteFixtures.halfFloat(max);
+        return new PageStatistics(minCell, maxCell, 0L, false, OptionalLong.of(0L), true, true);
+    }
+
+    /** The statistics of a page of a column without NaN counts. */
+    private static PageStatistics page(MemorySegment min, MemorySegment max, long nullCount, boolean isNullPage) {
+        boolean bounded = min != MemorySegment.NULL && max != MemorySegment.NULL;
+        return new PageStatistics(min, max, nullCount, isNullPage, OptionalLong.empty(), bounded, bounded);
     }
 
     private static ColumnIndex roundTrip(ColumnIndex original) {
@@ -267,6 +393,16 @@ class ColumnIndexBuilderTest {
         byte[] buf = new byte[4];
         MemorySegment.ofArray(buf).set(INT32, 0, value);
         return MemorySegment.ofArray(buf).asReadOnly();
+    }
+
+    private static MemorySegment uint32(long value) {
+        return int32((int) value);
+    }
+
+    /** A decimal's unscaled value as four big-endian two's complement bytes. */
+    private static MemorySegment decimal(int unscaled) {
+        byte[] bytes = WriteFixtures.signedBytes(BigInteger.valueOf(unscaled), Integer.BYTES);
+        return MemorySegment.ofArray(bytes).asReadOnly();
     }
 
     private static MemorySegment int64(long value) {

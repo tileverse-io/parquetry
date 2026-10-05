@@ -15,12 +15,6 @@
  */
 package io.tileverse.parquetry.internal.write;
 
-import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
-import static io.tileverse.parquetry.format.ParquetLayouts.FLOAT;
-import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
-import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
-import static java.lang.foreign.ValueLayout.JAVA_BYTE;
-
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,9 +22,7 @@ import java.util.Optional;
 
 import io.tileverse.parquetry.format.BoundaryOrder;
 import io.tileverse.parquetry.format.ColumnIndex;
-import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.internal.write.page.PageStatistics;
-import io.tileverse.parquetry.schema.PrimitiveKind;
 
 import lombok.NonNull;
 
@@ -38,46 +30,30 @@ import lombok.NonNull;
  * Per-row-group, per-column footer index builder.
  *
  * <p>Each call to {@link #appendPage(PageStatistics)} adds one data-page entry: a null-page flag, the page's typed
- * min/max (or {@link MemorySegment#NULL} when the page produced no ordered observation), and the per-page null count.
- * {@link #finishChunk()} assembles the {@link ColumnIndex} for the current accumulation window and clears state so the
- * builder can be reused for the next column chunk.
+ * min/max (or {@link MemorySegment#NULL} when the page produced no ordered observation), the per-page null count and,
+ * for a floating-point column, the per-page NaN count. {@link #finishChunk()} assembles the {@link ColumnIndex} for the
+ * current accumulation window and clears state, readying the builder for the next column chunk.
  *
- * <p>{@code boundary_order} is computed from the non-null-page sequence using the same ordering semantics the read-side
- * stats evaluator applies: signed numeric comparison for the integer and floating kinds, and unsigned lexicographic
- * byte comparison for {@code BYTE_ARRAY} / {@code FIXED_LEN_BYTE_ARRAY}, matching Parquet's default
- * {@code ColumnOrder}. Zero or one non-null pages default to {@link BoundaryOrder#UNORDERED} -- the safe value that
- * forces a linear scan on the read side.
+ * <p>{@code boundary_order} is computed from the non-null-page sequence in the {@link BoundsOrder} of the column, the
+ * order of the page bounds themselves. Zero or one non-null pages default to {@link BoundaryOrder#UNORDERED} -- the
+ * safe value that forces a linear scan on the read side.
  *
- * <p>Geometry and geography columns have no meaningful PLAIN-byte ordering, so pages of those columns always carry
- * {@link MemorySegment#NULL} min/max and the assembled boundary order falls through to {@code UNORDERED} regardless of
- * how many entries are appended.
+ * <p>A column with an {@link BoundsOrder#UNDEFINED undefined} order gets no column index: the format defines the page
+ * bounds of a column index by the order of the column.
  */
 public final class ColumnIndexBuilder {
 
-    private final PrimitiveKind kind;
-    private final boolean tracksOrdering;
+    private final BoundsOrder order;
 
     private final List<Boolean> nullPages = new ArrayList<>();
     private final List<MemorySegment> minValues = new ArrayList<>();
     private final List<MemorySegment> maxValues = new ArrayList<>();
     private final List<Long> nullCounts = new ArrayList<>();
+    private final List<Long> nanCounts = new ArrayList<>();
 
-    /**
-     * @param kind physical kind of the column whose pages this builder describes
-     * @param logicalType logical type of the column; geometry/geography columns skip ordering computation since their
-     *     PLAIN bytes carry no meaningful order. {@code null} keeps ordering enabled.
-     */
-    public ColumnIndexBuilder(@NonNull PrimitiveKind kind, LogicalType logicalType) {
-        this.kind = kind;
-        this.tracksOrdering = supportsOrdering(kind) && !isGeometryLike(logicalType);
-    }
-
-    private static boolean supportsOrdering(PrimitiveKind kind) {
-        return kind != PrimitiveKind.INT96;
-    }
-
-    private static boolean isGeometryLike(LogicalType logicalType) {
-        return logicalType instanceof LogicalType.Geometry || logicalType instanceof LogicalType.Geography;
+    /** @param order the order of the page bounds of the column described by this builder */
+    ColumnIndexBuilder(@NonNull BoundsOrder order) {
+        this.order = order;
     }
 
     /** Appends one page entry from the accumulator's per-page snapshot. */
@@ -86,52 +62,60 @@ public final class ColumnIndexBuilder {
         minValues.add(pageStats.min());
         maxValues.add(pageStats.max());
         nullCounts.add(pageStats.nullCount());
+        if (order.isFloatingPoint()) {
+            nanCounts.add(requiredNaNCount(pageStats));
+        }
+    }
+
+    private static long requiredNaNCount(PageStatistics pageStats) {
+        return pageStats
+                .nanCount()
+                .orElseThrow(() -> new IllegalStateException("a page of a floating-point column has no NaN count"));
     }
 
     /**
-     * Returns the {@link ColumnIndex} assembled from the {@link #appendPage} calls since the last reset, empty when a
-     * page of an ordered column holds only NaN values. Such a page has no min or max, both required by a column index,
-     * and the format forbids writing a NaN into them. Calling this method also clears internal state, readying the
-     * builder for the next column chunk.
+     * Returns the {@link ColumnIndex} assembled from the {@link #appendPage} calls since the last reset, empty when no
+     * column index can describe the chunk; see {@link #indexable()}. Calling this method also clears internal state,
+     * readying the builder for the next column chunk.
      */
     public Optional<ColumnIndex> finishChunk() {
-        boolean bounded = boundsEachValuedPage();
-        BoundaryOrder order = tracksOrdering ? computeBoundaryOrder() : BoundaryOrder.UNORDERED;
-        ColumnIndex index = new ColumnIndex(
-                List.copyOf(nullPages),
-                List.copyOf(minValues),
-                List.copyOf(maxValues),
-                order,
-                Optional.of(List.copyOf(nullCounts)),
-                Optional.empty(),
-                Optional.empty());
+        Optional<ColumnIndex> index = indexable() ? Optional.of(assemble()) : Optional.empty();
         reset();
-        return bounded ? Optional.of(index) : Optional.empty();
+        return index;
     }
 
     /**
-     * Whether each page holding a value has min and max bytes. An ordered column misses them only on a page of NaN
-     * values; a geometry column never records them.
+     * Whether a column index can describe the appended pages: the column has a defined order, and each non-null page
+     * has a min and a max, as required by the format. A page of only NaN is a non-null page without bounds.
      */
-    private boolean boundsEachValuedPage() {
-        if (!tracksOrdering) {
-            return true;
-        }
+    private boolean indexable() {
+        return order.isDefined() && eachNonNullPageHasBounds();
+    }
+
+    private boolean eachNonNullPageHasBounds() {
         for (int i = 0; i < nullPages.size(); i++) {
             boolean isNullPage = nullPages.get(i).booleanValue();
-            if (!isNullPage && !hasOrderedBytes(i)) {
+            if (!isNullPage && !hasBounds(i)) {
                 return false;
             }
         }
         return true;
     }
 
-    /** Clears every accumulated page entry; the builder behaves as freshly constructed. */
-    public void reset() {
-        nullPages.clear();
-        minValues.clear();
-        maxValues.clear();
-        nullCounts.clear();
+    private boolean hasBounds(int page) {
+        return minValues.get(page) != MemorySegment.NULL && maxValues.get(page) != MemorySegment.NULL;
+    }
+
+    private ColumnIndex assemble() {
+        return new ColumnIndex(
+                List.copyOf(nullPages),
+                List.copyOf(minValues),
+                List.copyOf(maxValues),
+                computeBoundaryOrder(),
+                Optional.of(List.copyOf(nullCounts)),
+                Optional.empty(),
+                Optional.empty(),
+                nanCountOfEachPage());
     }
 
     /**
@@ -171,15 +155,11 @@ public final class ColumnIndexBuilder {
     private int nextNonNullPageIndex(int start) {
         for (int i = start; i < nullPages.size(); i++) {
             boolean isNullPage = nullPages.get(i).booleanValue();
-            if (!isNullPage && hasOrderedBytes(i)) {
+            if (!isNullPage) {
                 return i;
             }
         }
         return -1;
-    }
-
-    private boolean hasOrderedBytes(int i) {
-        return minValues.get(i) != MemorySegment.NULL && maxValues.get(i) != MemorySegment.NULL;
     }
 
     /**
@@ -188,8 +168,8 @@ public final class ColumnIndexBuilder {
      * prev.max while next.max &gt; prev.max, etc.) yields {@link Direction#UNDEFINED}.
      */
     private Direction directionBetween(int prev, int next) {
-        int minCmp = compare(minValues.get(prev), minValues.get(next));
-        int maxCmp = compare(maxValues.get(prev), maxValues.get(next));
+        int minCmp = order.compare(minValues.get(prev), minValues.get(next));
+        int maxCmp = order.compare(maxValues.get(prev), maxValues.get(next));
         if (minCmp <= 0 && maxCmp <= 0) {
             return Direction.ASCENDING;
         }
@@ -199,16 +179,21 @@ public final class ColumnIndexBuilder {
         return Direction.UNDEFINED;
     }
 
-    private int compare(MemorySegment a, MemorySegment b) {
-        return switch (kind) {
-            case BOOLEAN -> Boolean.compare(a.get(JAVA_BYTE, 0) != 0, b.get(JAVA_BYTE, 0) != 0);
-            case INT32 -> Integer.compare(a.get(INT32, 0), b.get(INT32, 0));
-            case INT64 -> Long.compare(a.get(INT64, 0), b.get(INT64, 0));
-            case FLOAT -> Float.compare(a.get(FLOAT, 0), b.get(FLOAT, 0));
-            case DOUBLE -> Double.compare(a.get(DOUBLE, 0), b.get(DOUBLE, 0));
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> UnsignedLexOrder.compare(a, b);
-            case INT96 -> 0;
-        };
+    /** The NaN counts of the pages of a floating-point column; no other column records them. */
+    private Optional<List<Long>> nanCountOfEachPage() {
+        if (nanCounts.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(List.copyOf(nanCounts));
+    }
+
+    /** Clears the accumulated page entries; the builder behaves as freshly constructed. */
+    public void reset() {
+        nullPages.clear();
+        minValues.clear();
+        maxValues.clear();
+        nullCounts.clear();
+        nanCounts.clear();
     }
 
     private enum Direction {

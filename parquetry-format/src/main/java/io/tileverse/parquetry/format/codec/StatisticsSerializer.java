@@ -51,6 +51,9 @@ final class StatisticsSerializer {
         if (s.isMinValueExact()) {
             w.writeBoolField((short) 8, true);
         }
+        if (s.nanCount().isPresent()) {
+            w.writeI64Field((short) 9, s.nanCount().getAsLong());
+        }
         w.writeFieldStop();
         w.writeStructEnd();
     }

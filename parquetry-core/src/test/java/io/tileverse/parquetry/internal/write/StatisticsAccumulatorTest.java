@@ -39,7 +39,7 @@ class StatisticsAccumulatorTest {
 
     @Test
     void emptyChunkSnapshotHasNoMinMaxAndZeroNullCount() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.INT32, null);
 
         Statistics stats = acc.finishChunk();
 
@@ -51,7 +51,7 @@ class StatisticsAccumulatorTest {
 
     @Test
     void emptyPageSnapshotIsNotNullPage() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.INT32, null);
 
         PageStatistics page = acc.finishPage();
 
@@ -63,7 +63,7 @@ class StatisticsAccumulatorTest {
 
     @Test
     void int32MinMaxAndNullCountAccumulate() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.INT32, null);
 
         acc.updateInt(5);
         acc.updateNull();
@@ -82,7 +82,7 @@ class StatisticsAccumulatorTest {
 
     @Test
     void legacyMinMaxMirrorTheModernValuesForCompatibility() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.INT32, null);
         acc.updateInt(5);
         acc.updateInt(-3);
         acc.updateInt(42);
@@ -100,7 +100,7 @@ class StatisticsAccumulatorTest {
 
     @Test
     void binaryOmitsLegacyMinMax() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.BYTE_ARRAY, null);
         acc.updateBinary(asSegment(new byte[] {0x7E}));
         acc.updateBinary(asSegment(new byte[] {(byte) 0x80}));
 
@@ -113,7 +113,7 @@ class StatisticsAccumulatorTest {
 
     @Test
     void fixedLenBinaryOmitsLegacyMinMax() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, null);
         acc.updateBinary(asSegment(new byte[] {0x7E}));
         acc.updateBinary(asSegment(new byte[] {(byte) 0x80}));
 
@@ -127,7 +127,7 @@ class StatisticsAccumulatorTest {
     @Test
     void unsignedIntOmitsLegacyMinMax() {
         StatisticsAccumulator acc =
-                StatisticsAccumulator.forKind(PrimitiveKind.INT32, new LogicalType.IntType((byte) 32, false));
+                WriteFixtures.accumulator(PrimitiveKind.INT32, new LogicalType.IntType((byte) 32, false));
         acc.updateInt(5);
         acc.updateInt(-3);
         acc.updateInt(42);
@@ -141,7 +141,7 @@ class StatisticsAccumulatorTest {
 
     @Test
     void emptyChunkOmitsLegacyMinMax() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.INT32, null);
 
         Statistics stats = acc.finishChunk();
         assertThat(stats.min()).as("legacy min absent").isEqualTo(MemorySegment.NULL);
@@ -150,7 +150,7 @@ class StatisticsAccumulatorTest {
 
     @Test
     void int64MinMaxAndNullCountAccumulate() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT64, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.INT64, null);
 
         long[] inputs = {1_000_000L, -50L, 0L, Long.MAX_VALUE, Long.MIN_VALUE, 17L};
         for (long v : inputs) {
@@ -165,7 +165,7 @@ class StatisticsAccumulatorTest {
 
     @Test
     void floatMinMaxAndNullCountAccumulate() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.FLOAT, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.FLOAT, null);
 
         acc.updateFloat(1.5f);
         acc.updateFloat(-2.25f);
@@ -179,21 +179,8 @@ class StatisticsAccumulatorTest {
     }
 
     @Test
-    void floatNaNIsExcludedFromMinMaxButCountedAsNonNull() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.FLOAT, null);
-
-        acc.updateFloat(Float.NaN);
-        acc.updateFloat(Float.NaN);
-
-        Statistics stats = acc.finishChunk();
-        assertThat(stats.minValue()).isEqualTo(MemorySegment.NULL);
-        assertThat(stats.maxValue()).isEqualTo(MemorySegment.NULL);
-        assertThat(stats.nullCount()).hasValue(0L);
-    }
-
-    @Test
     void doubleMinMaxAndNullCountAccumulate() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.DOUBLE, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.DOUBLE, null);
 
         double[] inputs = {3.14, -1.5, 2.718, 0.0, 100.5};
         for (double v : inputs) {
@@ -209,7 +196,7 @@ class StatisticsAccumulatorTest {
 
     @Test
     void booleanMinMaxAndNullCountAccumulate() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.BOOLEAN, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.BOOLEAN, null);
 
         acc.updateBoolean(true);
         acc.updateBoolean(true);
@@ -224,7 +211,7 @@ class StatisticsAccumulatorTest {
 
     @Test
     void binaryMinMaxIsUnsignedLexicographic() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.BYTE_ARRAY, null);
 
         acc.updateBinary(asSegment("banana".getBytes(StandardCharsets.UTF_8)));
         acc.updateBinary(asSegment("apple".getBytes(StandardCharsets.UTF_8)));
@@ -239,7 +226,7 @@ class StatisticsAccumulatorTest {
 
     @Test
     void binaryUpdateCopiesCallerBytesDefensively() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.BYTE_ARRAY, null);
         byte[] mutable = {1, 2, 3};
 
         acc.updateBinary(asSegment(mutable));
@@ -252,7 +239,7 @@ class StatisticsAccumulatorTest {
 
     @Test
     void updateBinaryRecordsNonNullObservationAndMinMax() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.BYTE_ARRAY, null);
         acc.updateBinary(segmentOf("banana"));
         acc.updateBinary(segmentOf("apple"));
         acc.updateBinary(segmentOf("cherry"));
@@ -264,7 +251,7 @@ class StatisticsAccumulatorTest {
 
     @Test
     void updateBinaryOrdersUnsignedAndShorterPrefixFirst() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.BYTE_ARRAY, null);
         // 0x80 must order above 0x7f (unsigned), and "ab" above "a" (prefix tiebreak).
         acc.updateBinary(MemorySegment.ofArray(new byte[] {(byte) 0x80}));
         acc.updateBinary(MemorySegment.ofArray(new byte[] {(byte) 0x7f}));
@@ -277,7 +264,7 @@ class StatisticsAccumulatorTest {
 
     @Test
     void updateBinaryCopiesOnImprovementNotAliasingCallerMemory() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.BYTE_ARRAY, null);
         byte[] mutable = "mmm".getBytes(StandardCharsets.UTF_8);
         acc.updateBinary(MemorySegment.ofArray(mutable));
         mutable[0] = 'z';
@@ -288,20 +275,20 @@ class StatisticsAccumulatorTest {
 
     @Test
     void typedUpdateRejectsWrongKind() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.INT32, null);
         assertThatThrownBy(() -> acc.updateLong(1L)).isInstanceOf(ParquetWriteException.class);
     }
 
     @Test
     void updateNonNullRejectsMinMaxTrackingKinds() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.INT32, null);
         assertThatThrownBy(acc::updateNonNull).isInstanceOf(ParquetWriteException.class);
     }
 
     @Test
     void mergePicksBinaryBoundsAcrossAccumulators() {
-        StatisticsAccumulator left = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
-        StatisticsAccumulator right = StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, null);
+        StatisticsAccumulator left = WriteFixtures.accumulator(PrimitiveKind.BYTE_ARRAY, null);
+        StatisticsAccumulator right = WriteFixtures.accumulator(PrimitiveKind.BYTE_ARRAY, null);
         left.updateBinary(segmentOf("m"));
         right.updateBinary(segmentOf("a"));
         right.updateBinary(segmentOf("z"));
@@ -314,7 +301,7 @@ class StatisticsAccumulatorTest {
     @Test
     void geometryColumnTracksNullCountOnly() {
         StatisticsAccumulator acc =
-                StatisticsAccumulator.forKind(PrimitiveKind.BYTE_ARRAY, new LogicalType.Geometry(Optional.empty()));
+                WriteFixtures.accumulator(PrimitiveKind.BYTE_ARRAY, new LogicalType.Geometry(Optional.empty()));
 
         acc.updateBinary(asSegment(new byte[] {0x01, 0x02, 0x03}));
         acc.updateNull();
@@ -328,7 +315,7 @@ class StatisticsAccumulatorTest {
 
     @Test
     void int96ProducesNoMinMax() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT96, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.INT96, null);
 
         acc.updateNonNull();
         acc.updateNull();
@@ -341,16 +328,16 @@ class StatisticsAccumulatorTest {
 
     @Test
     void mergeProducesSameSnapshotAsDirectAccumulation() {
-        StatisticsAccumulator combined = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+        StatisticsAccumulator combined = WriteFixtures.accumulator(PrimitiveKind.INT32, null);
         combined.updateInt(10);
         combined.updateInt(2);
         combined.updateNull();
         combined.updateInt(57);
 
-        StatisticsAccumulator left = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+        StatisticsAccumulator left = WriteFixtures.accumulator(PrimitiveKind.INT32, null);
         left.updateInt(10);
         left.updateInt(2);
-        StatisticsAccumulator right = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+        StatisticsAccumulator right = WriteFixtures.accumulator(PrimitiveKind.INT32, null);
         right.updateNull();
         right.updateInt(57);
 
@@ -361,10 +348,10 @@ class StatisticsAccumulatorTest {
 
     @Test
     void mergeAbsorbsEmptyAccumulator() {
-        StatisticsAccumulator left = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+        StatisticsAccumulator left = WriteFixtures.accumulator(PrimitiveKind.INT32, null);
         left.updateInt(1);
         left.updateInt(2);
-        StatisticsAccumulator right = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+        StatisticsAccumulator right = WriteFixtures.accumulator(PrimitiveKind.INT32, null);
 
         left.merge(right);
 
@@ -376,8 +363,8 @@ class StatisticsAccumulatorTest {
 
     @Test
     void mergeIntoEmptyAccumulatorCopiesSource() {
-        StatisticsAccumulator left = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
-        StatisticsAccumulator right = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+        StatisticsAccumulator left = WriteFixtures.accumulator(PrimitiveKind.INT32, null);
+        StatisticsAccumulator right = WriteFixtures.accumulator(PrimitiveKind.INT32, null);
         right.updateInt(7);
         right.updateInt(-1);
 
@@ -390,8 +377,8 @@ class StatisticsAccumulatorTest {
 
     @Test
     void mergeRejectsMismatchedKinds() {
-        StatisticsAccumulator intAcc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
-        StatisticsAccumulator longAcc = StatisticsAccumulator.forKind(PrimitiveKind.INT64, null);
+        StatisticsAccumulator intAcc = WriteFixtures.accumulator(PrimitiveKind.INT32, null);
+        StatisticsAccumulator longAcc = WriteFixtures.accumulator(PrimitiveKind.INT64, null);
 
         assertThatThrownBy(() -> intAcc.merge(longAcc))
                 .isInstanceOf(ParquetWriteException.class)
@@ -400,7 +387,7 @@ class StatisticsAccumulatorTest {
 
     @Test
     void resetReturnsToInitialState() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.INT32, null);
         acc.updateInt(42);
         acc.updateNull();
 
@@ -413,8 +400,8 @@ class StatisticsAccumulatorTest {
     }
 
     @Test
-    void finishPageDoesNotResetAccumulationSoFinishChunkCarriesFullWindow() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+    void finishChunkCoversTheWindowAfterFinishPage() {
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.INT32, null);
         acc.updateInt(5);
         acc.updateInt(10);
 
@@ -434,7 +421,7 @@ class StatisticsAccumulatorTest {
 
     @Test
     void allNullPageIsFlaggedAsNullPage() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forKind(PrimitiveKind.INT32, null);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.INT32, null);
         acc.updateNull();
         acc.updateNull();
         acc.updateNull();

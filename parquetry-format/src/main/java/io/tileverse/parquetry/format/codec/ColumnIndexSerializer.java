@@ -58,6 +58,10 @@ final class ColumnIndexSerializer {
             w.writeListField(
                     (short) 7, CompactType.I64, definitionLevelHistograms.get(), CompactProtocolWriter::writeI64);
         }
+        Optional<List<Long>> nanCounts = ci.nanCounts();
+        if (nanCounts.isPresent()) {
+            w.writeListField((short) 8, CompactType.I64, nanCounts.get(), CompactProtocolWriter::writeI64);
+        }
         w.writeFieldStop();
         w.writeStructEnd();
     }

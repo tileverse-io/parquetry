@@ -180,6 +180,7 @@ class CoveringPageBoundsTest {
                         BoundaryOrder.UNORDERED,
                         Optional.empty(),
                         Optional.empty(),
+                        Optional.empty(),
                         Optional.empty()),
                 new OffsetIndex(List.of(new PageLocation(0, 10, 0), new PageLocation(10, 10, 8)), Optional.empty()));
         ColumnPageStats other = floatLeaf(rows(0, 8), mins(0f, 0f), maxs(1f, 1f), nulls(0, 0));
@@ -199,6 +200,7 @@ class CoveringPageBoundsTest {
                         segments(maxs),
                         BoundaryOrder.UNORDERED,
                         Optional.of(boxed(nullCounts)),
+                        Optional.empty(),
                         Optional.empty(),
                         Optional.empty()),
                 offsets(firstRows));
@@ -222,6 +224,7 @@ class CoveringPageBoundsTest {
                         mins,
                         maxs,
                         BoundaryOrder.UNORDERED,
+                        Optional.empty(),
                         Optional.empty(),
                         Optional.empty(),
                         Optional.empty()),

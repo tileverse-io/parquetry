@@ -140,7 +140,8 @@ class LegacyStatisticsReadTest {
                 MemorySegment.NULL,
                 MemorySegment.NULL,
                 false,
-                false);
+                false,
+                OptionalLong.empty());
         return footer -> new FileMetaData(
                 footer.version(),
                 footer.schema(),

@@ -381,6 +381,7 @@ class ColumnIndexEvaluatorTest {
                 BoundaryOrder.ASCENDING,
                 Optional.of(List.of(0L, 5L, 0L)),
                 Optional.empty(),
+                Optional.empty(),
                 Optional.empty());
         List<PageLocation> pages =
                 List.of(new PageLocation(0L, 0, 0L), new PageLocation(0L, 0, 100L), new PageLocation(0L, 0, 200L));
@@ -423,6 +424,7 @@ class ColumnIndexEvaluatorTest {
                 minValues,
                 maxValues,
                 BoundaryOrder.ASCENDING,
+                Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty());
