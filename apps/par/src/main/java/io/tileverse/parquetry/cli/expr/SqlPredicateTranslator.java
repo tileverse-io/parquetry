@@ -228,12 +228,8 @@ final class SqlPredicateTranslator {
      * boundary.
      */
     private ResolvedColumn resolve(Column column) {
-        ColumnPath path = pathOf(column);
+        ColumnPath path = ColumnReferences.pathOf(column);
         return schema.resolve(path).orElseThrow(() -> new FilterParseException("no such column: " + path.dot()));
-    }
-
-    private ColumnPath pathOf(Column column) {
-        return ColumnPath.of(column.getFullyQualifiedName().split("\\."));
     }
 
     /**
