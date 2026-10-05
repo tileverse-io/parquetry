@@ -57,6 +57,25 @@ class StacFileStatsTest {
         assertThat(stats.recordCount()).isEqualTo(-1L);
     }
 
+    /** A box with a NaN bound bounds no known region; the part then reads as one without an item box. */
+    @Test
+    void bboxHoldingNaNContributesNoBound() {
+        StacItem flat = new StacItem("i", new double[] {1, Double.NaN, 3, 4}, Optional.empty(), List.of(), List.of());
+        StacItem withZ =
+                new StacItem("i", new double[] {1, 2, 10, Double.NaN, 4, 20}, Optional.empty(), List.of(), List.of());
+
+        assertThat(StacFileStats.from(flat, "geometry").geometryBounds()).isEmpty();
+        assertThat(StacFileStats.from(withZ, "geometry").geometryBounds()).isEmpty();
+    }
+
+    @Test
+    void bboxHoldingAnInfiniteBoundContributesNoBound() {
+        double[] infiniteWest = {Double.NEGATIVE_INFINITY, 2, 3, 4};
+        StacItem item = new StacItem("i", infiniteWest, Optional.empty(), List.of(), List.of());
+
+        assertThat(StacFileStats.from(item, "geometry").geometryBounds()).isEmpty();
+    }
+
     @Test
     void threeDimensionalBboxKeepsXyAndReportsZ() {
         StacItem item = new StacItem("i", new double[] {1, 2, 10, 3, 4, 20}, Optional.empty(), List.of(), List.of());

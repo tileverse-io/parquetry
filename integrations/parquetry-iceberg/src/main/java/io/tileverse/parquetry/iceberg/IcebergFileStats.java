@@ -37,7 +37,8 @@ final class IcebergFileStats {
      * Joins a data file's raw manifest bounds with the table schema. For each field, its field id keys into the
      * reference's bound maps and its Iceberg type decodes the bound bytes: a geometry column decodes to a
      * {@link BoundingBox}, every other column to a typed min/max. Decoding is best-effort; a bound that cannot be read
-     * is skipped, which only makes pruning for that column less effective and never fails the read.
+     * is skipped: pruning for that column gets less effective, and the read never fails. A geometry box proving nothing
+     * about its geometries ({@link BoundingBox#provesNothing()}) is skipped as well.
      *
      * <p>An identity-partition column that the writer omitted from the data file has no manifest bound, yet its value
      * is known exactly from the partition tuple. {@code partitionConstants} (keyed by source field id) provides those
@@ -78,7 +79,7 @@ final class IcebergFileStats {
             return;
         }
         BoundingBox box = decodeBounds(lower, upper);
-        if (box == null) {
+        if (box == null || box.provesNothing()) {
             return;
         }
         builder.geometryBounds(ColumnPath.of(field.name()), box);
