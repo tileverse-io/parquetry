@@ -58,7 +58,7 @@ final class OffsetIndexDeserializer {
 
     private static List<PageLocation> readPageLocationList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
-        List<PageLocation> result = new ArrayList<>(lh.size());
+        List<PageLocation> result = new ArrayList<>(lh.initialCapacity());
         for (int i = 0; i < lh.size(); i++) {
             result.add(PageLocationDeserializer.read(r));
         }
@@ -67,7 +67,7 @@ final class OffsetIndexDeserializer {
 
     private static List<Long> readLongList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
-        List<Long> result = new ArrayList<>(lh.size());
+        List<Long> result = new ArrayList<>(lh.initialCapacity());
         for (int i = 0; i < lh.size(); i++) {
             result.add(r.readI64());
         }

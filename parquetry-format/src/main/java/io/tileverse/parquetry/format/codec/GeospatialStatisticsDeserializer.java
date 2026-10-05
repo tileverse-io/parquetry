@@ -58,7 +58,7 @@ final class GeospatialStatisticsDeserializer {
 
     private static List<Integer> readI32List(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
-        List<Integer> result = new ArrayList<>(lh.size());
+        List<Integer> result = new ArrayList<>(lh.initialCapacity());
         for (int i = 0; i < lh.size(); i++) {
             result.add(r.readI32());
         }

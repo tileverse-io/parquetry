@@ -60,11 +60,12 @@ import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.testsupport.FooterRewrite;
 
 /**
- * A page index or a bloom filter declared longer than the file holds is left unread: no buffer of the declared length
- * is allocated, and a filter selects the rows of a full scan.
+ * A page index or a bloom filter declared longer than the file holds is left unread, and a page index declaring more
+ * content than its own bytes too: no memory of the declared size is allocated, and a filter selects the rows of a full
+ * scan.
  *
  * <p>The file has 300 rows in three pages: an integer column holding the row number, with both page indexes and a bloom
- * filter. Each case edits the footer, or the bloom filter header, to declare a section of 2 GB.
+ * filter. Each case edits the footer, the bloom filter header, or the first bytes of a page index, to declare 2 GB.
  */
 class OversizedSectionLengthTest {
 
@@ -106,6 +107,35 @@ class OversizedSectionLengthTest {
                 Arguments.of("a bloom filter of 2 GB", bloomFilter));
     }
 
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("pageIndexesDeclaringOversizedContent")
+    void pageIndexDeclaringMoreContentThanItHoldsIsLeftUnread(String name, PageIndex index, byte[] firstBytes)
+            throws IOException {
+        Path file = Files.copy(written, tempDir.resolve("edited.parquet"));
+        overwriteTheFirstBytesOf(index, firstBytes, file);
+
+        assertFiltersSelectTheirRows(file);
+    }
+
+    static Stream<Arguments> pageIndexesDeclaringOversizedContent() {
+        byte[] listOfNullFlags = {0x19, (byte) 0xF1};
+        byte[] oneNullFlagThenOneLowerBound = {0x19, 0x11, 0x02, 0x19, 0x18};
+        byte[] listOfPageLocations = {0x19, (byte) 0xFC};
+        return Stream.of(
+                Arguments.of(
+                        "a column index listing 2 GB of null flags",
+                        PageIndex.COLUMN_INDEX,
+                        followedByTwoGb(listOfNullFlags)),
+                Arguments.of(
+                        "a column index with a lower bound of 2 GB",
+                        PageIndex.COLUMN_INDEX,
+                        followedByTwoGb(oneNullFlagThenOneLowerBound)),
+                Arguments.of(
+                        "an offset index listing 2 GB of pages",
+                        PageIndex.OFFSET_INDEX,
+                        followedByTwoGb(listOfPageLocations)));
+    }
+
     @Test
     void bloomFilterHeaderDeclaringABitsetOf2GbIsLeftUnread() throws IOException {
         UnaryOperator<ColumnChunk> lengthLeftToTheHeader = chunk -> withBloomLength(chunk, OptionalLong.empty());
@@ -134,6 +164,32 @@ class OversizedSectionLengthTest {
     private static long rowsRead(ParquetFileReader reader, Predicate predicate) {
         try (Stream<ParquetRecord> rows = reader.read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
             return rows.count();
+        }
+    }
+
+    private enum PageIndex {
+        COLUMN_INDEX,
+        OFFSET_INDEX
+    }
+
+    /** The Thrift bytes of {@code header}, then the announced size: {@code 2^31 - 1} as a varint. */
+    private static byte[] followedByTwoGb(byte[] header) {
+        byte[] twoGb = {(byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, 0x07};
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        bytes.writeBytes(header);
+        bytes.writeBytes(twoGb);
+        return bytes.toByteArray();
+    }
+
+    private static void overwriteTheFirstBytesOf(PageIndex index, byte[] firstBytes, Path file) throws IOException {
+        ColumnChunk chunk = onlyChunk(file);
+        long indexOffset =
+                switch (index) {
+                    case COLUMN_INDEX -> chunk.columnIndexOffset().orElseThrow();
+                    case OFFSET_INDEX -> chunk.offsetIndexOffset().orElseThrow();
+                };
+        try (FileChannel channel = FileChannel.open(file, StandardOpenOption.WRITE)) {
+            channel.write(ByteBuffer.wrap(firstBytes), indexOffset);
         }
     }
 

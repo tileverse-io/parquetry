@@ -61,7 +61,7 @@ final class SizeStatisticsDeserializer {
 
     private static List<Long> readI64List(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
-        List<Long> result = new ArrayList<>(lh.size());
+        List<Long> result = new ArrayList<>(lh.initialCapacity());
         for (int i = 0; i < lh.size(); i++) {
             result.add(r.readI64());
         }
