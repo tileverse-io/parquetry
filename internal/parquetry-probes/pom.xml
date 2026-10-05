@@ -47,12 +47,11 @@
       <artifactId>parquetry-catalog</artifactId>
       <version>${project.version}</version>
     </dependency>
-    <!-- Reads fixtures over tileverse-storage (HTTP/S3/...) when parquetry.probe.url is set, letting a
-         latency-injecting file server stand in for object storage. Transitively brings tileverse-storage-all. -->
+    <!-- The storage backends (HTTP/S3/...) read when parquetry.probe.url is set, letting a latency-injecting file
+         server stand in for object storage. -->
     <dependency>
-      <groupId>io.tileverse.parquetry</groupId>
-      <artifactId>parquetry-tileverse-storage</artifactId>
-      <version>${project.version}</version>
+      <groupId>io.tileverse.storage</groupId>
+      <artifactId>tileverse-storage-all</artifactId>
     </dependency>
     <dependency>
       <groupId>org.apache.parquet</groupId>

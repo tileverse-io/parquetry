@@ -25,7 +25,7 @@ import java.sql.Statement;
 
 import io.tileverse.parquetry.catalog.CatalogOptions;
 import io.tileverse.parquetry.catalog.FilesetCatalog;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 
 /**
  * Writes a small, deterministic nested GeoParquet file for the GeoTools tests and opens it as a catalog.
@@ -67,12 +67,12 @@ public final class NestedFixtures {
 
     /**
      * Opens {@code file} as a single-dataset catalog named {@code nested}, mirroring how {@code GeoParquetReadIT} opens
-     * a GeoParquet file: a {@link LocalFileSource#file(Path) single-file source} passed to
-     * {@link FilesetCatalog#open(io.tileverse.parquetry.io.FileSource, CatalogOptions)}.
+     * a GeoParquet file: a {@link FileSource#file(Path) single-file source} passed to
+     * {@link FilesetCatalog#open(FileSource, CatalogOptions)}.
      */
     static FilesetCatalog openCatalog(Path file) {
         return FilesetCatalog.open(
-                LocalFileSource.file(file),
+                FileSource.file(file),
                 CatalogOptions.builder().datasetName("nested").build());
     }
 

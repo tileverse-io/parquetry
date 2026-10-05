@@ -38,7 +38,7 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.internal.read.TestParquetFiles;
 import io.tileverse.parquetry.io.ByteRangeSource;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.runtime.FetchBudget;
@@ -69,7 +69,7 @@ class FilesetDatasetConcurrentReadTest {
         List<String> reference = singleFileReferenceKeys(files);
 
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
             List<String> concurrent =
                     readRowKeys(catalog.dataset(catalog.datasets().get(0)));
             assertThat(concurrent).hasSameSizeAs(reference);
@@ -83,7 +83,7 @@ class FilesetDatasetConcurrentReadTest {
         List<String> reference = singleFileReferenceKeys(files);
 
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
             List<String> keys = new ArrayList<>();
             try (Stream<ParquetRecordBatch> batches = catalog.dataset(
                             catalog.datasets().get(0))

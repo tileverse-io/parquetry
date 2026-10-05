@@ -29,6 +29,7 @@ import org.geotools.api.data.DataStoreFactorySpi;
 
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageEntry;
+import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.geotools.data.StorageParams;
@@ -36,7 +37,6 @@ import io.tileverse.parquetry.iceberg.IcebergFormatException;
 import io.tileverse.parquetry.iceberg.IcebergOptions;
 import io.tileverse.parquetry.iceberg.IcebergTableCatalog;
 import io.tileverse.parquetry.iceberg.IcebergWarehouseCatalog;
-import io.tileverse.parquetry.tileverse.ParquetStorage;
 
 /** Opens a read-only {@link DataStore} over an Iceberg table or a warehouse of tables. */
 public final class IcebergDataStoreFactory implements DataStoreFactorySpi {
@@ -147,7 +147,7 @@ public final class IcebergDataStoreFactory implements DataStoreFactorySpi {
      * method closes {@code storage} only when the listing that chooses between them fails first.
      */
     private static DatasetCatalog openRemote(URI uri, String uriText, Properties storageProps) throws IOException {
-        Storage storage = ParquetStorage.open(uri, storageProps);
+        Storage storage = StorageFactory.open(uri, storageProps);
         boolean singleTable;
         try {
             singleTable = hasTableMetadata(storage);

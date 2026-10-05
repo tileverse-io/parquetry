@@ -37,7 +37,7 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.parquetry.catalog.CatalogOptions;
 import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.geotools.parquet.GeoParquetDataStore;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 
 /**
  * End-to-end proof that a Hive-partitioned tree whose partition column is PHYSICALLY present in each file reads through
@@ -60,7 +60,7 @@ class HivePruningDataStoreIT {
         writePartUnder(root, 2024, rows2024);
 
         try (FilesetCatalog catalog =
-                        FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults());
+                        FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults());
                 CatalogDataStore store = new GeoParquetDataStore(catalog)) {
 
             assertThat(store.getTypeNames()).hasSize(1);
@@ -80,7 +80,7 @@ class HivePruningDataStoreIT {
         writePathOnlyPartitionedTree(root, 2024, rowCount);
 
         try (FilesetCatalog catalog =
-                        FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults());
+                        FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults());
                 CatalogDataStore store = new GeoParquetDataStore(catalog)) {
 
             String typeName = store.getTypeNames()[0];

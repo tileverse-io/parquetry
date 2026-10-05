@@ -1,15 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0">
   <modelVersion>4.0.0</modelVersion>
+
   <parent>
     <groupId>io.tileverse.parquetry</groupId>
-    <artifactId>parquetry-integrations</artifactId>
+    <artifactId>parquetry-internal</artifactId>
     <version>${revision}</version>
   </parent>
 
-  <artifactId>parquetry-tileverse-storage</artifactId>
-  <name>Parquetry :: Integrations :: Tileverse Storage</name>
-  <description>Storage-backed file discovery, Storage opening and the ByteBufferPool provider over tileverse-storage (S3/Azure/GCS/HTTP).</description>
+  <artifactId>parquetry-storage-it</artifactId>
+  <name>Parquetry :: Internal :: Storage ITs</name>
+  <description>Integration tests reading a Parquet file through each tileverse-storage backend: a local directory, an HTTP
+    server, and the S3, Azure and GCS emulators. Build and dev only; never published. A module of its own keeps the
+    cloud SDKs and Testcontainers off the test class path of parquetry-core, where the parquet-java oracle pins older
+    versions of their dependencies.</description>
 
   <dependencyManagement>
     <dependencies>
@@ -26,24 +30,22 @@
   <dependencies>
     <dependency>
       <groupId>io.tileverse.parquetry</groupId>
-      <artifactId>parquetry-io</artifactId>
-      <version>${project.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>io.tileverse.parquetry</groupId>
       <artifactId>parquetry-core</artifactId>
       <version>${project.version}</version>
+      <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>io.tileverse.parquetry</groupId>
-      <artifactId>parquetry-catalog</artifactId>
+      <artifactId>parquetry-testkit</artifactId>
       <version>${project.version}</version>
+      <scope>test</scope>
     </dependency>
+    <!-- The tileverse providers for S3, Azure and GCS, next to the local and HTTP ones of tileverse-storage-core. -->
     <dependency>
       <groupId>io.tileverse.storage</groupId>
       <artifactId>tileverse-storage-all</artifactId>
+      <scope>test</scope>
     </dependency>
-
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
@@ -55,12 +57,6 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>io.tileverse.parquetry</groupId>
-      <artifactId>parquetry-testkit</artifactId>
-      <version>${project.version}</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>testcontainers-junit-jupiter</artifactId>
       <scope>test</scope>
@@ -68,6 +64,27 @@
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>testcontainers-localstack</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-azure</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.aiven</groupId>
+      <artifactId>testcontainers-fake-gcs-server</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- The SDK clients that create a blob container or a bucket before a test uploads through the Storage. -->
+    <dependency>
+      <groupId>com.azure</groupId>
+      <artifactId>azure-storage-blob</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.google.cloud</groupId>
+      <artifactId>google-cloud-storage</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>

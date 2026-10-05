@@ -22,8 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageConfig;
-
-import io.tileverse.parquetry.tileverse.ParquetStorage;
+import io.tileverse.storage.StorageFactory;
 
 /**
  * A cache of one tileverse {@link Storage} per container URI, shared across a STAC catalog's document reads and its
@@ -54,7 +53,7 @@ public final class ContainerStorages implements AutoCloseable {
     }
 
     private Storage openStorage(URI container) {
-        return ParquetStorage.open(container, connectionProperties);
+        return StorageFactory.open(container, connectionProperties);
     }
 
     private static Properties withoutForcedProvider(Properties source) {

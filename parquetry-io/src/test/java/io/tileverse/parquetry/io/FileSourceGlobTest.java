@@ -37,11 +37,11 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * The glob contract of {@link LocalFileSource#directory}: tileverse's {@code StoragePattern} syntax, replayed end to
- * end through a real directory listing. The golden table is the cross-repo DuckDB-parity contract, kept byte-identical
- * with tileverse-storage's copy; the remaining cases pin what the listing adds around the matcher.
+ * The glob contract of {@link FileSource#directory}: tileverse's {@code StoragePattern} syntax, replayed end to end
+ * through a real directory listing. The golden table is the cross-repo DuckDB-parity contract, kept byte-identical with
+ * tileverse-storage's copy; the remaining cases pin what the listing adds around the matcher.
  */
-class LocalFileSourceGlobTest {
+class FileSourceGlobTest {
 
     @ParameterizedTest(name = "[{3}] {0} ~ {1} -> {2}")
     @MethodSource("goldenCases")
@@ -62,6 +62,23 @@ class LocalFileSourceGlobTest {
 
         assertThat(relativePathsUnder(dir, "data.parquet")).containsExactly("data.parquet");
         assertThat(relativePathsUnder(dir, "sub/data.parquet")).containsExactly("sub/data.parquet");
+    }
+
+    /** A glob-free pattern names a prefix: a directory of that name has its children listed. */
+    @Test
+    void aPlainNameNamingADirectoryListsItsChildren(@TempDir Path dir) {
+        createFile(dir, "data/a.parquet");
+        createFile(dir, "data/sub/b.parquet");
+
+        assertThat(relativePathsUnder(dir, "data")).containsExactly("data/a.parquet");
+    }
+
+    /** A pattern ending at a separator asks for a directory's children. */
+    @Test
+    void aPatternEndingAtASeparatorListsThatDirectorysChildren(@TempDir Path dir) {
+        createFile(dir, "data/a.parquet");
+
+        assertThat(relativePathsUnder(dir, "data/")).containsExactly("data/a.parquet");
     }
 
     @Test
@@ -93,7 +110,7 @@ class LocalFileSourceGlobTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("unsafePatterns")
     void rejectsAnUnsafePattern(String description, String pattern, @TempDir Path dir) {
-        assertThatIllegalArgumentException().isThrownBy(() -> LocalFileSource.directory(dir, pattern));
+        assertThatIllegalArgumentException().isThrownBy(() -> FileSource.directory(dir, pattern));
     }
 
     private static Stream<Arguments> unsafePatterns() {
@@ -107,17 +124,17 @@ class LocalFileSourceGlobTest {
 
     @Test
     void rejectsAnEmptyGlob(@TempDir Path dir) {
-        assertThatIllegalArgumentException().isThrownBy(() -> LocalFileSource.directory(dir, ""));
+        assertThatIllegalArgumentException().isThrownBy(() -> FileSource.directory(dir, ""));
     }
 
     /** An illegal character range fails when the source is built, not on the first listing. */
     @Test
     void rejectsAGlobThatDoesNotCompile(@TempDir Path dir) {
-        assertThatIllegalArgumentException().isThrownBy(() -> LocalFileSource.directory(dir, "f[z-a].parquet"));
+        assertThatIllegalArgumentException().isThrownBy(() -> FileSource.directory(dir, "f[z-a].parquet"));
     }
 
     private static List<String> relativePathsUnder(Path dir, String glob) {
-        try (FileSource source = LocalFileSource.directory(dir, glob);
+        try (FileSource source = FileSource.directory(dir, glob);
                 Stream<FileEntry> entries = source.list()) {
             return entries.map(FileEntry::relativePath).sorted().toList();
         }
@@ -135,7 +152,7 @@ class LocalFileSourceGlobTest {
 
     private static Stream<Arguments> goldenCases() {
         List<Arguments> rows = new ArrayList<>();
-        try (InputStream in = LocalFileSourceGlobTest.class.getResourceAsStream("glob-cases.tsv");
+        try (InputStream in = FileSourceGlobTest.class.getResourceAsStream("glob-cases.tsv");
                 BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {

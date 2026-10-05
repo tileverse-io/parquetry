@@ -41,7 +41,6 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.FileEntry;
 import io.tileverse.parquetry.io.FileSource;
-import io.tileverse.parquetry.io.LocalFileSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 class FilesetCatalogPerFileTest {
@@ -51,7 +50,7 @@ class FilesetCatalogPerFileTest {
         writeIdNameFile(dir.resolve("ne_countries.parquet"), 2);
         writeValueFile(dir.resolve("ne_rivers.parquet"), 3);
 
-        try (FilesetCatalog catalog = FilesetCatalog.openPerFile(LocalFileSource.directory(dir, "*.parquet"))) {
+        try (FilesetCatalog catalog = FilesetCatalog.openPerFile(FileSource.directory(dir, "*.parquet"))) {
             assertThat(catalog.datasets()).containsExactly("ne_countries", "ne_rivers");
 
             ParquetDataset countries = catalog.dataset("ne_countries");
@@ -69,7 +68,7 @@ class FilesetCatalogPerFileTest {
     @Test
     void advertisesDatasetEnumeration(@TempDir Path dir) throws Exception {
         writeIdNameFile(dir.resolve("a.parquet"), 1);
-        try (FilesetCatalog catalog = FilesetCatalog.openPerFile(LocalFileSource.directory(dir, "*.parquet"))) {
+        try (FilesetCatalog catalog = FilesetCatalog.openPerFile(FileSource.directory(dir, "*.parquet"))) {
             assertThat(catalog.capabilities().enumeratesDatasets()).isTrue();
         }
     }
@@ -77,7 +76,7 @@ class FilesetCatalogPerFileTest {
     @Test
     void unknownDatasetNameRejected(@TempDir Path dir) throws Exception {
         writeIdNameFile(dir.resolve("a.parquet"), 1);
-        try (FilesetCatalog catalog = FilesetCatalog.openPerFile(LocalFileSource.directory(dir, "*.parquet"))) {
+        try (FilesetCatalog catalog = FilesetCatalog.openPerFile(FileSource.directory(dir, "*.parquet"))) {
             assertThatThrownBy(() -> catalog.dataset("nope"))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("nope");
@@ -86,7 +85,7 @@ class FilesetCatalogPerFileTest {
 
     @Test
     void emptySourceRejected(@TempDir Path dir) {
-        LocalFileSource emptySource = LocalFileSource.directory(dir, "*.parquet");
+        FileSource emptySource = FileSource.directory(dir, "*.parquet");
         assertThatThrownBy(() -> FilesetCatalog.openPerFile(emptySource))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("no files found");
@@ -116,7 +115,7 @@ class FilesetCatalogPerFileTest {
     @Test
     void closeReleasesSources(@TempDir Path dir) throws Exception {
         writeIdNameFile(dir.resolve("a.parquet"), 1);
-        FilesetCatalog catalog = FilesetCatalog.openPerFile(LocalFileSource.directory(dir, "*.parquet"));
+        FilesetCatalog catalog = FilesetCatalog.openPerFile(FileSource.directory(dir, "*.parquet"));
         catalog.close();
         // A second close must not throw: every source was already released.
         assertThatCode(catalog::close).doesNotThrowAnyException();

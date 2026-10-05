@@ -47,7 +47,7 @@ import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.geotools.parquet.GeoParquetDataStore;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -188,7 +188,7 @@ class ScreenMapDecimationIT {
     private static CatalogDataStore pointStore(Path dir, int pageValueLimit) throws Exception {
         Path file = writePointFile(dir, pageValueLimit);
         FilesetCatalog catalog = FilesetCatalog.open(
-                LocalFileSource.file(file),
+                FileSource.file(file),
                 CatalogOptions.builder().datasetName("points").build());
         return new GeoParquetDataStore(catalog);
     }

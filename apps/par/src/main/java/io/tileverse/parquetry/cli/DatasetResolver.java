@@ -27,6 +27,7 @@ import java.util.stream.Stream;
 
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageEntry;
+import io.tileverse.storage.StorageFactory;
 
 import io.tileverse.parquetry.catalog.CatalogOptions;
 import io.tileverse.parquetry.catalog.DatasetCatalog;
@@ -35,10 +36,8 @@ import io.tileverse.parquetry.dataset.GeoParquetDataset;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.iceberg.IcebergOptions;
 import io.tileverse.parquetry.iceberg.IcebergTableCatalog;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
-import io.tileverse.parquetry.tileverse.ParquetFileSources;
-import io.tileverse.parquetry.tileverse.ParquetStorage;
 
 /**
  * Resolves a CLI path or URI into an open {@link ParquetDataset}, auto-detecting the input kind: a single Parquet file
@@ -104,18 +103,17 @@ public final class DatasetResolver {
             case InputKind.IcebergLocal(Path tableDir) ->
                 IcebergTableCatalog.openLocal(tableDir, IcebergOptions.defaults());
             case InputKind.LocalFile(Path file) ->
-                FilesetCatalog.open(LocalFileSource.file(file), CatalogOptions.defaults());
+                FilesetCatalog.open(FileSource.file(file), CatalogOptions.defaults());
             case InputKind.Fileset(URI baseUri, String glob) ->
-                FilesetCatalog.open(
-                        ParquetFileSources.open(baseUri, glob, storageProperties), CatalogOptions.defaults());
+                FilesetCatalog.open(FileSource.open(baseUri, glob, storageProperties), CatalogOptions.defaults());
             case InputKind.RemoteObject(URI uri) ->
-                FilesetCatalog.open(ParquetFileSources.openObject(uri, storageProperties), CatalogOptions.defaults());
+                FilesetCatalog.open(FileSource.openObject(uri, storageProperties), CatalogOptions.defaults());
             case InputKind.RemotePrefix(URI uri) -> openRemotePrefix(uri, storageProperties);
         };
     }
 
     private static DatasetCatalog openRemotePrefix(URI uri, Properties storageProperties) {
-        Storage storage = ParquetStorage.open(uri, storageProperties);
+        Storage storage = StorageFactory.open(uri, storageProperties);
         boolean iceberg;
         try {
             iceberg = hasIcebergMetadata(storage);
@@ -128,8 +126,7 @@ public final class DatasetResolver {
             return IcebergTableCatalog.openStorage(tableLocation(uri), storage, IcebergOptions.defaults());
         }
         closeQuietly(storage);
-        return FilesetCatalog.open(
-                ParquetFileSources.open(uri, DIRECTORY_GLOB, storageProperties), CatalogOptions.defaults());
+        return FilesetCatalog.open(FileSource.open(uri, DIRECTORY_GLOB, storageProperties), CatalogOptions.defaults());
     }
 
     /** Whether the prefix holds an Iceberg table: its {@code metadata/} directory has a {@code *.metadata.json}. */

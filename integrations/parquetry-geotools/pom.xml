@@ -38,10 +38,11 @@
       <artifactId>parquetry-catalog</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- The tileverse storage API read directly by the store factories. Managed by the tileverse BOM in the root
+         POM. -->
     <dependency>
-      <groupId>io.tileverse.parquetry</groupId>
-      <artifactId>parquetry-tileverse-storage</artifactId>
-      <version>${project.version}</version>
+      <groupId>io.tileverse.storage</groupId>
+      <artifactId>tileverse-storage-core</artifactId>
     </dependency>
     <dependency>
       <groupId>io.tileverse.parquetry</groupId>
@@ -61,6 +62,12 @@
       <scope>provided</scope>
     </dependency>
 
+    <!-- The S3, Azure and GCS providers listed by the store parameters under test. An application adds them itself. -->
+    <dependency>
+      <groupId>io.tileverse.storage</groupId>
+      <artifactId>tileverse-storage-all</artifactId>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>org.geotools</groupId>
       <artifactId>gt-epsg-hsql</artifactId>

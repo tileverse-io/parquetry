@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.tileverse;
+package io.tileverse.parquetry.io;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -25,9 +25,14 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
+import io.tileverse.storage.StorageFactory;
 import io.tileverse.storage.cache.CachingRangeReader;
 
-class ParquetStorageTest {
+/**
+ * The tileverse default relied on by {@link FileSource#open}: a Storage opened without {@code storage.caching.enabled}
+ * hands out readers with no byte-range cache, and a deployment setting it gets one.
+ */
+class ByteRangeCacheDefaultTest {
 
     /**
      * An HTTP container, because the local-file provider registers no caching parameters at all and answers the same
@@ -38,7 +43,7 @@ class ParquetStorageTest {
 
     @Test
     void aDefaultOpenLeavesTheByteRangeCacheOff() throws IOException {
-        try (Storage storage = ParquetStorage.open(CONTAINER);
+        try (Storage storage = StorageFactory.open(CONTAINER, new Properties());
                 RangeReader reader = storage.openRangeReader("data.parquet")) {
             assertThat(reader).isNotInstanceOf(CachingRangeReader.class);
         }
@@ -46,10 +51,10 @@ class ParquetStorageTest {
 
     @Test
     void aDeploymentThatAsksForTheByteRangeCacheGetsIt() throws IOException {
-        Properties caller = new Properties();
-        caller.setProperty("storage.caching.enabled", "true");
+        Properties deployment = new Properties();
+        deployment.setProperty("storage.caching.enabled", "true");
 
-        try (Storage storage = ParquetStorage.open(CONTAINER, caller);
+        try (Storage storage = StorageFactory.open(CONTAINER, deployment);
                 RangeReader reader = storage.openRangeReader("data.parquet")) {
             assertThat(reader).isInstanceOf(CachingRangeReader.class);
         }

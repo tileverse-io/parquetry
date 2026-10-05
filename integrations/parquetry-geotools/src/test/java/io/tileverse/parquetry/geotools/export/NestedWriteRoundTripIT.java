@@ -46,7 +46,7 @@ import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.geotools.data.CatalogDataStore;
 import io.tileverse.parquetry.geotools.parquet.GeoParquetDataStore;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 
 /**
  * Round-trips feature types with nested attributes through {@link GeoParquetExporter} and back through
@@ -399,7 +399,7 @@ class NestedWriteRoundTripIT {
     private static Map<String, SimpleFeature> readAllById(Path file) throws IOException {
         Map<String, SimpleFeature> byId = new LinkedHashMap<>();
         FilesetCatalog catalog = FilesetCatalog.open(
-                LocalFileSource.file(file),
+                FileSource.file(file),
                 CatalogOptions.builder().datasetName("nested_write").build());
         try (CatalogDataStore store = new GeoParquetDataStore(catalog)) {
             ContentFeatureSource fs = (ContentFeatureSource) store.getFeatureSource("nested_write");

@@ -25,7 +25,7 @@ clear message rather than returning wrong rows. The `Spec` column notes the Iceb
 | Branches, tags, and as-of-time travel | v2+ | Planned | named refs and timestamp-based selection are not yet wired |
 | Manifest list + manifests | v1+ | Full | clean-room Avro reader |
 | Data-file read, all format versions | v1-v3 | Full | copy-on-write and merge-on-read |
-| Local + object-storage I/O | - | Full | `StorageIcebergFileIO` over tileverse-storage (local, S3, Azure, GCS, HTTP) |
+| Local + object-storage I/O | - | Full | `StorageIcebergFileIO` over tileverse-storage (local, S3, Azure, GCS, HTTP); the S3, Azure and GCS provider modules are added by the application |
 | Warehouse of tables (multi-table catalog) | - | Full | `IcebergWarehouseCatalog`: recursive discovery under a warehouse root (`<root>/<ns...>/<table>/metadata/`), dotted dataset names, lazy per-table open at the current snapshot; explicit name-to-path registry for backends that cannot list |
 | REST catalog | - | Planned | the [REST Catalog spec](https://iceberg.apache.org/rest-catalog-spec/) read slice: loadTable, namespace/table listing, OAuth2, vended credentials |
 

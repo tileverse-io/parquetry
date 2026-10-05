@@ -28,7 +28,7 @@ is the Parquet binding: it reads a collection's parts, builds per-item `FileStat
 
 | Feature | Status | Notes |
 | --- | --- | --- |
-| Local + object-storage I/O | Full | reads through tileverse-storage (S3, Azure, GCS, HTTP) over a `Storage` rooted at the catalog |
+| Local + object-storage I/O | Full | reads through tileverse-storage (S3, Azure, GCS, HTTP) over a `Storage` rooted at the catalog; the S3, Azure and GCS provider modules are added by the application |
 | Source ownership | Full | the catalog opens each part's byte source once and owns it; a per-query dataset borrows the survivor subset and never closes the shared sources; `close()` releases every source and the Storage |
 
 ### Reads and pruning

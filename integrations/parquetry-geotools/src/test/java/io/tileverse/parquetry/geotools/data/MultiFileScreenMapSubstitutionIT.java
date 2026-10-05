@@ -48,7 +48,7 @@ import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.geotools.parquet.GeoParquetDataStore;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -80,7 +80,7 @@ class MultiFileScreenMapSubstitutionIT {
         writePointFile(dir.resolve("b.parquet"), pointsOverFiveCells(0.0, 15.0));
 
         try (FilesetCatalog catalog = FilesetCatalog.open(
-                        LocalFileSource.directory(dir, "*.parquet"),
+                        FileSource.directory(dir, "*.parquet"),
                         CatalogOptions.builder().datasetName("points").build());
                 CatalogDataStore store = new GeoParquetDataStore(catalog)) {
             CatalogFeatureSource fs = (CatalogFeatureSource) store.getFeatureSource("points");
