@@ -27,6 +27,7 @@ import io.tileverse.storage.BatchReadResult;
 import io.tileverse.storage.RangeRequest;
 
 import io.tileverse.parquetry.format.ColumnIndex;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.internal.filter.bloom.BloomFilterReader;
@@ -52,6 +53,9 @@ import io.tileverse.parquetry.observe.FetchPurpose;
  * <p>Confined to the read's consumer thread, like the {@code RowGroupChunks} views that drive it.
  */
 final class FooterIndexSectionLoader implements IndexSectionLoader {
+
+    // The largest array of a JVM lies a few words under Integer.MAX_VALUE.
+    private static final int LARGEST_BUFFER_BYTES = Integer.MAX_VALUE - 8;
 
     private final ByteRangeSource source;
     private final FetchAccumulator accumulator;
@@ -89,11 +93,11 @@ final class FooterIndexSectionLoader implements IndexSectionLoader {
     @Override
     public void prefetch(List<IndexSectionRange> sections) {
         dropBytesHeldFromAnEarlierBatch();
-        List<IndexSectionRange> batch = inFileOrder(sections);
-        if (batch.size() < 2) {
+        List<IndexSectionRange> batch = inFileOrder(withinTheFile(sections));
+        if (batch.size() < 2 || !fitsOneBuffer(batch)) {
             return;
         }
-        byte[] bytes = new byte[totalLength(batch)];
+        byte[] bytes = new byte[(int) totalLength(batch)];
         BatchReadResult cost = source.readFully(requestsOver(batch, bytes));
         hold(batch, bytes);
         recordBatch(batch, cost);
@@ -108,14 +112,38 @@ final class FooterIndexSectionLoader implements IndexSectionLoader {
         held.clear();
     }
 
+    /**
+     * The sections lying within the file. A section located outside it is left to fail at its own lookup, and takes no
+     * part in sizing the buffer of the batch.
+     */
+    private List<IndexSectionRange> withinTheFile(List<IndexSectionRange> sections) {
+        List<IndexSectionRange> within = new ArrayList<>(sections.size());
+        for (IndexSectionRange section : sections) {
+            if (liesWithinTheFile(section.fileOffset(), section.length())) {
+                within.add(section);
+            }
+        }
+        return within;
+    }
+
     private static List<IndexSectionRange> inFileOrder(List<IndexSectionRange> sections) {
         List<IndexSectionRange> ordered = new ArrayList<>(sections);
         ordered.sort((left, right) -> Long.compare(left.fileOffset(), right.fileOffset()));
         return ordered;
     }
 
-    private static int totalLength(List<IndexSectionRange> batch) {
-        int total = 0;
+    /**
+     * Whether one buffer can hold the sections of {@code batch}. The sections of a file lie apart from each other, and
+     * their lengths sum to no more than the file. A longer total comes from a corrupt footer: the batch is not read,
+     * and each section is left to its own lookup.
+     */
+    private boolean fitsOneBuffer(List<IndexSectionRange> batch) {
+        long total = totalLength(batch);
+        return total <= source.size() && total <= LARGEST_BUFFER_BYTES;
+    }
+
+    private static long totalLength(List<IndexSectionRange> batch) {
+        long total = 0L;
         for (IndexSectionRange section : batch) {
             total += section.length();
         }
@@ -202,10 +230,23 @@ final class FooterIndexSectionLoader implements IndexSectionLoader {
         if (prefetched != null && prefetched.byteSize() == length) {
             return prefetched;
         }
+        requireWithinTheFile(offset, length);
         MemorySegment bytes = MemorySegment.ofArray(new byte[length]);
         source.readFully(offset, bytes);
         accumulator.add(purpose, length);
         return bytes;
+    }
+
+    /** Refuses a section located outside the file before a buffer of its declared length is allocated. */
+    private void requireWithinTheFile(long offset, int length) {
+        if (!liesWithinTheFile(offset, length)) {
+            throw new MalformedFileException("Index section of " + length + " bytes at offset " + offset
+                    + " reaches outside the file of " + source.size() + " bytes");
+        }
+    }
+
+    private boolean liesWithinTheFile(long offset, int length) {
+        return offset >= 0 && length >= 0 && length <= source.size() - offset;
     }
 
     /** Running bytes and range count for one {@link FetchPurpose} within a batch. */

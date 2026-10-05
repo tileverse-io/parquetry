@@ -161,11 +161,25 @@ public final class ParquetFormat {
         return ParquetFormatDeserializer.readFileMetaData(toInputStream(readFully(source, footerStart, footerLen)));
     }
 
-    /** Reads exactly {@code length} bytes at {@code offset} into a fresh heap buffer positioned at zero for reading. */
+    /**
+     * Reads exactly {@code length} bytes at {@code offset} into a fresh heap buffer positioned at zero for reading.
+     *
+     * @throws MalformedFileException when the bytes asked for reach outside the file, before the buffer is allocated
+     */
     private static ByteBuffer readFully(ByteRangeSource source, long offset, int length) {
+        requireWithinFile(source, offset, length);
         byte[] bytes = new byte[length];
         source.readFully(offset, MemorySegment.ofArray(bytes));
         return ByteBuffer.wrap(bytes);
+    }
+
+    private static void requireWithinFile(ByteRangeSource source, long offset, int length) {
+        long fileSize = source.size();
+        boolean within = offset >= 0 && length >= 0 && length <= fileSize - offset;
+        if (!within) {
+            throw new MalformedFileException("Section of " + length + " bytes at offset " + offset
+                    + " reaches outside the file of " + fileSize + " bytes");
+        }
     }
 
     /**
