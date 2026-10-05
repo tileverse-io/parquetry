@@ -17,33 +17,36 @@ package io.tileverse.parquetry.cli.cloud;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.IOException;
+import java.net.URI;
 import java.nio.file.Path;
+import java.util.Properties;
 
-import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.testcontainers.containers.Container.ExecResult;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.localstack.LocalStackContainer;
 import org.testcontainers.utility.DockerImageName;
 
+import io.tileverse.storage.Storage;
+import io.tileverse.storage.StorageFactory;
+import io.tileverse.storage.WriteOptions;
+
 import io.tileverse.parquetry.cli.support.CliRunner;
 import io.tileverse.parquetry.cli.support.Fixtures;
-
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.core.sync.RequestBody;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 /**
  * Drives the {@code par} CLI against an S3 bucket served by LocalStack, exercising the cloud-storage configuration
  * flags ({@code --provider}, {@code --region}, {@code --access-key}, {@code --secret-key}, {@code --path-style}) end to
  * end. A custom S3 endpoint is addressed either by passing the full {@code http://host:port/bucket/key} URL or by
  * passing a canonical {@code s3://bucket/key} URI together with the {@code --endpoint} flag.
+ *
+ * <p>The bucket is created by the {@code awslocal} of the container and the fixture is uploaded through a
+ * {@link Storage} opened from the same {@code storage.s3.*} properties produced by the CLI flags: the class uses no AWS
+ * SDK type.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class S3CloudIT {
@@ -59,30 +62,31 @@ class S3CloudIT {
     static LocalStackContainer localstack =
             new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.2.0")).withServices("s3");
 
-    private static S3Client s3Client;
-
     @BeforeAll
     static void uploadFixture() throws Exception {
         Path fixture = workDir.resolve(KEY);
         Fixtures.writeCities(fixture);
-        StaticCredentialsProvider credentials = StaticCredentialsProvider.create(
-                AwsBasicCredentials.create(localstack.getAccessKey(), localstack.getSecretKey()));
-        s3Client = S3Client.builder()
-                .endpointOverride(localstack.getEndpoint())
-                .region(Region.of(localstack.getRegion()))
-                .credentialsProvider(credentials)
-                .forcePathStyle(true)
-                .build();
-        s3Client.createBucket(CreateBucketRequest.builder().bucket(BUCKET).build());
-        s3Client.putObject(
-                PutObjectRequest.builder().bucket(BUCKET).key(KEY).build(), RequestBody.fromFile(fixture.toFile()));
+        createBucket();
+        try (Storage storage = StorageFactory.open(URI.create("s3://" + BUCKET + "/"), storageProperties())) {
+            storage.put(KEY, fixture, WriteOptions.defaults());
+        }
     }
 
-    @AfterAll
-    static void shutdown() {
-        if (s3Client != null) {
-            s3Client.close();
-        }
+    private static void createBucket() throws IOException, InterruptedException {
+        ExecResult created = localstack.execInContainer("awslocal", "s3api", "create-bucket", "--bucket", BUCKET);
+        assertThat(created.getExitCode())
+                .as("awslocal create-bucket: %s", created.getStderr())
+                .isZero();
+    }
+
+    private static Properties storageProperties() {
+        Properties properties = new Properties();
+        properties.setProperty("storage.s3.endpoint", endpoint());
+        properties.setProperty("storage.s3.region", localstack.getRegion());
+        properties.setProperty("storage.s3.aws-access-key-id", localstack.getAccessKey());
+        properties.setProperty("storage.s3.aws-secret-access-key", localstack.getSecretKey());
+        properties.setProperty("storage.s3.force-path-style", "true");
+        return properties;
     }
 
     @Test
@@ -156,7 +160,6 @@ class S3CloudIT {
     @Test
     void metaReadsFromS3ViaEndpointFlag() {
         String canonicalUri = "s3://" + BUCKET + "/" + KEY;
-        String endpoint = localstack.getEndpoint().toString().replaceAll("/+$", "");
 
         // No --path-style: setting --endpoint defaults storage.s3.force-path-style to true, which
         // resolves a canonical s3://bucket/key URI to endpoint/bucket/key path-style addressing.
@@ -172,7 +175,7 @@ class S3CloudIT {
                 "--secret-key",
                 localstack.getSecretKey(),
                 "--endpoint",
-                endpoint);
+                endpoint());
 
         assertThat(result.exitCode())
                 .as("par meta via --endpoint exit code; stderr was: %s", result.stderr())
@@ -185,8 +188,11 @@ class S3CloudIT {
     }
 
     private static String objectUrl(String key) {
-        String endpoint = localstack.getEndpoint().toString().replaceAll("/+$", "");
-        return endpoint + "/" + BUCKET + "/" + key;
+        return endpoint() + "/" + BUCKET + "/" + key;
+    }
+
+    private static String endpoint() {
+        return localstack.getEndpoint().toString().replaceAll("/+$", "");
     }
 
     private static String run(String command, String url) {

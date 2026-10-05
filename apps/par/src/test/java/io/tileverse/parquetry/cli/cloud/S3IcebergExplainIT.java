@@ -20,29 +20,27 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Properties;
 import java.util.stream.Stream;
 
-import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.testcontainers.containers.Container.ExecResult;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.localstack.LocalStackContainer;
 import org.testcontainers.utility.DockerImageName;
 
+import io.tileverse.storage.Storage;
+import io.tileverse.storage.StorageFactory;
+import io.tileverse.storage.WriteOptions;
+
 import io.tileverse.parquetry.cli.support.CliRunner;
 import io.tileverse.parquetry.testkit.TestCorpus;
-
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.core.sync.RequestBody;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 /**
  * Drives {@code par explain} against the {@code v3_geometry} Iceberg table uploaded into an S3 bucket served by
@@ -54,6 +52,9 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
  * Iceberg metadata over storage and reconciles that baked-in logical location against the physical S3 bytes; a
  * California window then keeps {@code california.parquet} and prunes the other nine files. A flat-fileset misread would
  * instead keep all ten files with no manifest pruning.
+ *
+ * <p>The bucket is created by the {@code awslocal} of the container and the table is uploaded through a {@link Storage}
+ * opened from the same {@code storage.s3.*} properties produced by the CLI flags: the class uses no AWS SDK type.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class S3IcebergExplainIT {
@@ -70,21 +71,18 @@ class S3IcebergExplainIT {
     static LocalStackContainer localstack =
             new LocalStackContainer(DockerImageName.parse("localstack/localstack:3.2.0")).withServices("s3");
 
-    private static S3Client s3Client;
-
     @BeforeAll
-    static void uploadTable() {
+    static void uploadTable() throws IOException, InterruptedException {
         Path tableDir = TestCorpus.extractDirectory("iceberg-geo-testbed/" + TABLE, corpusDir);
-        s3Client = newS3Client();
-        s3Client.createBucket(CreateBucketRequest.builder().bucket(BUCKET).build());
+        createBucket();
         uploadDirectory(tableDir);
     }
 
-    @AfterAll
-    static void shutdown() {
-        if (s3Client != null) {
-            s3Client.close();
-        }
+    private static void createBucket() throws IOException, InterruptedException {
+        ExecResult created = localstack.execInContainer("awslocal", "s3api", "create-bucket", "--bucket", BUCKET);
+        assertThat(created.getExitCode())
+                .as("awslocal create-bucket: %s", created.getStderr())
+                .isZero();
     }
 
     @Test
@@ -124,32 +122,30 @@ class S3IcebergExplainIT {
     }
 
     private static void uploadDirectory(Path tableDir) {
-        try (Stream<Path> files = Files.walk(tableDir)) {
-            files.filter(Files::isRegularFile).forEach(file -> uploadFile(tableDir, file));
+        try (Storage storage = StorageFactory.open(URI.create("s3://" + BUCKET + "/"), storageProperties());
+                Stream<Path> files = Files.walk(tableDir)) {
+            files.filter(Files::isRegularFile).forEach(file -> uploadFile(storage, tableDir, file));
         } catch (IOException e) {
-            throw new UncheckedIOException("failed to walk the table directory " + tableDir, e);
+            throw new UncheckedIOException("failed to upload the table directory " + tableDir, e);
         }
     }
 
-    private static void uploadFile(Path tableDir, Path file) {
+    private static void uploadFile(Storage storage, Path tableDir, Path file) {
         String key = TABLE + "/" + relativeKey(tableDir, file);
-        PutObjectRequest request =
-                PutObjectRequest.builder().bucket(BUCKET).key(key).build();
-        s3Client.putObject(request, RequestBody.fromFile(file));
+        storage.put(key, file, WriteOptions.defaults());
     }
 
     private static String relativeKey(Path tableDir, Path file) {
         return tableDir.relativize(file).toString().replace(File.separatorChar, '/');
     }
 
-    private static S3Client newS3Client() {
-        StaticCredentialsProvider credentials = StaticCredentialsProvider.create(
-                AwsBasicCredentials.create(localstack.getAccessKey(), localstack.getSecretKey()));
-        return S3Client.builder()
-                .endpointOverride(localstack.getEndpoint())
-                .region(Region.of(localstack.getRegion()))
-                .credentialsProvider(credentials)
-                .forcePathStyle(true)
-                .build();
+    private static Properties storageProperties() {
+        Properties properties = new Properties();
+        properties.setProperty("storage.s3.endpoint", endpoint());
+        properties.setProperty("storage.s3.region", localstack.getRegion());
+        properties.setProperty("storage.s3.aws-access-key-id", localstack.getAccessKey());
+        properties.setProperty("storage.s3.aws-secret-access-key", localstack.getSecretKey());
+        properties.setProperty("storage.s3.force-path-style", "true");
+        return properties;
     }
 }
