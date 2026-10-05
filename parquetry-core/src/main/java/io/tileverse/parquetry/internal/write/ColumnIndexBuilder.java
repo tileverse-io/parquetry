@@ -86,7 +86,8 @@ public final class ColumnIndexBuilder {
 
     /**
      * Whether a column index can describe the appended pages: the column has a defined order, and each non-null page
-     * has a min and a max, as required by the format. A page of only NaN is a non-null page without bounds.
+     * has a min and a max, as required by the format. In the type-defined order a page of only NaN is a non-null page
+     * without bounds; in IEEE 754 total order its NaN cells bound it.
      */
     private boolean indexable() {
         return order.isDefined() && eachNonNullPageHasBounds();

@@ -38,6 +38,7 @@ import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName;
 import org.apache.parquet.schema.Types;
 
 import io.tileverse.parquetry.data.WriteOptions;
+import io.tileverse.parquetry.data.WriteOptions.FloatColumnOrder;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
@@ -46,8 +47,9 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
- * The rows shared by the floating-point conformance ITs and the two writers producing files of them. The nullable
- * FLOAT, DOUBLE and FLOAT16 columns hold the same values over five row groups of four pages each:
+ * The rows shared by the floating-point conformance ITs and the two writers producing files of them, in the
+ * type-defined order or in IEEE 754 total order. The nullable FLOAT, DOUBLE and FLOAT16 columns hold the same values
+ * over five row groups of four pages each:
  *
  * <ol>
  *   <li>numbers, with one page of nulls;
@@ -69,6 +71,7 @@ final class FloatConformanceFixture {
     static final int NAN_GROUP = 3;
     static final int ZEROS_GROUP = 4;
     static final int NULL_PAGE_OF_NUMBERS_GROUP = 1;
+    static final int NAN_PAGE_OF_NAN_PAGE_GROUP = 2;
     static final int POSITIVE_ZERO_PAGE_OF_ZEROS_GROUP = 0;
     static final int NEGATIVE_ZERO_PAGE_OF_ZEROS_GROUP = 1;
     static final int ZEROS_AND_POSITIVE_NUMBERS_PAGE_OF_ZEROS_GROUP = 2;
@@ -80,7 +83,11 @@ final class FloatConformanceFixture {
     static final String H = "h";
     static final List<String> FLOATING = List.of(F, D, H);
 
-    private static final int NAN_PAGE_OF_NAN_PAGE_GROUP = 2;
+    /** The PLAIN bytes of the two FLOAT zeros. */
+    static final byte[] FLOAT_NEGATIVE_ZERO = {0x00, 0x00, 0x00, (byte) 0x80};
+
+    static final byte[] FLOAT_POSITIVE_ZERO = {0x00, 0x00, 0x00, 0x00};
+
     private static final long SEED = 20261004L;
 
     private FloatConformanceFixture() {}
@@ -185,12 +192,22 @@ final class FloatConformanceFixture {
 
     // --- parquetry ---
 
-    /** Writes {@code rows} with parquetry, a row group and a page of the fixture sizes at a time. */
+    /**
+     * Writes {@code rows} with parquetry in the type-defined order, a row group and a page of the fixture sizes at a
+     * time.
+     */
     static Path writeWithParquetry(Path target, Path tempDir, List<Row> rows) throws IOException {
+        return writeWithParquetry(target, tempDir, rows, FloatColumnOrder.TYPE_DEFINED);
+    }
+
+    /** Writes {@code rows} with parquetry, with the statistics of the floating-point columns in {@code floatOrder}. */
+    static Path writeWithParquetry(Path target, Path tempDir, List<Row> rows, FloatColumnOrder floatOrder)
+            throws IOException {
         WriteOptions options = WriteOptions.builder()
                 .tempDir(tempDir)
                 .rowGroupSize(RowGroupSize.rows(ROWS_PER_GROUP))
                 .pageValueLimit(ROWS_PER_PAGE)
+                .floatColumnOrder(floatOrder)
                 .build();
         List<Map<ColumnPath, Object>> cells =
                 rows.stream().map(FloatConformanceFixture::cells).toList();
@@ -221,11 +238,26 @@ final class FloatConformanceFixture {
     // --- parquet-java ---
 
     /**
-     * Writes {@code groupRows} as one row group with the parquet-java writer, paged like the parquetry file, with the
-     * type-defined order declared for the floating-point columns.
+     * Writes each row group of the fixture as its own file with the parquet-java writer, with {@code floatOrder}
+     * declared for the floating-point columns. The files are named after {@code prefix} and their row group.
      */
-    static Path writeWithParquetJava(Path target, List<Row> groupRows) throws IOException {
-        MessageType schema = parquetJavaSchema();
+    static List<Path> writeReferences(Path dir, String prefix, List<Row> rows, FloatColumnOrder floatOrder)
+            throws IOException {
+        List<Path> references = new ArrayList<>();
+        for (int group = 0; group < GROUPS; group++) {
+            Path reference = dir.resolve(prefix + "-" + group + ".parquet");
+            references.add(writeWithParquetJava(reference, rowsOf(rows, group), floatOrder));
+        }
+        return references;
+    }
+
+    /**
+     * Writes {@code groupRows} as one row group with the parquet-java writer, paged like the parquetry file, with
+     * {@code floatOrder} declared for the floating-point columns.
+     */
+    private static Path writeWithParquetJava(Path target, List<Row> groupRows, FloatColumnOrder floatOrder)
+            throws IOException {
+        MessageType schema = parquetJavaSchema(parquetJavaOrder(floatOrder));
         SimpleGroupFactory groups = new SimpleGroupFactory(schema);
         try (ParquetWriter<Group> writer = ExampleParquetWriter.builder(new LocalOutputFile(target))
                 .withConf(new PlainParquetConfiguration())
@@ -240,21 +272,28 @@ final class FloatConformanceFixture {
         return target;
     }
 
-    private static MessageType parquetJavaSchema() {
-        ColumnOrder typeDefined = ColumnOrder.typeDefined();
+    /** The parquet-java column order matching {@code floatOrder}. */
+    static ColumnOrder parquetJavaOrder(FloatColumnOrder floatOrder) {
+        return switch (floatOrder) {
+            case TYPE_DEFINED -> ColumnOrder.typeDefined();
+            case IEEE_754_TOTAL_ORDER -> ColumnOrder.ieee754TotalOrder();
+        };
+    }
+
+    private static MessageType parquetJavaSchema(ColumnOrder floatOrder) {
         return Types.buildMessage()
                 .required(PrimitiveTypeName.INT32)
                 .named(ID)
                 .optional(PrimitiveTypeName.FLOAT)
-                .columnOrder(typeDefined)
+                .columnOrder(floatOrder)
                 .named(F)
                 .optional(PrimitiveTypeName.DOUBLE)
-                .columnOrder(typeDefined)
+                .columnOrder(floatOrder)
                 .named(D)
                 .optional(PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY)
                 .length(WriteFixtures.HALF_FLOAT_BYTES)
                 .as(LogicalTypeAnnotation.float16Type())
-                .columnOrder(typeDefined)
+                .columnOrder(floatOrder)
                 .named(H)
                 .named("schema");
     }

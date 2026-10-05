@@ -26,11 +26,11 @@ import io.tileverse.parquetry.internal.write.StatisticsAccumulator;
  * and by the page header.
  *
  * <p>{@link #min()} and {@link #max()} hold the page's PLAIN-encoded bounds as read-only {@link MemorySegment}s, or
- * {@link MemorySegment#NULL} when the page holds no ordered value: only nulls, only NaN, or a column without a defined
- * order.
+ * {@link MemorySegment#NULL} when the page has no bound: only nulls, only NaN in the type-defined order, or a column
+ * without a defined order. In IEEE 754 total order a page of only NaN is bounded by its smallest and largest NaN.
  *
- * @param min PLAIN-encoded lower bound of the page; {@link MemorySegment#NULL} without an ordered value
- * @param max PLAIN-encoded upper bound of the page; {@link MemorySegment#NULL} without an ordered value
+ * @param min PLAIN-encoded lower bound of the page; {@link MemorySegment#NULL} for a page without bounds
+ * @param max PLAIN-encoded upper bound of the page; {@link MemorySegment#NULL} for a page without bounds
  * @param nullCount number of null cells observed during the page's accumulation window
  * @param isNullPage {@code true} when every cell in the page was null
  * @param nanCount number of NaN cells observed during the page's accumulation window; empty for a column other than

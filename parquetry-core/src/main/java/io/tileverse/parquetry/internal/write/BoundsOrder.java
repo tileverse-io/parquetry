@@ -22,14 +22,15 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import java.lang.foreign.MemorySegment;
 import java.util.Optional;
 
+import io.tileverse.parquetry.data.WriteOptions.FloatColumnOrder;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * The order of a column's min and max statistics and of the page bounds of its column index, as defined by the format
- * for the column's physical and logical type. A reader prunes by those bounds in that order, and bounds computed in
- * another order make it drop rows held by the column.
+ * for the column's physical and logical type and for the column order declared in the footer. A reader prunes by those
+ * bounds in that order, and bounds computed in another order make it drop rows held by the column.
  */
 enum BoundsOrder {
 
@@ -60,6 +61,21 @@ enum BoundsOrder {
      */
     HALF_FLOAT,
 
+    /**
+     * FLOAT cells in IEEE 754 total order: the negative NaNs, the numbers with {@code -0.0} before {@code +0.0}, the
+     * positive NaNs. The bounds are numbers, and NaN cells bound a chunk or page holding no number.
+     */
+    FLOAT_TOTAL_ORDER,
+
+    /** DOUBLE cells in IEEE 754 total order; see {@link #FLOAT_TOTAL_ORDER}. */
+    DOUBLE_TOTAL_ORDER,
+
+    /**
+     * The half floats in the two little-endian bytes of FLOAT16 cells, in IEEE 754 total order; see
+     * {@link #FLOAT_TOTAL_ORDER}.
+     */
+    HALF_FLOAT_TOTAL_ORDER,
+
     /** Bytes compared unsigned, left to right, a prefix before its extensions: strings, UUIDs, plain binary. */
     UNSIGNED_BYTES,
 
@@ -72,13 +88,50 @@ enum BoundsOrder {
      */
     UNDEFINED;
 
-    /** The order of the statistics of {@code leaf}. */
+    /**
+     * The order of the statistics of {@code leaf} in a file declaring {@code floatOrder} for its floating-point
+     * columns. IEEE 754 total order applies to the FLOAT and DOUBLE columns without annotation and to the FLOAT16
+     * columns. The other columns keep their type-defined order. A FLOAT or DOUBLE column annotated UNKNOWN keeps it
+     * too, because the parquet-java reader rejects a footer declaring total order for such a column.
+     */
+    static BoundsOrder of(SchemaNode.Primitive leaf, FloatColumnOrder floatOrder) {
+        BoundsOrder typeDefined = of(leaf);
+        if (floatOrder == FloatColumnOrder.TYPE_DEFINED || isAnnotatedUnknown(leaf)) {
+            return typeDefined;
+        }
+        return typeDefined.inTotalOrder();
+    }
+
+    /** The order of the statistics of {@code leaf} in a file declaring the type-defined order for its columns. */
     static BoundsOrder of(SchemaNode.Primitive leaf) {
         Optional<LogicalType> logicalType = leaf.logicalType();
         if (logicalType.isEmpty()) {
             return physicalOrder(leaf.kind());
         }
         return annotatedOrder(leaf, logicalType.orElseThrow());
+    }
+
+    private static boolean isAnnotatedUnknown(SchemaNode.Primitive leaf) {
+        return leaf.logicalType().orElse(null) instanceof LogicalType.UnknownType;
+    }
+
+    private BoundsOrder inTotalOrder() {
+        return switch (this) {
+            case FLOAT -> FLOAT_TOTAL_ORDER;
+            case DOUBLE -> DOUBLE_TOTAL_ORDER;
+            case HALF_FLOAT -> HALF_FLOAT_TOTAL_ORDER;
+            case BOOLEAN,
+                    SIGNED_INT32,
+                    UNSIGNED_INT32,
+                    SIGNED_INT64,
+                    UNSIGNED_INT64,
+                    FLOAT_TOTAL_ORDER,
+                    DOUBLE_TOTAL_ORDER,
+                    HALF_FLOAT_TOTAL_ORDER,
+                    UNSIGNED_BYTES,
+                    SIGNED_BYTES,
+                    UNDEFINED -> this;
+        };
     }
 
     private static BoundsOrder physicalOrder(PrimitiveKind kind) {
@@ -143,7 +196,17 @@ enum BoundsOrder {
 
     /** Whether the bounds are floating-point numbers. The statistics of such a column count its NaN cells. */
     boolean isFloatingPoint() {
-        return this == FLOAT || this == DOUBLE || this == HALF_FLOAT;
+        return this == FLOAT || this == DOUBLE || this == HALF_FLOAT || isTotalOrder();
+    }
+
+    /** Whether the bounds follow IEEE 754 total order, declared in the footer for such a column. */
+    boolean isTotalOrder() {
+        return this == FLOAT_TOTAL_ORDER || this == DOUBLE_TOTAL_ORDER || this == HALF_FLOAT_TOTAL_ORDER;
+    }
+
+    /** Whether the cells are the two little-endian bytes of half floats. */
+    boolean holdsHalfFloats() {
+        return this == HALF_FLOAT || this == HALF_FLOAT_TOTAL_ORDER;
     }
 
     /** Whether the bounds are the bytes of binary cells, compared in place. */
@@ -164,9 +227,9 @@ enum BoundsOrder {
             case UNSIGNED_INT32 -> Integer.compareUnsigned(a.get(INT32, 0), b.get(INT32, 0));
             case SIGNED_INT64 -> Long.compare(a.get(INT64, 0), b.get(INT64, 0));
             case UNSIGNED_INT64 -> Long.compareUnsigned(a.get(INT64, 0), b.get(INT64, 0));
-            case FLOAT -> Integer.compare(floatKey(a), floatKey(b));
-            case DOUBLE -> Long.compare(doubleKey(a), doubleKey(b));
-            case HALF_FLOAT -> Integer.compare(HalfFloats.key(a), HalfFloats.key(b));
+            case FLOAT, FLOAT_TOTAL_ORDER -> Integer.compare(floatKey(a), floatKey(b));
+            case DOUBLE, DOUBLE_TOTAL_ORDER -> Long.compare(doubleKey(a), doubleKey(b));
+            case HALF_FLOAT, HALF_FLOAT_TOTAL_ORDER -> Integer.compare(HalfFloats.key(a), HalfFloats.key(b));
             case UNSIGNED_BYTES -> UnsignedLexOrder.compare(a, b);
             case SIGNED_BYTES -> SignedBytesOrder.compare(a, b);
             case UNDEFINED -> throw new IllegalStateException("a column without a defined order has no bounds");

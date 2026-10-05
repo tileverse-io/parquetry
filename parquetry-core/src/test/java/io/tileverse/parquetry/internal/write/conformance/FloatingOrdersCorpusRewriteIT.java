@@ -32,6 +32,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.WriteOptions;
+import io.tileverse.parquetry.data.WriteOptions.FloatColumnOrder;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -43,12 +44,16 @@ import io.tileverse.parquetry.testkit.TestCorpus;
  * Rewrites {@code floating_orders_nan_count.parquet} of the {@code apache/parquet-testing} corpus and compares the
  * statistics of the copy with those of the reference writer. The file holds the same cells in a total order column and
  * a type-defined order column per floating-point type, over five row groups: numbers, numbers mixed with NaN, NaN only,
- * a zero minimum and a zero maximum. The copy records each column in the type-defined order.
+ * a zero minimum and a zero maximum. A copy records its columns in one order: the type-defined order, or IEEE 754 total
+ * order on request.
  *
  * <p>The copy matches the reference type-defined columns: their NaN and null counts, their bounds with a zero written
  * as {@code -0.0} for a minimum and {@code +0.0} for a maximum, and no bounds for the row group of NaN. In the row
  * group mixing numbers and NaN the reference writer leaves the type-defined bounds out, as allowed by the format.
  * parquetry records the bounds of the numbers there, the ones held by the reference total order column.
+ *
+ * <p>The copy in total order matches the reference total order columns row group by row group: counts and bounds, with
+ * zero bounds keeping their sign and NaN bounds for the row group of NaN.
  */
 @Tag("conformance")
 class FloatingOrdersCorpusRewriteIT {
@@ -65,26 +70,32 @@ class FloatingOrdersCorpusRewriteIT {
 
     private static List<BlockMetaData> referenceGroups;
     private static List<BlockMetaData> copyGroups;
+    private static List<BlockMetaData> totalOrderCopyGroups;
 
     @BeforeAll
     static void rewriteTheCorpusFile() throws IOException {
         Path reference = TestCorpus.extractFile(FIXTURE, tempDir);
+        Path copy = rewrite(reference, FloatColumnOrder.TYPE_DEFINED);
+        Path totalOrderCopy = rewrite(reference, FloatColumnOrder.IEEE_754_TOTAL_ORDER);
         referenceGroups = WriteConformanceSupport.rowGroupsViaParquetJava(reference);
-        copyGroups = WriteConformanceSupport.rowGroupsViaParquetJava(rewrite(reference));
+        copyGroups = WriteConformanceSupport.rowGroupsViaParquetJava(copy);
+        totalOrderCopyGroups = WriteConformanceSupport.rowGroupsViaParquetJava(totalOrderCopy);
     }
 
     @Test
     void copyHasTheRowGroupsOfTheReference() {
         assertThat(copyGroups).hasSameSizeAs(referenceGroups);
+        assertThat(totalOrderCopyGroups).hasSameSizeAs(referenceGroups);
     }
 
     @Test
     void copyRecordsTheCountsOfTheReferenceTypeDefinedColumns() {
         for (int group = 0; group < referenceGroups.size(); group++) {
             for (String type : TYPES) {
-                Statistics<?> expected = statistics(referenceGroups.get(group), type + TYPE_DEFINED_SUFFIX);
+                Statistics<?> expected =
+                        StatisticsAssertions.statisticsOf(referenceGroups.get(group), type + TYPE_DEFINED_SUFFIX);
                 for (String suffix : List.of(TYPE_DEFINED_SUFFIX, TOTAL_ORDER_SUFFIX)) {
-                    Statistics<?> actual = statistics(copyGroups.get(group), type + suffix);
+                    Statistics<?> actual = StatisticsAssertions.statisticsOf(copyGroups.get(group), type + suffix);
                     String where = type + suffix + " in row group " + group;
 
                     assertThat(actual.getNanCount())
@@ -104,7 +115,7 @@ class FloatingOrdersCorpusRewriteIT {
             for (String type : TYPES) {
                 Statistics<?> expected = referenceBounds(referenceGroups.get(group), type, group);
                 for (String suffix : List.of(TYPE_DEFINED_SUFFIX, TOTAL_ORDER_SUFFIX)) {
-                    Statistics<?> actual = statistics(copyGroups.get(group), type + suffix);
+                    Statistics<?> actual = StatisticsAssertions.statisticsOf(copyGroups.get(group), type + suffix);
                     String where = type + suffix + " in row group " + group;
 
                     assertThat(actual.hasNonNullValue())
@@ -117,6 +128,26 @@ class FloatingOrdersCorpusRewriteIT {
         }
     }
 
+    @Test
+    void totalOrderCopyRecordsTheStatisticsOfTheReferenceTotalOrderColumns() {
+        for (int group = 0; group < referenceGroups.size(); group++) {
+            for (String type : TYPES) {
+                Statistics<?> expected =
+                        StatisticsAssertions.statisticsOf(referenceGroups.get(group), type + TOTAL_ORDER_SUFFIX);
+                for (String suffix : List.of(TYPE_DEFINED_SUFFIX, TOTAL_ORDER_SUFFIX)) {
+                    Statistics<?> actual =
+                            StatisticsAssertions.statisticsOf(totalOrderCopyGroups.get(group), type + suffix);
+                    String where = type + suffix + " in row group " + group;
+
+                    assertThat(expected.hasNonNullValue())
+                            .as("reference bounds of %s", where)
+                            .isTrue();
+                    StatisticsAssertions.assertSameChunkStatistics(actual, expected, where);
+                }
+            }
+        }
+    }
+
     /**
      * The statistics holding the bounds expected for {@code type} in a row group: those of the reference type-defined
      * column, except in the row group mixing numbers and NaN, where the reference writer records the bounds of the
@@ -124,25 +155,25 @@ class FloatingOrdersCorpusRewriteIT {
      */
     private static Statistics<?> referenceBounds(BlockMetaData rowGroup, String type, int group) {
         String suffix = group == MIXED_GROUP ? TOTAL_ORDER_SUFFIX : TYPE_DEFINED_SUFFIX;
-        return statistics(rowGroup, type + suffix);
+        return StatisticsAssertions.statisticsOf(rowGroup, type + suffix);
     }
 
-    private static Statistics<?> statistics(BlockMetaData rowGroup, String column) {
-        return WriteConformanceSupport.chunkOf(rowGroup, column).getStatistics();
-    }
-
-    /** Reads the rows of {@code source} and writes them to a new file with the row groups of the source. */
-    private static Path rewrite(Path source) throws IOException {
+    /**
+     * Reads the rows of {@code source} and writes them to a new file with the row groups of the source and the
+     * statistics of its floating-point columns in {@code floatOrder}.
+     */
+    private static Path rewrite(Path source, FloatColumnOrder floatOrder) throws IOException {
         ParquetSchema schema = WriteConformanceSupport.schemaViaParquetry(source);
         WriteOptions options = WriteOptions.builder()
                 .tempDir(tempDir)
                 .rowGroupSize(RowGroupSize.rows(ROWS_PER_GROUP))
+                .floatColumnOrder(floatOrder)
                 .build();
         List<Map<ColumnPath, Object>> rows = new ArrayList<>();
         for (ParquetRecord row : WriteConformanceSupport.readAll(source)) {
             rows.add(cells(row, schema));
         }
-        return WriteFixtures.writeRows(tempDir.resolve("copy.parquet"), schema, options, rows);
+        return WriteFixtures.writeRows(tempDir.resolve("copy-" + floatOrder + ".parquet"), schema, options, rows);
     }
 
     private static Map<ColumnPath, Object> cells(ParquetRecord row, ParquetSchema schema) {

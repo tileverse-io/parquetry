@@ -79,7 +79,7 @@ class NotInNaNStatisticsTest {
         RowGroupOutcome outcome = explain(notNaN).get(NUMBERS_ROW_GROUP).outcome();
 
         assertThat(outcome).isEqualTo(RowGroupOutcome.MATCHED);
-        assertCount(notNaN, ROWS_PER_GROUP + NULLS_PER_GROUP);
+        ReadFixtures.assertCountWithAndWithoutPruning(file, notNaN, ROWS_PER_GROUP + NULLS_PER_GROUP);
     }
 
     @Test
@@ -90,7 +90,7 @@ class NotInNaNStatisticsTest {
 
         assertThat(outcome).isEqualTo(RowGroupOutcome.MATCHED);
         long cellsEqualToOne = 1L;
-        assertCount(notOne, 2 * ROWS_PER_GROUP - cellsEqualToOne);
+        ReadFixtures.assertCountWithAndWithoutPruning(file, notOne, 2 * ROWS_PER_GROUP - cellsEqualToOne);
     }
 
     private static Predicate notIn(float value) {
@@ -102,17 +102,6 @@ class NotInNaNStatisticsTest {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ExplainPlan plan = ParquetFileReader.open(source).explain(predicate, Projection.ALL, ReadOptions.DEFAULTS);
             return plan.rowGroups();
-        }
-    }
-
-    private void assertCount(Predicate predicate, long expected) {
-        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetFileReader reader = ParquetFileReader.open(source);
-
-            assertThat(reader.count(predicate, ReadOptions.DEFAULTS))
-                    .as("rows matching %s", predicate)
-                    .isEqualTo(reader.count(predicate, ReadFixtures.METADATA_PRUNING_OFF))
-                    .isEqualTo(expected);
         }
     }
 

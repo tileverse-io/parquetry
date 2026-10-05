@@ -212,12 +212,13 @@ public final class ColumnChunkWriter implements AutoCloseable {
         this.pageWriter = new PageWriter(column);
 
         LogicalType logicalType = leaf.logicalType().orElse(null);
-        this.chunkStats = StatisticsAccumulator.forColumn(leaf);
-        this.pageStats = StatisticsAccumulator.forColumn(leaf);
+        BoundsOrder boundsOrder = BoundsOrder.of(leaf, options.floatColumnOrder());
+        this.chunkStats = StatisticsAccumulator.forColumn(leaf, boundsOrder);
+        this.pageStats = StatisticsAccumulator.forColumn(leaf, boundsOrder);
         this.geoStats = isGeometryLike(logicalType) ? new GeospatialStatisticsAccumulator() : null;
 
         boolean useIndexes = options.parquetVersion() == ParquetVersion.V2_0;
-        this.columnIndexBuilder = useIndexes ? new ColumnIndexBuilder(BoundsOrder.of(leaf)) : null;
+        this.columnIndexBuilder = useIndexes ? new ColumnIndexBuilder(boundsOrder) : null;
         this.offsetIndexBuilder = useIndexes ? new OffsetIndexBuilder() : null;
 
         this.bloomFilter = createBloomFilterIfRequested(options, leaf.name());

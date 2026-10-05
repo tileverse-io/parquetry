@@ -23,17 +23,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.parquet.filter2.predicate.FilterApi;
 import org.apache.parquet.filter2.predicate.FilterPredicate;
 import org.apache.parquet.io.api.Binary;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.data.WriteOptions.FloatColumnOrder;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
@@ -43,7 +47,8 @@ import io.tileverse.parquetry.testsupport.ReadFixtures;
 /**
  * Filtered reads of FLOAT, DOUBLE and FLOAT16 columns written by parquetry return the same rows with the metadata
  * pruning tiers on and off, in the parquet-java reader and in the parquetry reader: the statistics, NaN counts and
- * column indexes of the file prune no matching row.
+ * column indexes of the file prune no matching row. This holds for a file in the type-defined order and for a file in
+ * IEEE 754 total order.
  */
 @Tag("conformance")
 class FloatFilteredReadConformanceIT {
@@ -52,16 +57,22 @@ class FloatFilteredReadConformanceIT {
     static Path tempDir;
 
     private static List<Row> rows;
-    private static Path file;
+    private static Map<FloatColumnOrder, Path> files;
 
     @BeforeAll
-    static void writeFile() throws IOException {
+    static void writeFiles() throws IOException {
         rows = FloatConformanceFixture.generateRows();
-        file = FloatConformanceFixture.writeWithParquetry(tempDir.resolve("floats.parquet"), tempDir, rows);
+        files = new EnumMap<>(FloatColumnOrder.class);
+        for (FloatColumnOrder order : FloatColumnOrder.values()) {
+            Path target = tempDir.resolve("floats-" + order + ".parquet");
+            files.put(order, FloatConformanceFixture.writeWithParquetry(target, tempDir, rows, order));
+        }
     }
 
-    @Test
-    void parquetJavaFilteredReadsAgreeWithAndWithoutMetadataPruning() throws IOException {
+    @ParameterizedTest
+    @EnumSource(FloatColumnOrder.class)
+    void parquetJavaFilteredReadsAgreeWithAndWithoutMetadataPruning(FloatColumnOrder order) throws IOException {
+        Path file = files.get(order);
         for (FilterPredicate filter : parquetJavaFilters()) {
             List<Integer> pruned = WriteConformanceSupport.idsReadByParquetJava(file, ID, filter, true);
             List<Integer> scanned = WriteConformanceSupport.idsReadByParquetJava(file, ID, filter, false);
@@ -71,8 +82,10 @@ class FloatFilteredReadConformanceIT {
         }
     }
 
-    @Test
-    void parquetryFilteredReadsAgreeWithAndWithoutMetadataPruning() {
+    @ParameterizedTest
+    @EnumSource(FloatColumnOrder.class)
+    void parquetryFilteredReadsAgreeWithAndWithoutMetadataPruning(FloatColumnOrder order) {
+        Path file = files.get(order);
         for (FilterCase filter : parquetryFilters()) {
             long expected = rows.stream()
                     .filter(row -> !row.isNull())
@@ -117,7 +130,8 @@ class FloatFilteredReadConformanceIT {
 
     private static List<FilterPredicate> parquetJavaFilters() {
         Binary halfOne = half(Float.floatToFloat16(1.0f));
-        Binary halfNaN = half(aHalfNaNOfTheFile());
+        Row nan = aNaNRowOfTheFile();
+        Binary halfNaN = half(nan.h());
         return List.of(
                 FilterApi.gt(FilterApi.floatColumn(F), 1.0f),
                 FilterApi.gtEq(FilterApi.floatColumn(F), 0.0f),
@@ -125,25 +139,27 @@ class FloatFilteredReadConformanceIT {
                 FilterApi.ltEq(FilterApi.floatColumn(F), -0.0f),
                 FilterApi.eq(FilterApi.floatColumn(F), 0.0f),
                 FilterApi.eq(FilterApi.floatColumn(F), -0.0f),
-                FilterApi.eq(FilterApi.floatColumn(F), Float.NaN),
-                FilterApi.notEq(FilterApi.floatColumn(F), Float.NaN),
+                FilterApi.eq(FilterApi.floatColumn(F), nan.f()),
+                FilterApi.notEq(FilterApi.floatColumn(F), nan.f()),
                 FilterApi.notEq(FilterApi.floatColumn(F), 0.0f),
                 FilterApi.gt(FilterApi.doubleColumn(D), 1.0),
                 FilterApi.lt(FilterApi.doubleColumn(D), -1.0),
                 FilterApi.eq(FilterApi.doubleColumn(D), 0.0),
-                FilterApi.eq(FilterApi.doubleColumn(D), Double.NaN),
-                FilterApi.notEq(FilterApi.doubleColumn(D), Double.NaN),
+                FilterApi.eq(FilterApi.doubleColumn(D), nan.d()),
+                FilterApi.notEq(FilterApi.doubleColumn(D), nan.d()),
                 FilterApi.gt(FilterApi.binaryColumn(H), halfOne),
                 FilterApi.lt(FilterApi.binaryColumn(H), halfOne),
                 FilterApi.eq(FilterApi.binaryColumn(H), halfNaN),
                 FilterApi.notEq(FilterApi.binaryColumn(H), halfNaN));
     }
 
-    /** The bits of a FLOAT16 NaN cell of the file: parquet-java compares the cells of the column as bytes. */
-    private static short aHalfNaNOfTheFile() {
+    /**
+     * A row of the file holding NaN cells, the source of the NaN literals: parquet-java compares FLOAT16 cells as
+     * bytes, and in IEEE 754 total order it tells the NaN bit patterns of FLOAT and DOUBLE cells apart.
+     */
+    private static Row aNaNRowOfTheFile() {
         return rows.stream()
                 .filter(row -> !row.isNull() && Float.isNaN(row.f()))
-                .map(Row::h)
                 .findFirst()
                 .orElseThrow();
     }

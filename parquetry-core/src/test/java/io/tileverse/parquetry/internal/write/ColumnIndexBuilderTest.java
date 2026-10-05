@@ -33,12 +33,14 @@ import java.util.OptionalLong;
 import org.assertj.core.api.recursive.comparison.RecursiveComparisonConfiguration;
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.data.WriteOptions.FloatColumnOrder;
 import io.tileverse.parquetry.format.BoundaryOrder;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.codec.ParquetFormatDeserializer;
 import io.tileverse.parquetry.internal.write.page.PageStatistics;
 import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 class ColumnIndexBuilderTest {
 
@@ -246,6 +248,25 @@ class ColumnIndexBuilderTest {
         builder.appendPage(nanPage.finishPage());
 
         assertThat(builder.finishChunk()).isEmpty();
+    }
+
+    @Test
+    void chunkWithAPageOfOnlyNaNKeepsItsColumnIndexInTotalOrder() {
+        SchemaNode.Primitive floats = WriteFixtures.leaf(PrimitiveKind.FLOAT, null);
+        StatisticsAccumulator nanPage = WriteFixtures.accumulator(floats, FloatColumnOrder.IEEE_754_TOTAL_ORDER);
+        nanPage.updateFloat(Float.NaN);
+        nanPage.updateFloat(Float.NaN);
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.FLOAT_TOTAL_ORDER);
+        builder.appendPage(floatPage(1.0f, 2.0f));
+        builder.appendPage(nanPage.finishPage());
+
+        ColumnIndex index = builder.finishChunk().orElseThrow();
+        MemorySegment nanPageMax = index.maxValues().get(1);
+
+        assertThat(index.nullPages()).containsExactly(false, false);
+        assertThat(index.nanCounts()).contains(List.of(0L, 2L));
+        assertThat(WriteFixtures.floatBits(nanPageMax)).isEqualTo(Float.floatToRawIntBits(Float.NaN));
+        assertThat(index.boundaryOrder()).isEqualTo(BoundaryOrder.ASCENDING);
     }
 
     @Test

@@ -94,6 +94,15 @@ public final class CpCmd implements Callable<Integer> {
                     + "of more index entries for those columns.")
     private Integer coveringPageValues;
 
+    @Option(
+            names = "--float-column-order",
+            paramLabel = "<order>",
+            description = "Order of the statistics of FLOAT, DOUBLE and FLOAT16 columns: ${COMPLETION-CANDIDATES}. "
+                    + "Default: TYPE_DEFINED. IEEE_754_TOTAL_ORDER is the order recommended by the format. Some "
+                    + "readers in use today cannot open a copy written in that order, or do not prune its float "
+                    + "columns.")
+    private WriteOptions.FloatColumnOrder floatColumnOrder;
+
     @Mixin
     private GlobalOptions options;
 
@@ -166,8 +175,7 @@ public final class CpCmd implements Callable<Integer> {
             Map<String, String> sourceKeyValue)
             throws IOException {
         WriteOptions.RowGroupSize rowGroupSize = resolveRowGroupSize();
-        WriteOptions writeOptions =
-                buildWriteOptions(writeSchema, tempDir, sourceKeyValue, rowGroupSize, coveringPageValues);
+        WriteOptions writeOptions = buildWriteOptions(writeSchema, sourceKeyValue, rowGroupSize);
         long limit = options.limit == null ? Long.MAX_VALUE : options.limit;
         Query query = buildQuery(predicate, projection, limit);
         UriResolver.OpenSink sink = UriResolver.openForWrite(dst, sourceFileName, overwrite, dstStorage.toProperties());
@@ -233,14 +241,11 @@ public final class CpCmd implements Callable<Integer> {
     }
 
     /**
-     * Writer options for the copy. A {@code null} temp dir keeps the writer's default, the system temporary directory.
+     * Writer options for the copy. A flag left out keeps the writer's default: the system temporary directory for the
+     * temp dir, the type-defined order for the float column order.
      */
-    private static WriteOptions buildWriteOptions(
-            ParquetSchema writeSchema,
-            Path tempDir,
-            Map<String, String> sourceKeyValue,
-            WriteOptions.RowGroupSize rowGroupSize,
-            Integer coveringPageValues) {
+    private WriteOptions buildWriteOptions(
+            ParquetSchema writeSchema, Map<String, String> sourceKeyValue, WriteOptions.RowGroupSize rowGroupSize) {
         WriteOptions.Builder builder = WriteOptions.builder();
         if (tempDir != null) {
             builder.tempDir(tempDir);
@@ -250,6 +255,9 @@ public final class CpCmd implements Callable<Integer> {
         }
         if (coveringPageValues != null) {
             builder.coveringPageValueLimit(coveringPageValues);
+        }
+        if (floatColumnOrder != null) {
+            builder.floatColumnOrder(floatColumnOrder);
         }
         for (ColumnPath leaf : writeSchema.leafColumns()) {
             SchemaNode node = writeSchema.find(leaf).orElseThrow();
