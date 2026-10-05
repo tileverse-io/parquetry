@@ -69,7 +69,7 @@ Notes:
 (on any filtering command) to print the supported set:
 
 - **Comparisons**: `=` `!=` `<>` `<` `<=` `>` `>=`
-- **Logical**: `AND`, `OR`, `NOT`
+- **Logical**: `AND`, `OR`, `NOT`, parentheses to group conditions
 - **Sets / ranges**: `IN (...)`, `NOT IN (...)`, `BETWEEN x AND y`, `IS NULL`, `IS NOT NULL`
 - **Spatial relations**: `ST_Intersects`, `ST_Touches`, `ST_Crosses`, `ST_Overlaps`, `ST_Disjoint`, `ST_Equals`,
   `ST_Contains`, `ST_Within`, `ST_Covers`, `ST_CoveredBy`, `ST_DWithin(geom, query, distance)`

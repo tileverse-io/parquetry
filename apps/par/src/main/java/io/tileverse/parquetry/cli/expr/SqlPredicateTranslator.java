@@ -47,6 +47,7 @@ import net.sf.jsqlparser.expression.operators.relational.IsNullExpression;
 import net.sf.jsqlparser.expression.operators.relational.MinorThan;
 import net.sf.jsqlparser.expression.operators.relational.MinorThanEquals;
 import net.sf.jsqlparser.expression.operators.relational.NotEqualsTo;
+import net.sf.jsqlparser.expression.operators.relational.ParenthesedExpressionList;
 import net.sf.jsqlparser.schema.Column;
 
 /** Translates a parsed SQL condition (jsqlparser AST) into a parquetry {@link Predicate}. */
@@ -65,6 +66,7 @@ final class SqlPredicateTranslator {
             case AndExpression and -> Pred.and(translate(and.getLeftExpression()), translate(and.getRightExpression()));
             case OrExpression or -> Pred.or(translate(or.getLeftExpression()), translate(or.getRightExpression()));
             case NotExpression not -> Pred.not(translate(not.getExpression()));
+            case ParenthesedExpressionList<?> parenthesized -> translate(groupedCondition(parenthesized));
             case ComparisonOperator comparison -> comparison(comparison);
             case IsNullExpression isNull -> isNull(isNull);
             case InExpression in -> in(in);
@@ -72,6 +74,14 @@ final class SqlPredicateTranslator {
             case Function fn -> spatial.translate(fn);
             default -> throw unsupported(describe(expression));
         };
+    }
+
+    /** The condition grouped by parentheses; a parenthesized list of several expressions is not a condition. */
+    private Expression groupedCondition(ParenthesedExpressionList<?> parenthesized) {
+        if (parenthesized.size() != 1) {
+            throw unsupported(describe(parenthesized));
+        }
+        return parenthesized.getFirst();
     }
 
     private Predicate comparison(ComparisonOperator comparison) {

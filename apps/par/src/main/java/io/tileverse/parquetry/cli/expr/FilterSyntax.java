@@ -26,7 +26,7 @@ import java.util.List;
 public final class FilterSyntax {
 
     private static final String COMPARISONS = "= != <> < <= > >=";
-    private static final String LOGICAL = "AND, OR, NOT";
+    private static final String LOGICAL = "AND, OR, NOT, ( ) to group conditions";
     private static final String SETS_AND_RANGES = "IN (...), NOT IN (...), BETWEEN x AND y, IS NULL, IS NOT NULL";
 
     private FilterSyntax() {}
