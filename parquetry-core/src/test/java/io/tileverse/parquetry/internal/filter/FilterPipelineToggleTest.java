@@ -121,7 +121,8 @@ class FilterPipelineToggleTest {
                 Optional.of(encodeInt(min)),
                 Optional.of(encodeInt(max)),
                 OptionalLong.of(0),
-                Optional.empty());
+                Optional.empty(),
+                NaNCells.POSSIBLE);
     }
 
     private static MemorySegment encodeInt(int v) {

@@ -31,6 +31,7 @@ import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnBloom;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStats;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnStats;
+import io.tileverse.parquetry.internal.filter.NaNCells;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
 import io.tileverse.parquetry.internal.footer.CompactFooter;
@@ -151,7 +152,29 @@ public final class RowGroupChunks {
         if (!hasStatistics(minValue, maxValue, nullCount)) {
             return Optional.empty();
         }
-        return primitiveKind(path).map(kind -> new ColumnStats(kind, minValue, maxValue, nullCount, logicalType(path)));
+        NaNCells nans = countedNaNCells(path, chunk);
+        return primitiveKind(path)
+                .map(kind -> new ColumnStats(kind, minValue, maxValue, nullCount, logicalType(path), nans));
+    }
+
+    /** What the NaN count recorded for the chunk tells; nothing without a recorded count. */
+    private NaNCells countedNaNCells(ColumnPath path, ChunkMeta chunk) {
+        if (chunk.holdsNoNaN()) {
+            return NaNCells.ABSENT;
+        }
+        if (chunk.holdsOnlyNaN() && countsEachCell(path, chunk)) {
+            return NaNCells.ALL;
+        }
+        return NaNCells.POSSIBLE;
+    }
+
+    /**
+     * NaN and null counts adding up to the value count tell that no number is left only when that count covers each
+     * cell, nulls included. A flat column has one cell per row; a value count differing from the row count comes from a
+     * writer counting its values some other way.
+     */
+    private boolean countsEachCell(ColumnPath path, ChunkMeta chunk) {
+        return !isFlat(path) || chunk.numValues() == numRows();
     }
 
     /** A bound in an order not applied by this reader is left out, as if the writer had recorded none. */

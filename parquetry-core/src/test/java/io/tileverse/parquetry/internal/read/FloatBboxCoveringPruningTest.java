@@ -41,6 +41,8 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
+import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
+import io.tileverse.parquetry.filter.explain.RowGroupPlan;
 import io.tileverse.parquetry.filter.explain.Tier;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -50,6 +52,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.ReadFixtures;
 import io.tileverse.parquetry.testsupport.Wkb;
 
 /**
@@ -87,6 +90,47 @@ class FloatBboxCoveringPruningTest {
         assertThat(ids)
                 .as("only the rows clustered in [0..10]x[0..10] (row group 0) match")
                 .containsExactlyInAnyOrder(0, 1, 2, 3);
+    }
+
+    @Test
+    void negatedIntersectsReadsTheSameRowsWithMetadataPruningOnAndOff() throws Exception {
+        Path file = writeFourClusteredRowGroups();
+        Predicate awayFromTheQuery = new Predicate.Not(Pred.col("geometry").bboxIntersects(Bbox.of2d(0, 0, 10, 10)));
+
+        List<Integer> pruned = readIds(file, awayFromTheQuery, ReadOptions.DEFAULTS);
+        List<Integer> scanned = readIds(file, awayFromTheQuery, ReadFixtures.METADATA_PRUNING_OFF);
+
+        assertThat(pruned)
+                .as("the rows clustered away from [0..10]x[0..10]: row groups 1 to 3")
+                .containsExactlyInAnyOrder(4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
+                .containsExactlyInAnyOrderElementsOf(scanned);
+        assertThat(count(file, awayFromTheQuery)).isEqualTo(pruned.size());
+    }
+
+    @Test
+    void negatedIntersectsMatchesTheDisjointRowGroupsFromTheirCoveringStatistics() throws Exception {
+        Path file = writeFourClusteredRowGroups();
+        Predicate awayFromTheQuery = new Predicate.Not(Pred.col("geometry").bboxIntersects(Bbox.of2d(0, 0, 10, 10)));
+
+        List<RowGroupOutcome> outcomes = planOutcomes(file, awayFromTheQuery);
+
+        assertThat(outcomes.subList(1, 4))
+                .as("each row of a row group lying beyond the query box is away from it")
+                .containsOnly(RowGroupOutcome.MATCHED);
+        assertThat(outcomes.getFirst())
+                .as("the row group overlapping the query box is decided row by row")
+                .isNotEqualTo(RowGroupOutcome.MATCHED);
+    }
+
+    private static long count(Path file, Predicate predicate) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            return ParquetFileReader.open(source).count(predicate, ReadOptions.DEFAULTS);
+        }
+    }
+
+    private static List<RowGroupOutcome> planOutcomes(Path file, Predicate predicate) {
+        List<RowGroupPlan> rowGroups = explain(file, predicate, ReadOptions.DEFAULTS);
+        return rowGroups.stream().map(RowGroupPlan::outcome).toList();
     }
 
     private static long statsEliminations(List<PruningDecision> decisions) {
@@ -156,12 +200,14 @@ class FloatBboxCoveringPruningTest {
     }
 
     private static List<PruningDecision> planDecisions(Path file, Predicate predicate, ReadOptions options) {
+        List<RowGroupPlan> rowGroups = explain(file, predicate, options);
+        return rowGroups.stream().flatMap(rowGroup -> rowGroup.tiers().stream()).toList();
+    }
+
+    private static List<RowGroupPlan> explain(Path file, Predicate predicate, ReadOptions options) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetFileReader dataset = ParquetFileReader.open(source);
-            ExplainPlan plan = dataset.explain(predicate, Projection.ALL, options);
-            return plan.rowGroups().stream()
-                    .flatMap(rowGroup -> rowGroup.tiers().stream())
-                    .toList();
+            ExplainPlan plan = ParquetFileReader.open(source).explain(predicate, Projection.ALL, options);
+            return plan.rowGroups();
         }
     }
 

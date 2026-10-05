@@ -175,7 +175,7 @@ class QuantifiedPushdownTest {
 
     private static FilterPipeline.ColumnStats nullFreeStats(PrimitiveKind kind, MemorySegment min, MemorySegment max) {
         return new FilterPipeline.ColumnStats(
-                kind, Optional.of(min), Optional.of(max), OptionalLong.of(0L), Optional.empty());
+                kind, Optional.of(min), Optional.of(max), OptionalLong.of(0L), Optional.empty(), NaNCells.POSSIBLE);
     }
 
     private static MemorySegment encodeUtf8(String value) {

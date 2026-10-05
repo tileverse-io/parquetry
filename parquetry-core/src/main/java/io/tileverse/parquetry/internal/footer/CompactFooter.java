@@ -51,7 +51,8 @@ import io.tileverse.parquetry.schema.ColumnPath;
  *
  * <p>Deliberately dropped: encodings, encoding statistics, size statistics, column key/value metadata, sorting columns,
  * the deprecated {@code file_offset}, crypto metadata, and the statistics distinct count and exactness flags. Nothing
- * on the planning or scan path reads them.
+ * on the planning or scan path reads them. The statistics NaN count is reduced to two facts: whether it is zero, and
+ * whether it adds up with the null count to the values of the chunk.
  *
  * <h2>Layout</h2>
  *
@@ -93,6 +94,7 @@ public final class CompactFooter {
     static final int CHUNK_CODEC = 88;
     static final int CHUNK_TYPE = 89;
     static final int CHUNK_FLAGS = 90;
+    static final int CHUNK_NAN_FLAGS = 91;
     static final int CHUNK_GEO_INDEX = 92;
 
     static final int FLAG_CHUNK_PRESENT = 0x1;
@@ -107,6 +109,15 @@ public final class CompactFooter {
      * {@link UnorderedBounds}.
      */
     static final int FLAG_BOUNDS_UNORDERED = 0x40;
+
+    /** Set in the NaN flags of a chunk with a recorded NaN count of zero: the chunk holds no NaN cell. */
+    static final int NAN_FLAG_ZERO_COUNT = 0x1;
+
+    /**
+     * Set in the NaN flags of a chunk holding at least one NaN cell, with NaN and null counts adding up to its values:
+     * its non-null cells are all NaN.
+     */
+    static final int NAN_FLAG_ONLY_NAN = 0x2;
 
     private static final int GEO_ENTRY_BYTES = 64;
     static final int GEO_XMIN = 0;
@@ -433,6 +444,7 @@ public final class CompactFooter {
             writeChunkCounts(base, meta);
             writeChunkTypes(base, meta, site);
             writeChunkStatistics(base, meta);
+            writeChunkNaNFlags(base, meta);
             int geoFlags = writeChunkGeoBbox(base, meta);
             int orderFlag = unorderedLeaves.get(leaf) ? FLAG_BOUNDS_UNORDERED : 0;
             blob.set(JAVA_BYTE, base + CHUNK_FLAGS, (byte) (FLAG_CHUNK_PRESENT | geoFlags | orderFlag));
@@ -557,6 +569,26 @@ public final class CompactFooter {
             blob.set(INT32, offsetLane, nextArenaByte);
             blob.set(INT32, lengthLane, length);
             nextArenaByte += length;
+        }
+
+        private void writeChunkNaNFlags(long base, ColumnMetaData meta) {
+            blob.set(JAVA_BYTE, base + CHUNK_NAN_FLAGS, (byte) nanFlags(meta));
+        }
+
+        /** What the NaN count of the chunk tells, when the writer recorded one. */
+        private static int nanFlags(ColumnMetaData meta) {
+            Optional<Statistics> statistics = meta.statistics();
+            OptionalLong nanCount = statistics.map(Statistics::nanCount).orElse(OptionalLong.empty());
+            if (nanCount.isEmpty()) {
+                return 0;
+            }
+            long nans = nanCount.getAsLong();
+            if (nans == 0L) {
+                return NAN_FLAG_ZERO_COUNT;
+            }
+            OptionalLong nullCount = statistics.map(Statistics::nullCount).orElse(OptionalLong.empty());
+            boolean onlyNaN = nullCount.isPresent() && nans + nullCount.getAsLong() == meta.numValues();
+            return onlyNaN ? NAN_FLAG_ONLY_NAN : 0;
         }
 
         /**

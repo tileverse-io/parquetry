@@ -110,10 +110,11 @@ public final class FilterPipeline {
 
     /**
      * Per-column input to the statistics-tier filter evaluator: the column's primitive kind, the chunk's minimum and
-     * maximum bounds, how many of its values are null, and an optional logical type annotation (present when the file
-     * schema annotates the column, absent for plain physical columns). The kind tells the evaluator how to decode the
-     * bound bytes, and the logical type drives typed decoding (e.g. INT64 annotated as a timestamp decodes to
-     * {@link io.tileverse.parquetry.filter.Value.TimestampVal} rather than a raw {@code LongVal}).
+     * maximum bounds, how many of its values are null, an optional logical type annotation (present when the file
+     * schema annotates the column, absent for plain physical columns), and what the NaN count recorded by the writer
+     * tells about the NaN cells of the chunk ({@link NaNCells#POSSIBLE} without a recorded count). The kind tells the
+     * evaluator how to decode the bound bytes, and the logical type drives typed decoding (e.g. INT64 annotated as a
+     * timestamp decodes to {@link io.tileverse.parquetry.filter.Value.TimestampVal} rather than a raw {@code LongVal}).
      *
      * <p>Each bound holds the PLAIN-encoded bytes that the pruning tiers compare against, and is empty when the writer
      * recorded none. The two segments are read-only windows onto the footer form retained by the reader and stay valid
@@ -124,7 +125,8 @@ public final class FilterPipeline {
             Optional<MemorySegment> minValue,
             Optional<MemorySegment> maxValue,
             OptionalLong nullCount,
-            Optional<LogicalType> logicalType) {}
+            Optional<LogicalType> logicalType,
+            NaNCells nans) {}
 
     /**
      * Per-column input to the COLUMN_INDEX-tier evaluator: the column's primitive kind plus its loaded

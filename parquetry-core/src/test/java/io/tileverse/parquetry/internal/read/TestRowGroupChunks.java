@@ -62,6 +62,27 @@ final class TestRowGroupChunks {
         };
     }
 
+    /** A loader for views read for their footer statistics alone: reading an index section through it fails. */
+    static IndexSectionLoader noIndexSections() {
+        return new IndexSectionLoader() {
+
+            @Override
+            public OffsetIndex readOffsetIndex(long offset, int length) {
+                throw new AssertionError("no index section is read");
+            }
+
+            @Override
+            public ColumnIndex readColumnIndex(long offset, int length) {
+                throw new AssertionError("no index section is read");
+            }
+
+            @Override
+            public SplitBlockBloomFilter readBloom(long offset, int length) {
+                throw new AssertionError("no index section is read");
+            }
+        };
+    }
+
     static RowGroupChunks of(
             FileMetaData footer, int rowGroupIndex, ParquetSchema fileSchema, IndexSectionLoader loader) {
         LeafIndex leaves = LeafIndex.of(fileSchema);
