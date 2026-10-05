@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.internal.filter;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -48,6 +49,58 @@ class TemporalValuesTest {
         long micros = TemporalValues.toEpochUnit(dt, TimeUnit.MICROS);
         assertThat(micros).isEqualTo(-1_000_000L);
         assertThat(TemporalValues.toLocalDateTime(micros, TimeUnit.MICROS)).isEqualTo(dt);
+    }
+
+    @Test
+    void epochUnitIsExactAtTheEndsOfTheInt64Range() {
+        LocalDateTime last = TemporalValues.toLocalDateTime(Long.MAX_VALUE, TimeUnit.NANOS);
+        LocalDateTime first = TemporalValues.toLocalDateTime(Long.MIN_VALUE, TimeUnit.NANOS);
+
+        assertThat(TemporalValues.toEpochUnitIfInRange(last, TimeUnit.NANOS)).hasValue(Long.MAX_VALUE);
+        assertThat(TemporalValues.toEpochUnitIfInRange(first, TimeUnit.NANOS)).hasValue(Long.MIN_VALUE);
+    }
+
+    @Test
+    void timestampOneNanosecondBeyondTheInt64RangeHasNoEpochUnit() {
+        LocalDateTime last = TemporalValues.toLocalDateTime(Long.MAX_VALUE, TimeUnit.NANOS);
+        LocalDateTime first = TemporalValues.toLocalDateTime(Long.MIN_VALUE, TimeUnit.NANOS);
+
+        assertThat(TemporalValues.toEpochUnitIfInRange(last.plusNanos(1), TimeUnit.NANOS))
+                .isEmpty();
+        assertThat(TemporalValues.toEpochUnitIfInRange(first.minusNanos(1), TimeUnit.NANOS))
+                .isEmpty();
+    }
+
+    @Test
+    void widestTimestampsHaveNoEpochUnitAtAnyUnit() {
+        for (TimeUnit unit : TimeUnit.values()) {
+            assertThat(TemporalValues.toEpochUnitIfInRange(LocalDateTime.MAX, unit))
+                    .as("latest timestamp in %s", unit)
+                    .isEmpty();
+            assertThat(TemporalValues.toEpochUnitIfInRange(LocalDateTime.MIN, unit))
+                    .as("earliest timestamp in %s", unit)
+                    .isEmpty();
+        }
+    }
+
+    @Test
+    void year9999HasAnEpochUnitInMicrosAndNoneInNanos() {
+        LocalDateTime year9999 = LocalDateTime.of(9999, 12, 31, 0, 0);
+
+        assertThat(TemporalValues.toEpochUnitIfInRange(year9999, TimeUnit.MICROS))
+                .hasValue(253_402_214_400_000_000L);
+        assertThat(TemporalValues.toEpochUnitIfInRange(year9999, TimeUnit.NANOS))
+                .isEmpty();
+    }
+
+    @Test
+    void toEpochUnitRejectsATimestampBeyondTheInt64Range() {
+        LocalDateTime year9999 = LocalDateTime.of(9999, 12, 31, 0, 0);
+
+        assertThatThrownBy(() -> TemporalValues.toEpochUnit(year9999, TimeUnit.NANOS))
+                .isInstanceOf(ArithmeticException.class)
+                .hasMessageContaining("9999-12-31T00:00")
+                .hasMessageContaining("NANOS");
     }
 
     @Test

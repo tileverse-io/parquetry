@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -398,6 +399,19 @@ class BloomFilterEvaluatorTest {
         // A different value is absent; must be Eliminated.
         assertThat(BloomFilterEvaluator.evaluate(Pred.col("ts").eq(ts.plusDays(1), true), blooms))
                 .isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void timestampBeyondTheRangeOfTheColumnIsNotApplied() {
+        // A nanosecond column ends in the year 2262: no cell stores the year 9999, and no hash stands for it.
+        LocalDateTime year9999 = LocalDateTime.of(9999, 12, 31, 0, 0);
+        FilterPipeline.BloomFilterLookup blooms = singleTyped(
+                "ts",
+                PrimitiveKind.INT64,
+                bloomOver(SplitBlockBloomFilter.hashInt64(0L)),
+                new LogicalType.Timestamp(true, LogicalType.TimeUnit.NANOS));
+        assertThat(BloomFilterEvaluator.evaluate(Pred.col("ts").eq(year9999, true), blooms))
+                .isInstanceOf(PruningDecision.NotApplied.class);
     }
 
     @Test

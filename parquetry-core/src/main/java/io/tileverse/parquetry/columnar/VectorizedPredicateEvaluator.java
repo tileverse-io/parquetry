@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.function.IntToLongFunction;
 
 import io.tileverse.parquetry.filter.GeometryFilter;
@@ -270,12 +271,7 @@ public final class VectorizedPredicateEvaluator {
                 if (v instanceof Value.DecimalVal(BigDecimal query)) {
                     integerDecimalMask(lv::getLong, validity, query, decimalScale(batch, col), op, out);
                 } else if (v instanceof Value.TimestampVal || v instanceof Value.TimeVal) {
-                    long query = temporalQueryUnit(v, batch, col);
-                    for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
-                        if (op.holds(Long.compare(lv.getLong(r), query))) {
-                            out.set(r);
-                        }
-                    }
+                    temporalMask(lv, validity, storedTemporal(v, batch, col), op, out);
                 } else {
                     for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
                         if (op.holds(ValueComparison.compareLong(lv.getLong(r), v))) {
@@ -357,24 +353,77 @@ public final class VectorizedPredicateEvaluator {
     }
 
     private static void unknownPairMask(Validity validity, ComparisonOperator op, BitSet out) {
-        if (op.holds(0)) {
+        sameOutcomeMask(validity, op, 0, out);
+    }
+
+    /**
+     * Compares the stored integers of a timestamp or time column with a temporal literal. A timestamp beyond the range
+     * of the column compares the same way with each cell: the comparison holds for each cell or for none.
+     */
+    private static void temporalMask(
+            LongVector cells, Validity validity, StoredTemporal literal, ComparisonOperator op, BitSet out) {
+        switch (literal) {
+            case StoredTemporal.InRange(long stored) -> storedIntegerMask(cells, validity, stored, op, out);
+            case StoredTemporal.OutOfRange(int cellComparison) -> sameOutcomeMask(validity, op, cellComparison, out);
+        }
+    }
+
+    private static void storedIntegerMask(
+            LongVector cells, Validity validity, long stored, ComparisonOperator op, BitSet out) {
+        for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
+            if (op.holds(Long.compare(cells.getLong(r), stored))) {
+                out.set(r);
+            }
+        }
+    }
+
+    /** The mask of a comparison with the same outcome for the cells holding a value: each of them, or none. */
+    private static void sameOutcomeMask(Validity validity, ComparisonOperator op, int comparison, BitSet out) {
+        if (op.holds(comparison)) {
             out.or(validity.copy());
         }
     }
 
-    private static long temporalQueryUnit(Value v, ParquetRecordBatch batch, ColumnPath col) {
+    private static StoredTemporal storedTemporal(Value v, ParquetRecordBatch batch, ColumnPath col) {
         LogicalType leaf = leafLogicalType(batch, col)
                 .orElseThrow(() ->
                         new IllegalStateException("temporal query on column without a logical type: " + col.dot()));
         return switch (v) {
             case Value.TimestampVal(LocalDateTime dt, boolean _)
             when leaf instanceof LogicalType.Timestamp(boolean _, LogicalType.TimeUnit unit) ->
-                TemporalValues.toEpochUnit(dt, unit);
+                StoredTemporal.ofTimestamp(dt, unit);
             case Value.TimeVal(LocalTime t)
             when leaf instanceof LogicalType.Time(boolean _, LogicalType.TimeUnit unit) ->
-                TemporalValues.toTimeUnit(t, unit);
+                new StoredTemporal.InRange(TemporalValues.toTimeUnit(t, unit));
             default -> throw new IllegalStateException("temporal path reached with " + v + " and leaf " + leaf);
         };
+    }
+
+    /** A timestamp or time literal as compared with the stored integers of a column. */
+    private sealed interface StoredTemporal {
+
+        LocalDateTime EPOCH = LocalDateTime.of(1970, 1, 1, 0, 0);
+
+        /** The integer stored for the literal in the unit of the column. */
+        record InRange(long stored) implements StoredTemporal {}
+
+        /**
+         * A timestamp beyond the instants of INT64 in the unit of the column.
+         *
+         * @param cellComparison the sign of {@code cell - literal}, the same for each cell: negative for a literal
+         *     later than the range, positive for an earlier one
+         */
+        record OutOfRange(int cellComparison) implements StoredTemporal {}
+
+        static StoredTemporal ofTimestamp(LocalDateTime timestamp, LogicalType.TimeUnit unit) {
+            OptionalLong stored = TemporalValues.toEpochUnitIfInRange(timestamp, unit);
+            if (stored.isPresent()) {
+                return new InRange(stored.getAsLong());
+            }
+            // The epoch lies within the range: a timestamp out of range and after the epoch is later than the range.
+            boolean laterThanTheRange = timestamp.isAfter(EPOCH);
+            return new OutOfRange(laterThanTheRange ? -1 : 1);
+        }
     }
 
     // A matching scale and a cell of at most 8 bytes compare as primitive longs (no allocation); a wider cell, a
