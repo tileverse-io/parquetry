@@ -642,6 +642,19 @@ class ColumnIndexEvaluatorTest {
     }
 
     @Test
+    void nullCountsOfAnotherLengthThanThePagesTellNothingToANullTest() {
+        Optional<List<Long>> twoCountsForThreePages = Optional.of(List.of(0L, 0L));
+        FilterPipeline.ColumnPageStatsLookup cols =
+                pricePages(NO_NAN_COUNTS, twoCountsForThreePages, MINS_WITH_A_NAN_PAGE, MAXS_WITH_A_NAN_PAGE);
+
+        PruningDecision isNull = ColumnIndexEvaluator.evaluate(col("price").isNull(), cols, ROW_GROUP_ROWS);
+        PruningDecision isNotNull = ColumnIndexEvaluator.evaluate(col("price").isNotNull(), cols, ROW_GROUP_ROWS);
+
+        assertThat(isNull).isInstanceOf(PruningDecision.PassedAll.class);
+        assertThat(isNotNull).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
     void pageWithANegativeNaNCountIsKept() {
         // Negative counts describe no page: they tell nothing, even when they add up to its rows.
         Optional<List<Long>> negativeNaNCount = Optional.of(List.of(0L, -100L, 0L));
