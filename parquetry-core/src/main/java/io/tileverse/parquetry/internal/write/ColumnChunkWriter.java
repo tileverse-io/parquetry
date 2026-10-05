@@ -853,7 +853,17 @@ public final class ColumnChunkWriter implements AutoCloseable {
         return uncompressedBytes + pageByteEstimate;
     }
 
+    /**
+     * Flushes the page of a flat column once it reaches a limit. Each cell of a flat column is a row, and its page may
+     * end after any of them. A repeated column flushes between rows, see {@link #recordLevelsUnchecked}.
+     */
     private void maybeFlushPage() {
+        if (column.maxRepetitionLevel() == 0) {
+            flushPageIfFull();
+        }
+    }
+
+    private void flushPageIfFull() {
         if (pageCellCount >= pageValueLimit || pageByteEstimate >= options.pageByteLimit()) {
             try {
                 flushPage();
@@ -1035,10 +1045,13 @@ public final class ColumnChunkWriter implements AutoCloseable {
      * this method; level logic added to recordLevels alone would never run on the striped path.
      */
     private void recordLevelsUnchecked(int repLevel, int defLevel) {
-        levels.append(repLevel, defLevel);
         if (column.maxRepetitionLevel() > 0 && repLevel == 0) {
+            // A page starts at the first value of a row, as required of version 2 data pages and of the page index:
+            // a full page ends here, before the row opening with this cell, and never within a row.
+            flushPageIfFull();
             rowsInCurrentPage++;
         }
+        levels.append(repLevel, defLevel);
     }
 
     private void validateLevel(String kind, int level, int maxLevel) {
