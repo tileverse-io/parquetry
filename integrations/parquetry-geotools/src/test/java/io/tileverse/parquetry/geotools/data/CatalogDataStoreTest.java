@@ -30,7 +30,7 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.parquetry.catalog.CatalogOptions;
 import io.tileverse.parquetry.catalog.DatasetCatalog;
 import io.tileverse.parquetry.catalog.FilesetCatalog;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 /**
@@ -76,14 +76,14 @@ class CatalogDataStoreTest {
     private static FilesetCatalog geoCatalog(Path dir) {
         Path file = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
         return FilesetCatalog.open(
-                LocalFileSource.file(file),
+                FileSource.file(file),
                 CatalogOptions.builder().datasetName("example").build());
     }
 
     private static FilesetCatalog nonGeoCatalog(Path dir) {
         Path file = TestCorpus.extractFile("parquet-testing/data/alltypes_plain.parquet", dir);
         return FilesetCatalog.open(
-                LocalFileSource.file(file),
+                FileSource.file(file),
                 CatalogOptions.builder().datasetName("plain").build());
     }
 }

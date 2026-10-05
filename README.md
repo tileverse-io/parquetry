@@ -78,6 +78,8 @@ try (Storage storage = StorageFactory.open(file.getParent().toUri());
 
 `StorageFactory.open(URI)` discovers the right `Storage` for `file://`, `s3://`, `https://`, `azure://`, and more through tileverse-storage's SPI. The reader is the caller's to close; the dataset does not own it.
 
+The S3, Azure and GCS backends are opt-in: add `io.tileverse.storage:tileverse-storage-all`, or a single provider module (`tileverse-storage-s3`, `-azure`, `-gcs`), next to parquetry. Local files and HTTP need nothing more.
+
 ### Reading vectorized batches
 
 ```java

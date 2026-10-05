@@ -34,7 +34,11 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class LocalFileSourceTest {
+/**
+ * The local-path contract of {@link FileSource#directory} and {@link FileSource#file}: what each lists, and what an
+ * entry opens.
+ */
+class FileSourceTest {
 
     @Test
     void directoryListsMatchingFilesWithRelativePaths(@TempDir Path dir) throws Exception {
@@ -42,7 +46,7 @@ class LocalFileSourceTest {
         Files.writeString(dir.resolve("b.parquet"), "BBBBBB");
         Files.writeString(dir.resolve("ignore.txt"), "x");
 
-        FileSource source = LocalFileSource.directory(dir, "*.parquet");
+        FileSource source = FileSource.directory(dir, "*.parquet");
         List<FileEntry> files;
         try (Stream<FileEntry> s = source.list()) {
             files = s.sorted(java.util.Comparator.comparing(FileEntry::relativePath))
@@ -58,7 +62,7 @@ class LocalFileSourceTest {
     @Test
     void openReadsFileBytes(@TempDir Path dir) throws Exception {
         Files.writeString(dir.resolve("only.parquet"), "HELLO");
-        FileSource source = LocalFileSource.file(dir.resolve("only.parquet"));
+        FileSource source = FileSource.file(dir.resolve("only.parquet"));
 
         FileEntry file;
         try (Stream<FileEntry> s = source.list()) {
@@ -82,7 +86,7 @@ class LocalFileSourceTest {
         Path file = dir.resolve("f[z-a].parquet");
         Files.writeString(file, "x");
 
-        assertThat(relativePathsOf(LocalFileSource.file(file))).containsExactly("f[z-a].parquet");
+        assertThat(relativePathsOf(FileSource.file(file))).containsExactly("f[z-a].parquet");
     }
 
     @Test
@@ -92,7 +96,7 @@ class LocalFileSourceTest {
         Path locked = Files.createDirectory(dir.resolve("locked"));
         assumeTrue(denyDirectoryReads(locked), "needs POSIX permissions and a non-root user");
         try {
-            assertThat(relativePathsOf(LocalFileSource.file(file))).containsExactly("only.parquet");
+            assertThat(relativePathsOf(FileSource.file(file))).containsExactly("only.parquet");
         } finally {
             restoreDirectoryReads(locked);
         }
@@ -105,15 +109,15 @@ class LocalFileSourceTest {
         Path link = dir.resolve("link");
         assumeTrue(createSymbolicLink(link, real), "needs a filesystem and a user able to create symbolic links");
 
-        assertThat(relativePathsOf(LocalFileSource.file(link.resolve("only.parquet"))))
+        assertThat(relativePathsOf(FileSource.file(link.resolve("only.parquet"))))
                 .containsExactly("only.parquet");
     }
 
     @Test
     void missingSingleFileListsNothing(@TempDir Path dir) {
-        assertThat(relativePathsOf(LocalFileSource.file(dir.resolve("absent.parquet"))))
+        assertThat(relativePathsOf(FileSource.file(dir.resolve("absent.parquet"))))
                 .isEmpty();
-        assertThat(relativePathsOf(LocalFileSource.file(dir.resolve("absent/absent.parquet"))))
+        assertThat(relativePathsOf(FileSource.file(dir.resolve("absent/absent.parquet"))))
                 .isEmpty();
     }
 

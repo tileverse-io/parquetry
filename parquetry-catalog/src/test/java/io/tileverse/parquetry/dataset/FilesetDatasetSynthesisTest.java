@@ -45,7 +45,7 @@ import io.tileverse.parquetry.dataset.explain.Outcome;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 
@@ -55,7 +55,7 @@ class FilesetDatasetSynthesisTest {
     void readsSynthesizedValuePerFile(@TempDir Path root) throws Exception {
         writeYearTree(root, 2023, 4, 2024, 3);
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
             ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             try (Stream<ParquetRecord> records = ds.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
                 long count2023 = records.map(row -> row.getLong(ColumnPath.of("year")))
@@ -76,7 +76,7 @@ class FilesetDatasetSynthesisTest {
     void projectingOnlyTheSyntheticColumnEnumeratesEveryRow(@TempDir Path root) throws Exception {
         writeYearTree(root, 2023, 4, 2024, 3);
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
             ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             Projection onlyYear = Projection.ofPhysical(Set.of(ColumnPath.of("year")));
             try (Stream<ParquetRecord> records = ds.read(Predicate.ALWAYS_TRUE, onlyYear, ReadOptions.DEFAULTS)) {
@@ -93,7 +93,7 @@ class FilesetDatasetSynthesisTest {
     void filterOnSyntheticColumnReturnsOnlyMatchingRows(@TempDir Path root) throws Exception {
         writeYearTree(root, 2023, 5, 2024, 3);
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
             ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             Predicate year2024 = Pred.col("year").eq(2024L);
             try (Stream<ParquetRecord> records = ds.read(year2024, Projection.ALL, ReadOptions.DEFAULTS)) {
@@ -106,7 +106,7 @@ class FilesetDatasetSynthesisTest {
     void filterCombiningSyntheticAndPhysicalAppliesRecordLevelResidual(@TempDir Path root) throws Exception {
         writeYearTree(root, 2023, 4, 2024, 10);
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
             ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             Predicate year2024AndValueOver5 =
                     Pred.and(Pred.col("year").eq(2024L), Pred.col("value").gt(5.0));
@@ -127,7 +127,7 @@ class FilesetDatasetSynthesisTest {
     void explainOnSyntheticColumnKeepsAndSkipsByPartitionValue(@TempDir Path root) throws Exception {
         writeYearTree(root, 2023, 5, 2024, 3);
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
             ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             Predicate year2024 = Pred.col("year").eq(2024L);
 
@@ -144,7 +144,7 @@ class FilesetDatasetSynthesisTest {
     void earlyCloseAcrossSyntheticSurvivorsDoesNotThrow(@TempDir Path root) throws Exception {
         writeYearTree(root, 2023, 5, 2024, 4);
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
             ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             assertThatCode(() -> consumeOneThenClose(ds)).doesNotThrowAnyException();
         }

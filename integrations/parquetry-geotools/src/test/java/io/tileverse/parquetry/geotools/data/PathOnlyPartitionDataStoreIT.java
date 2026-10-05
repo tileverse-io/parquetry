@@ -39,7 +39,7 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.parquetry.catalog.CatalogOptions;
 import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.geotools.parquet.GeoParquetDataStore;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 
 /**
  * End-to-end proof that the GeoTools DataStore reads a Hive tree whose partition column is NOT physically present in
@@ -68,7 +68,7 @@ class PathOnlyPartitionDataStoreIT {
         writePathOnlyTree(root);
 
         try (FilesetCatalog catalog =
-                        FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults());
+                        FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults());
                 CatalogDataStore store = new GeoParquetDataStore(catalog)) {
 
             assertThat(store.getTypeNames()).hasSize(1);
@@ -88,7 +88,7 @@ class PathOnlyPartitionDataStoreIT {
         writeDatePartitionedTree(root);
 
         try (FilesetCatalog catalog =
-                        FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults());
+                        FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults());
                 CatalogDataStore store = new GeoParquetDataStore(catalog)) {
 
             String typeName = store.getTypeNames()[0];

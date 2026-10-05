@@ -179,7 +179,7 @@ final class RangeReaderByteRangeSource implements ByteRangeSource {
      * storage failure kept as a suppressed exception; else over a {@link NoSuchFileException} for a missing object or a
      * plain {@link IOException}, with the storage failure as the cause.
      */
-    private static UncheckedIOException translate(StorageException failure, String message, String source) {
+    static UncheckedIOException translate(StorageException failure, String message, String source) {
         if (failure.getCause() instanceof IOException io) {
             UncheckedIOException translated = new UncheckedIOException(message, io);
             translated.addSuppressed(failure);

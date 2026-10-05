@@ -22,8 +22,9 @@
  * {@link io.tileverse.parquetry.io.ByteRangeSource#owning}.
  *
  * <p>{@link io.tileverse.parquetry.io.FileSource} discovers the files under a root, each openable as a
- * {@link io.tileverse.parquetry.io.ByteRangeSource}. {@link io.tileverse.parquetry.io.LocalFileSource} covers local
- * directories and single files; Storage-backed sources are provided by the tileverse-storage adapter module.
+ * {@link io.tileverse.parquetry.io.ByteRangeSource}. A source is built by one of the
+ * {@link io.tileverse.parquetry.io.FileSource} factories: over a local directory, a local file, or a tileverse
+ * {@code Storage} opened by the caller.
  *
  * <p>{@link io.tileverse.parquetry.io.SegmentPool} pools native {@link java.lang.foreign.MemorySegment} buffers for
  * column-chunk fetch and per-page decompression, keeping the streaming memory bounded. Its default retains a small

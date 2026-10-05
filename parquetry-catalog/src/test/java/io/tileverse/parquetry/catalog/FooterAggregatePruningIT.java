@@ -35,7 +35,7 @@ import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Value;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.testsupport.FlatLongParquet;
 import io.tileverse.parquetry.testsupport.FooterRewrite;
@@ -63,7 +63,7 @@ class FooterAggregatePruningIT {
         FlatLongParquet.writeIntFile(dir.resolve("b.parquet"), "pop", FlatLongParquet.longRange(100, 10)); // 100..109
 
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
             ParquetDataset dataset = catalog.dataset(catalog.datasets().get(0));
             Predicate onlyHigh = new Predicate.GtEq(ColumnPath.of("pop"), new Value.LongVal(100));
 
@@ -83,7 +83,7 @@ class FooterAggregatePruningIT {
         });
 
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
             ParquetDataset dataset = catalog.dataset(catalog.datasets().get(0));
             Predicate eastOnly = new Predicate.Spatial.BboxIntersects(ColumnPath.of("geometry"), EAST_QUERY);
 
@@ -109,7 +109,7 @@ class FooterAggregatePruningIT {
                 dir.resolve("east.parquet"), "geometry", V1_1_ONLY, new double[][] {{100, 0}, {105, 5}, {110, 10}});
 
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
             ParquetDataset dataset = catalog.dataset(catalog.datasets().get(0));
             Predicate eastOnly = new Predicate.Spatial.BboxIntersects(ColumnPath.of("geometry"), EAST_QUERY);
 
@@ -135,7 +135,7 @@ class FooterAggregatePruningIT {
         FooterRewrite.rewrite(boxed, data.resolve("mixed.parquet"), FooterRewrite.geospatialBboxRemoved("geometry", 1));
 
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(data, "*.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(data, "*.parquet"), CatalogOptions.defaults())) {
             ParquetDataset dataset = catalog.dataset(catalog.datasets().get(0));
             Predicate eastOnly = new Predicate.Spatial.BboxIntersects(ColumnPath.of("geometry"), EAST_QUERY);
 
@@ -151,7 +151,7 @@ class FooterAggregatePruningIT {
         FlatLongParquet.writeNullableIntFile(dir.resolve("present.parquet"), "c", new Long[] {1L, 2L, 3L});
 
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
             ParquetDataset dataset = catalog.dataset(catalog.datasets().get(0));
             Predicate present = new Predicate.IsNotNull(ColumnPath.of("c"));
 
@@ -167,7 +167,7 @@ class FooterAggregatePruningIT {
         FlatLongParquet.writeNullableIntFile(dir.resolve("present.parquet"), "c", new Long[] {1L, 2L, 3L});
 
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
             ParquetDataset dataset = catalog.dataset(catalog.datasets().get(0));
             Predicate absent = new Predicate.IsNull(ColumnPath.of("c"));
 

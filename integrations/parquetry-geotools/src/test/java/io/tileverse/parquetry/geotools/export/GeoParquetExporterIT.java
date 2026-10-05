@@ -58,7 +58,7 @@ import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.geotools.data.CatalogDataStore;
 import io.tileverse.parquetry.geotools.parquet.GeoParquetDataStore;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 
 /**
  * Round-trips a {@link FeatureCollection} through {@link GeoParquetExporter} and back through
@@ -279,7 +279,7 @@ class GeoParquetExporterIT {
 
     private static CatalogDataStore openStore(Path file) {
         FilesetCatalog catalog = FilesetCatalog.open(
-                LocalFileSource.file(file),
+                FileSource.file(file),
                 CatalogOptions.builder().datasetName("features").build());
         return new GeoParquetDataStore(catalog);
     }

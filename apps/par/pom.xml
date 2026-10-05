@@ -43,10 +43,10 @@
       <artifactId>parquetry-iceberg</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- The storage backends read and written by the CLI: local, HTTP, S3, Azure and GCS. -->
     <dependency>
-      <groupId>io.tileverse.parquetry</groupId>
-      <artifactId>parquetry-tileverse-storage</artifactId>
-      <version>${project.version}</version>
+      <groupId>io.tileverse.storage</groupId>
+      <artifactId>tileverse-storage-all</artifactId>
     </dependency>
     <dependency>
       <groupId>com.github.jsqlparser</groupId>
@@ -155,7 +155,6 @@
     <dependency>
       <groupId>io.aiven</groupId>
       <artifactId>testcontainers-fake-gcs-server</artifactId>
-      <version>0.3.0</version>
       <scope>test</scope>
     </dependency>
   </dependencies>

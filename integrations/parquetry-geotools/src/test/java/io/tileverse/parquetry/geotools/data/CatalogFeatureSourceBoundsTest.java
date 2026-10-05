@@ -55,7 +55,7 @@ import io.tileverse.parquetry.format.KeyValue;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.geotools.parquet.GeoParquetDataStore;
 import io.tileverse.parquetry.io.ByteRangeSource;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -87,7 +87,7 @@ class CatalogFeatureSourceBoundsTest {
         Path planar = writePoints(dir.resolve("planar.parquet"), new double[][] {{175, -5}, {-175, 5}});
         Path file = withDeclaredBbox(planar, dir.resolve("wrapping.parquet"), new double[] {175, -5, -175, 5});
         FilesetCatalog catalog = FilesetCatalog.open(
-                LocalFileSource.file(file),
+                FileSource.file(file),
                 CatalogOptions.builder().datasetName("points").build());
         try (GeoParquetDataStore store = new GeoParquetDataStore(catalog)) {
             CatalogFeatureSource source = (CatalogFeatureSource) store.getFeatureSource("points");
@@ -109,7 +109,7 @@ class CatalogFeatureSourceBoundsTest {
     void theBoundsOfOnlyEmptyGeometriesAreUnknown() throws Exception {
         Path file = TestCorpus.extractFile("parquet-testing/data/geospatial/geospatial.parquet", dir);
         FilesetCatalog catalog = FilesetCatalog.open(
-                LocalFileSource.file(file),
+                FileSource.file(file),
                 CatalogOptions.builder().datasetName("geospatial").build());
         try (GeoParquetDataStore store = new GeoParquetDataStore(catalog)) {
             CatalogFeatureSource source = (CatalogFeatureSource) store.getFeatureSource("geospatial");

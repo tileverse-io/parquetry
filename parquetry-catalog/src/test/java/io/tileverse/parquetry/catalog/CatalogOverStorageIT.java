@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.tileverse;
+package io.tileverse.parquetry.catalog;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -26,13 +26,12 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.storage.Storage;
 import io.tileverse.storage.StorageFactory;
 
-import io.tileverse.parquetry.catalog.CatalogOptions;
-import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.dataset.ParquetSource;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 class CatalogOverStorageIT {
@@ -52,7 +51,7 @@ class CatalogOverStorageIT {
 
         Storage storage = StorageFactory.open(datasetDir.toUri());
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(StorageFileSource.over(storage, "*.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.over(storage, "*.parquet"), CatalogOptions.defaults())) {
             ParquetDataset dataset = catalog.dataset(catalog.datasets().get(0));
             assertThat(dataset.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS))
                     .isEqualTo(2 * single);

@@ -42,7 +42,7 @@ import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.SpatialReadProbe;
 import io.tileverse.parquetry.internal.read.TestParquetFiles;
 import io.tileverse.parquetry.io.ByteRangeSource;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -297,7 +297,7 @@ class FilesetDatasetJustInTimeReadTest {
     // --- helpers ---
 
     private static FilesetCatalog openCatalog(Path root) {
-        return FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults());
+        return FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults());
     }
 
     private static void stepInto(Stream<ParquetRecord> stream, int rows) {

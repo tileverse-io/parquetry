@@ -30,7 +30,7 @@ import org.locationtech.jts.geom.Geometry;
 import io.tileverse.parquetry.catalog.CatalogOptions;
 import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.geotools.parquet.GeoParquetDataStore;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 class GeoParquetReadIT {
@@ -39,7 +39,7 @@ class GeoParquetReadIT {
     void readsEveryFeatureWithGeometryAndAttributes(@TempDir Path dir) throws Exception {
         Path file = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
         FilesetCatalog catalog = FilesetCatalog.open(
-                LocalFileSource.file(file),
+                FileSource.file(file),
                 CatalogOptions.builder().datasetName("example").build());
         try (CatalogDataStore store = new GeoParquetDataStore(catalog)) {
             CatalogFeatureSource fs = (CatalogFeatureSource) store.getFeatureSource("example");

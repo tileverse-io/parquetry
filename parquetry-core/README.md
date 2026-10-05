@@ -25,7 +25,7 @@ try (FileChannel sink = FileChannel.open(out, CREATE, WRITE, TRUNCATE_EXISTING);
 }
 ```
 
-The read source is a `ByteRangeSource` (the [`parquetry-io`](../parquetry-io/) SPI). `ofFile(Path)` / `ofChannel(FileChannel)` cover local files; `of(RangeReader)` / `owning(RangeReader)` read through any tileverse-storage `RangeReader`. The S3 / Azure / GCS provider modules arrive with the optional [`parquetry-tileverse-storage`](../integrations/parquetry-tileverse-storage/) adapter: `ParquetFileReader.open(ByteRangeSource.of(rangeReader))`.
+The read source is a `ByteRangeSource` (the [`parquetry-io`](../parquetry-io/) SPI). `ofFile(Path)` / `ofChannel(FileChannel)` cover local files; `of(RangeReader)` / `owning(RangeReader)` read through any tileverse-storage `RangeReader`. The S3 / Azure / GCS readers come from tileverse's provider modules, added by the application: `tileverse-storage-all`, or `tileverse-storage-s3` / `-azure` / `-gcs` alone. Any of them reads through `ParquetFileReader.open(ByteRangeSource.of(rangeReader))`.
 
 The write sink is a `WritableByteChannel`. It does not have to be seekable: any genuinely streaming output target (an HTTP request body, a blob-storage upload, anything that exposes `WritableByteChannel`) works -- rows are encoded into per-column temp files first and only consolidated onto the sink at row-group flush. An `OutputStream` overload is provided as a convenience and shims through `Channels.newChannel(...)`.
 
@@ -78,4 +78,6 @@ Direction rule: **cross-cutting capabilities stay at the top level; direction-sp
 - `io.airlift:aircompressor-v3` (Snappy / Gzip / Lz4Raw / Zstd / Lzo / legacy LZ4 codecs + bloom-filter xxHash64).
 - `org.brotli:dec` (Brotli decompression).
 
-No `parquet-*`, `hadoop-*`, `libthrift`, or `avro` at compile or runtime. The one `io.tileverse.*` dependency is `tileverse-storage-core`, for the cache registry shared with the storage layer; cloud reads come from the optional `parquetry-tileverse-storage` adapter.
+No `parquet-*`, `hadoop-*`, `libthrift`, or `avro` at compile or runtime. The one `io.tileverse.*` dependency is `tileverse-storage-core`, for the cache registry shared with the storage layer and the `ByteBufferPool` SPI implemented by the module's buffer pool; cloud reads need a tileverse provider module on the class path, chosen by the application.
+
+The module registers its buffer pool as tileverse's `ByteBufferPool` through `ServiceLoader`. Tileverse readers in the process, a PMTiles or COG store next to parquetry included, then draw their direct buffers from parquetry's `SegmentPool` under its fetch budget: one off-heap pool for the process instead of two.

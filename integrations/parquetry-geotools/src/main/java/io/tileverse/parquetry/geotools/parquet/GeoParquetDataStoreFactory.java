@@ -35,7 +35,6 @@ import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.geotools.data.StorageParams;
 import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.schema.ParquetSchemaException;
-import io.tileverse.parquetry.tileverse.ParquetFileSources;
 
 /** Opens a read-only GeoParquet {@link DataStore} from a dataset URI. */
 public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
@@ -155,17 +154,17 @@ public final class GeoParquetDataStoreFactory implements DataStoreFactorySpi {
 
         DatasetCatalog datasetCatalog;
         if (isSingleFileUri(datasetUri)) {
-            FileSource object = ParquetFileSources.openObject(datasetUri, storageProps);
+            FileSource object = FileSource.openObject(datasetUri, storageProps);
             datasetCatalog = FilesetCatalog.open(object, catalogOptions);
         } else if (layerGrouping == LayerGrouping.FILE) {
             URI fileModeContainer = fileModeContainer(datasetUri);
             String filePattern = "*.parquet";
-            FileSource topLevel = ParquetFileSources.open(fileModeContainer, filePattern, storageProps);
+            FileSource topLevel = FileSource.open(fileModeContainer, filePattern, storageProps);
             datasetCatalog = FilesetCatalog.openPerFile(topLevel);
         } else { // layerGrouping is or defaults to LayerGrouping.MERGED
             URI baseContainer = baseContainer(datasetUri);
             String filePattern = filePattern(datasetUri);
-            FileSource merged = ParquetFileSources.open(baseContainer, filePattern, storageProps);
+            FileSource merged = FileSource.open(baseContainer, filePattern, storageProps);
             datasetCatalog = new MergedGroupingCatalog(FilesetCatalog.open(merged, catalogOptions));
         }
         return datasetCatalog;

@@ -68,6 +68,11 @@ A single-file URI is always exactly one layer; `layer-grouping` has no effect on
 
 ## Cloud storage
 
+The S3, Azure and GCS backends are not dependencies of this module. Add
+`io.tileverse.storage:tileverse-storage-all`, or `tileverse-storage-s3` / `-azure` / `-gcs` alone, to the
+application; `parquetry-dependencies` manages the version. Local files and HTTP work without them, and the
+store's parameter list shows the backends present.
+
 Reading from S3, Azure, GCS, or HTTP is configured through the tileverse
 `storage.*` parameters. The provider is auto-detected from the URI scheme; set
 `storage.provider` to force it. Each backend has its own key family:

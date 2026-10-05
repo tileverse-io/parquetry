@@ -53,7 +53,6 @@ import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.FileEntry;
 import io.tileverse.parquetry.io.FileSource;
-import io.tileverse.parquetry.io.LocalFileSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
@@ -73,7 +72,7 @@ class FilesetCatalogTest {
         Path only = dir.resolve("alltypes_plain.parquet");
         Files.copy(FILE, only);
 
-        try (FilesetCatalog catalog = FilesetCatalog.open(LocalFileSource.file(only), CatalogOptions.defaults())) {
+        try (FilesetCatalog catalog = FilesetCatalog.open(FileSource.file(only), CatalogOptions.defaults())) {
             assertThat(catalog.datasets()).containsExactly("alltypes_plain");
             ParquetDataset ds = catalog.dataset("alltypes_plain");
             assertThat(ds.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS)).isEqualTo(singleFileRowCount());
@@ -86,7 +85,7 @@ class FilesetCatalogTest {
         Files.copy(FILE, dir.resolve("b.parquet"));
 
         try (FilesetCatalog catalog = FilesetCatalog.open(
-                LocalFileSource.directory(dir, "*.parquet"),
+                FileSource.directory(dir, "*.parquet"),
                 CatalogOptions.builder().datasetName("places").build())) {
 
             assertThat(catalog.datasets()).containsExactly("places");
@@ -101,7 +100,7 @@ class FilesetCatalogTest {
         Files.copy(FILE, dir.resolve("part-1.parquet"));
 
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
             assertThat(catalog.datasets()).hasSize(1);
             assertThat(catalog.capabilities().enumeratesDatasets()).isFalse();
         }
@@ -167,7 +166,7 @@ class FilesetCatalogTest {
         Files.write(dir.resolve("c.parquet"), new byte[64]);
 
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
             String name = catalog.datasets().get(0);
             assertThatThrownBy(() -> catalog.dataset(name))
                     .isInstanceOf(ParquetSchemaException.class)
@@ -183,7 +182,7 @@ class FilesetCatalogTest {
         Files.write(dir.resolve("c.parquet"), new byte[64]);
 
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
             String name = catalog.datasets().get(0);
             assertThatThrownBy(() -> catalog.dataset(name))
                     .isInstanceOf(ParquetFormatException.class)
@@ -332,7 +331,7 @@ class FilesetCatalogTest {
         writeNoYearFile(dir.resolve("b.parquet"), 1);
 
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
             String name = catalog.datasets().get(0);
             assertThatThrownBy(() -> catalog.dataset(name))
                     .isInstanceOf(ParquetSchemaException.class)
@@ -346,14 +345,14 @@ class FilesetCatalogTest {
     void unknownDatasetNameRejected(@TempDir Path dir) throws Exception {
         Files.copy(FILE, dir.resolve("a.parquet"));
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(dir, "*.parquet"), CatalogOptions.defaults())) {
             assertThatThrownBy(() -> catalog.dataset("nope")).isInstanceOf(IllegalArgumentException.class);
         }
     }
 
     @Test
     void emptySourceRejected(@TempDir Path dir) {
-        LocalFileSource emptySource = LocalFileSource.directory(dir, "*.parquet");
+        FileSource emptySource = FileSource.directory(dir, "*.parquet");
         CatalogOptions options = CatalogOptions.defaults();
         assertThatThrownBy(() -> FilesetCatalog.open(emptySource, options))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -395,7 +394,7 @@ class FilesetCatalogTest {
         Files.copy(FILE, datasetDir.resolve("b.parquet"));
 
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(datasetDir, "*.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(datasetDir, "*.parquet"), CatalogOptions.defaults())) {
             assertThat(catalog.datasets()).containsExactly("places");
             ParquetDataset ds = catalog.dataset("places");
             assertThat(ds.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS)).isEqualTo(2 * singleFileRowCount());
@@ -405,8 +404,7 @@ class FilesetCatalogTest {
     @Test
     void closeReleasesSources(@TempDir Path dir) throws Exception {
         Files.copy(FILE, dir.resolve("a.parquet"));
-        FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(dir, "*.parquet"), CatalogOptions.defaults());
+        FilesetCatalog catalog = FilesetCatalog.open(FileSource.directory(dir, "*.parquet"), CatalogOptions.defaults());
         catalog.close();
         // A second close must not throw: every source was already released.
         assertThatCode(catalog::close).doesNotThrowAnyException();
@@ -422,7 +420,7 @@ class FilesetCatalogTest {
         writeYearFile(part2024.resolve("b.parquet"), 2024, rows2024);
 
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
             ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             assertThat(ds.capabilities().partitionModel()).isEqualTo(DatasetCapabilities.PartitionModel.HIVE_PATH);
 
@@ -438,7 +436,7 @@ class FilesetCatalogTest {
         writeNoYearFile(part2023.resolve("a.parquet"), 4);
         writeNoYearFile(part2024.resolve("b.parquet"), 3);
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
             ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             assertThat(ds.schema().leafColumns()).contains(ColumnPath.of("year"));
             assertThat(ds.capabilities().partitionModel()).isEqualTo(DatasetCapabilities.PartitionModel.HIVE_PATH);
@@ -457,7 +455,7 @@ class FilesetCatalogTest {
         writeRows(dir.resolve("bad.parquet"), schema, Map.of("geo", "{ this is not valid json"), 2);
 
         try (FilesetCatalog catalog = FilesetCatalog.open(
-                LocalFileSource.directory(dir, "*.parquet"),
+                FileSource.directory(dir, "*.parquet"),
                 CatalogOptions.builder().datasetName("places").build())) {
             ParquetDataset ds = catalog.dataset("places");
             assertThat(ds).isInstanceOf(GeoParquetDataset.class);

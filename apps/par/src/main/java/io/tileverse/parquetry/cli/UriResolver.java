@@ -30,7 +30,6 @@ import io.tileverse.storage.StorageOutputStream;
 import io.tileverse.storage.WriteOptions;
 
 import io.tileverse.parquetry.io.ByteRangeSource;
-import io.tileverse.parquetry.tileverse.ParquetStorage;
 
 /**
  * Resolves a CLI path or URI argument into a {@link RangeReader}. A bare path is normalised to an absolute
@@ -161,8 +160,8 @@ public final class UriResolver {
 
     /**
      * Opens the path or URI. A local {@code file} URI is read through tileverse-storage's file reader; a remote URI is
-     * opened through tileverse-storage with the given {@code storage.*} properties (see {@link ParquetStorage}).
-     * {@code storage.uri} is set by the factory and must not be included.
+     * opened through tileverse-storage with the given {@code storage.*} properties. {@code storage.uri} is set by the
+     * factory and must not be included.
      */
     public static OpenFile open(String pathOrUri, Properties storageProperties) {
         URI target = toAbsoluteUri(pathOrUri);
@@ -172,7 +171,7 @@ public final class UriResolver {
             return OpenFile.ofLocal(ByteRangeSource.ofFile(path));
         }
         URI container = target.resolve(".");
-        Storage storage = ParquetStorage.open(container, storageProperties);
+        Storage storage = StorageFactory.open(container, storageProperties);
         try {
             RangeReader reader = storage.openRangeReader(target);
             return OpenFile.ofStorage(storage, reader);

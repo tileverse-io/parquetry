@@ -46,7 +46,7 @@ import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
 import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.observe.QueryObserver;
 import io.tileverse.parquetry.observe.RowGroupRead;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -114,7 +114,7 @@ class FilesetDatasetBoundsTest {
             PointParquet.writePointsWithoutGeoMetadata(dir.resolve("points.parquet"), "geometry", POINTS_PER_REGION[i]);
         }
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
             ParquetDataset dataset = onlyDataset(catalog);
 
             Optional<BoundingBox> bounds = dataset.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
@@ -170,7 +170,7 @@ class FilesetDatasetBoundsTest {
                 BoundingBox.builder().xmin(-180).xmax(180).ymin(-5).ymax(5).build();
         CatalogOptions options =
                 CatalogOptions.builder().datasetName("wrapping").build();
-        try (FilesetCatalog catalog = FilesetCatalog.open(LocalFileSource.file(file), options)) {
+        try (FilesetCatalog catalog = FilesetCatalog.open(FileSource.file(file), options)) {
             ParquetDataset dataset = onlyDataset(catalog);
 
             Optional<BoundingBox> bounds = dataset.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
@@ -198,7 +198,7 @@ class FilesetDatasetBoundsTest {
         BoundingBox points =
                 BoundingBox.builder().xmin(30).xmax(40).ymin(10).ymax(20).build();
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
             ParquetDataset dataset = onlyDataset(catalog);
 
             Optional<BoundingBox> bounds = dataset.bounds(emptiesAndPoints, ReadOptions.DEFAULTS);
@@ -226,7 +226,7 @@ class FilesetDatasetBoundsTest {
         BoundingBox bothFiles =
                 BoundingBox.builder().xmin(0).xmax(110).ymin(0).ymax(10).build();
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(data, "*.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(data, "*.parquet"), CatalogOptions.defaults())) {
             ParquetDataset dataset = onlyDataset(catalog);
 
             Optional<BoundingBox> bounds = dataset.bounds(Predicate.ALWAYS_TRUE, observed);
@@ -329,7 +329,7 @@ class FilesetDatasetBoundsTest {
 
     private FilesetCatalog openCatalog() throws Exception {
         writeRegionTree();
-        return FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults());
+        return FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults());
     }
 
     private static ParquetDataset onlyDataset(FilesetCatalog catalog) {

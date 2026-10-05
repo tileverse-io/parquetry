@@ -98,7 +98,7 @@ partition key whose column is absent from the files (a path-only key) is rejecte
 ## Reading a dataset
 
 ```java
-try (FileSource source = LocalFileSource.directory(dir, "*.parquet");
+try (FileSource source = FileSource.directory(dir, "*.parquet");
         FilesetCatalog catalog = FilesetCatalog.open(source, CatalogOptions.defaults())) {
 
     String name = catalog.datasets().get(0);
@@ -109,6 +109,10 @@ try (FileSource source = LocalFileSource.directory(dir, "*.parquet");
     }
 }
 ```
+
+A dataset named by a URI goes through `FileSource.open(uri, "**/*.parquet", storageProperties)`: a local URI is
+listed as above, and any other scheme over a tileverse `Storage` opened and closed by the source.
+`FileSource.openObject(uri, storageProperties)` serves one known file or object without listing.
 
 ## Relationship to the core engine
 

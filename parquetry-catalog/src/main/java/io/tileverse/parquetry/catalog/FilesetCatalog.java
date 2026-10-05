@@ -345,9 +345,8 @@ public final class FilesetCatalog implements DatasetCatalog {
      * Derives a dataset name from the file list or root URI.
      *
      * <p>When the source holds exactly one file, the name is derived from that file's relative path (extension
-     * stripped) rather than the root URI. This is necessary because
-     * {@link io.tileverse.parquetry.io.LocalFileSource#file} sets {@code root} to the parent directory, whose name is
-     * opaque (e.g. a JUnit temp dir), not the file itself.
+     * stripped) rather than the root URI. This is necessary because {@link FileSource#file} sets {@code root} to the
+     * parent directory, whose name is opaque (e.g. a JUnit temp dir), not the file itself.
      *
      * <p>For multi-file sources, the last component of the root URI is used as the dataset name.
      */

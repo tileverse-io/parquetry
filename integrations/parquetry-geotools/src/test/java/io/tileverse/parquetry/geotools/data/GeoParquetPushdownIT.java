@@ -44,7 +44,7 @@ import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.dataset.GeoParquetDataset;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.geotools.parquet.GeoParquetDataStore;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
@@ -55,7 +55,7 @@ class GeoParquetPushdownIT {
     private static CatalogDataStore store(Path dir) {
         Path file = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
         FilesetCatalog catalog = FilesetCatalog.open(
-                LocalFileSource.file(file),
+                FileSource.file(file),
                 CatalogOptions.builder().datasetName("example").build());
         return new GeoParquetDataStore(catalog);
     }
@@ -142,7 +142,7 @@ class GeoParquetPushdownIT {
     void unfilteredBoundsEqualFullExtent(@TempDir Path dir) throws Exception {
         Path file = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
         FilesetCatalog catalog = FilesetCatalog.open(
-                LocalFileSource.file(file),
+                FileSource.file(file),
                 CatalogOptions.builder().datasetName("example").build());
         try (GeoParquetDataStore store = new GeoParquetDataStore(catalog)) {
             BoundingBox declared = declaredPrimaryColumnBbox(catalog);

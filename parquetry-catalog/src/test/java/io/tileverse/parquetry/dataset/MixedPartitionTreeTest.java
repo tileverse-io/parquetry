@@ -39,7 +39,7 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 
@@ -57,7 +57,7 @@ class MixedPartitionTreeTest {
     void schemaExposesBothSyntheticYearAndPhysicalRegion(@TempDir Path root) throws Exception {
         writeMixedTree(root);
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
             ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
 
             assertThat(ds.schema().leafColumns()).contains(YEAR, REGION);
@@ -69,7 +69,7 @@ class MixedPartitionTreeTest {
     void filterOnBothColumnsCountsOnlyMatchingRows(@TempDir Path root) throws Exception {
         writeMixedTree(root);
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
             ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             Predicate year2024West =
                     Pred.and(Pred.col("year").eq(2024L), Pred.col("region").eq("west"));
@@ -82,7 +82,7 @@ class MixedPartitionTreeTest {
     void readProjectsSynthesizedYearAndPhysicalRegionPerRow(@TempDir Path root) throws Exception {
         writeMixedTree(root);
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
             ParquetDataset ds = catalog.dataset(catalog.datasets().get(0));
             Predicate year2024West =
                     Pred.and(Pred.col("year").eq(2024L), Pred.col("region").eq("west"));

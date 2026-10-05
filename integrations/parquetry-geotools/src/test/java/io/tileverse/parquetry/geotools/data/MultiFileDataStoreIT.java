@@ -33,7 +33,7 @@ import org.junit.jupiter.api.io.TempDir;
 import io.tileverse.parquetry.catalog.CatalogOptions;
 import io.tileverse.parquetry.catalog.FilesetCatalog;
 import io.tileverse.parquetry.geotools.parquet.GeoParquetDataStore;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 
 /**
  * End-to-end proof that a directory of same-schema GeoParquet part files reads through the GeoTools DataStore as ONE
@@ -42,7 +42,7 @@ import io.tileverse.parquetry.io.LocalFileSource;
  *
  * <p>Fixtures are written with DuckDB exactly as {@link NestedFixtures} does: a {@code COPY (SELECT ... ST_Point(...)
  * AS geometry ...) TO ... (FORMAT PARQUET)} over a {@code GEOMETRY} column auto-writes the GeoParquet {@code geo}
- * key-value metadata. The store is opened over a directory source via {@link LocalFileSource#directory}, mirroring
+ * key-value metadata. The store is opened over a directory source via {@link FileSource#directory}, mirroring
  * {@code FilesetCatalogTest}.
  */
 class MultiFileDataStoreIT {
@@ -55,7 +55,7 @@ class MultiFileDataStoreIT {
         writeGeoPart(dir.resolve("part-b.parquet"), 20, 30, rowsB);
 
         try (FilesetCatalog catalog = FilesetCatalog.open(
-                        LocalFileSource.directory(dir, "*.parquet"),
+                        FileSource.directory(dir, "*.parquet"),
                         CatalogOptions.builder().datasetName("places").build());
                 CatalogDataStore store = new GeoParquetDataStore(catalog)) {
 
@@ -76,7 +76,7 @@ class MultiFileDataStoreIT {
         writePlainPart(file, 3);
 
         try (FilesetCatalog catalog = FilesetCatalog.open(
-                        LocalFileSource.file(file),
+                        FileSource.file(file),
                         CatalogOptions.builder().datasetName("attributes").build());
                 CatalogDataStore store = new GeoParquetDataStore(catalog)) {
 

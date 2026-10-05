@@ -38,7 +38,7 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
-import io.tileverse.parquetry.io.LocalFileSource;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 
@@ -53,7 +53,7 @@ class FilesetDatasetRepeatedQueryTest {
     void twoSequentialQueriesReturnIdenticalResults(@TempDir Path root) throws Exception {
         writeYearTree(root, 2023, 5, 2024, 3);
         try (FilesetCatalog catalog =
-                FilesetCatalog.open(LocalFileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
+                FilesetCatalog.open(FileSource.directory(root, "**.parquet"), CatalogOptions.defaults())) {
             FilesetDataset dataset =
                     (FilesetDataset) catalog.dataset(catalog.datasets().get(0));
             Predicate onSyntheticColumn = Pred.col("year").eq(2024L);
