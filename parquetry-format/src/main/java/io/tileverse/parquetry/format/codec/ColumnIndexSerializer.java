@@ -30,8 +30,8 @@ final class ColumnIndexSerializer {
 
     static void serialize(CompactProtocolWriter w, ColumnIndex ci) throws IOException {
         w.writeStructBegin();
-        // Boolean list elements: BOOLEAN_TRUE / BOOLEAN_FALSE in the list element-type nibble would be ambiguous,
-        // so the protocol uses the BYTE-encoded standalone form (0x01 / 0x00) via writeBool.
+        // The element-type nibble of a bool list is BOOLEAN_TRUE regardless of its elements; each element follows as
+        // one byte written by writeBool.
         w.writeListField((short) 1, CompactType.BOOLEAN_TRUE, ci.nullPages(), CompactProtocolWriter::writeBool);
         w.writeListField(
                 (short) 2,

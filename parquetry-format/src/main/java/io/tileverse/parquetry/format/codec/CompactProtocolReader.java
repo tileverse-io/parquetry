@@ -103,7 +103,7 @@ final class CompactProtocolReader {
         if (b < 0) {
             throw new EOFException("EOF reading bool");
         }
-        return b == 0x01;
+        return b == CompactType.BOOLEAN_TRUE.code;
     }
 
     /**

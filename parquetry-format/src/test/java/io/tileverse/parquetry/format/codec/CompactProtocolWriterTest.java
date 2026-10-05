@@ -57,15 +57,16 @@ class CompactProtocolWriterTest {
     }
 
     @Test
-    void writesStandaloneBoolAsSingleByte() throws IOException {
-        // Standalone bool (list / set / map element) writes a raw 0x01 / 0x00 byte, paired with readBool().
+    void writesBoolElementAsOneForTrueAndTwoForFalse() throws IOException {
+        // The Thrift Compact Protocol sends a bool element of a list, set or map as one byte: 1 for true and 2 for
+        // false. Strict readers (the Rust thrift crate, for one) reject any other byte.
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         CompactProtocolWriter w = new CompactProtocolWriter(out);
         w.writeBool(true);
         w.writeBool(false);
 
         byte[] bytes = out.toByteArray();
-        assertThat(bytes).containsExactly((byte) 0x01, (byte) 0x00);
+        assertThat(bytes).containsExactly((byte) 0x01, (byte) 0x02);
 
         CompactProtocolReader r = new CompactProtocolReader(new ByteArrayInputStream(bytes));
         assertThat(r.readBool()).isTrue();

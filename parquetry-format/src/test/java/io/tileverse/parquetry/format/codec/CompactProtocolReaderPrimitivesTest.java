@@ -75,4 +75,11 @@ class CompactProtocolReaderPrimitivesTest {
         CompactProtocolReader rFalse = new CompactProtocolReader(new ByteArrayInputStream(new byte[] {0x02}));
         assertThat(rFalse.readBool()).isFalse();
     }
+
+    @Test
+    void readBool_zeroReadsAsFalse() throws Exception {
+        // Writers following an earlier wording of the Thrift specification send false as 0.
+        CompactProtocolReader reader = new CompactProtocolReader(new ByteArrayInputStream(new byte[] {0x00}));
+        assertThat(reader.readBool()).isFalse();
+    }
 }
