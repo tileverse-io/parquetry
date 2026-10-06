@@ -127,6 +127,23 @@ class SpatialBoundsEvaluatorTest {
         assertThat(evaluate(relation, nanMaximum, westOfTheRealBounds)).isInstanceOf(PruningDecision.NotApplied.class);
     }
 
+    /**
+     * A box with an infinite bound, other than the box of a row group holding no geometry with an extent, proves
+     * nothing about its rows either.
+     */
+    @ParameterizedTest
+    @MethodSource("relations")
+    void aBoxWithAnInfiniteBoundOutOfTheEmptyBoxEliminatesNothing(Relation relation) {
+        BoundingBox infiniteMinimum = box(Double.POSITIVE_INFINITY, 20, 10, 20);
+        BoundingBox unbounded = box(
+                Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY);
+        Bbox insideTheRealBounds = Bbox.of2d(12, 12, 15, 15);
+
+        assertThat(evaluate(relation, infiniteMinimum, insideTheRealBounds))
+                .isInstanceOf(PruningDecision.NotApplied.class);
+        assertThat(evaluate(relation, unbounded, insideTheRealBounds)).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
     /** The box of a row group holding no geometry with an extent still eliminates the row group. */
     @ParameterizedTest
     @MethodSource("relations")

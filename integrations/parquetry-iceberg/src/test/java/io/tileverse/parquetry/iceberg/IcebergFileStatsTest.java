@@ -92,6 +92,44 @@ class IcebergFileStatsTest {
         assertColumnBounds(stats);
     }
 
+    /** A box with a NaN bound bounds no known region; the file then reads as one without a geometry box. */
+    @Test
+    void skipsAGeometryBoundHoldingNaN() {
+        IcebergManifests.DataFileRef ref = new IcebergManifests.DataFileRef(
+                "s3://bucket/data/file-0.parquet",
+                42L,
+                1L,
+                null,
+                Map.of(GEOM_FIELD_ID, packedXy(Double.NaN, YMIN)),
+                Map.of(GEOM_FIELD_ID, packedXy(XMAX, YMAX)),
+                Map.of(),
+                Map.of());
+        List<IcebergField> fields = List.of(new IcebergField(GEOM_FIELD_ID, "geom", "geometry", false));
+
+        FileStats stats = IcebergFileStats.from(ref, fields, Map.of());
+
+        assertThat(stats.geometryBounds()).isEmpty();
+    }
+
+    /** A box with an infinite bound proves nothing either, and would otherwise let pruning skip the file. */
+    @Test
+    void skipsAGeometryBoundHoldingAnInfiniteCoordinate() {
+        IcebergManifests.DataFileRef ref = new IcebergManifests.DataFileRef(
+                "s3://bucket/data/file-0.parquet",
+                42L,
+                1L,
+                null,
+                Map.of(GEOM_FIELD_ID, packedXy(Double.POSITIVE_INFINITY, YMIN)),
+                Map.of(GEOM_FIELD_ID, packedXy(XMAX, YMAX)),
+                Map.of(),
+                Map.of());
+        List<IcebergField> fields = List.of(new IcebergField(GEOM_FIELD_ID, "geom", "geometry", false));
+
+        FileStats stats = IcebergFileStats.from(ref, fields, Map.of());
+
+        assertThat(stats.geometryBounds()).isEmpty();
+    }
+
     @Test
     void skipsAMalformedColumnBoundWithoutFailing() {
         IcebergManifests.DataFileRef ref = new IcebergManifests.DataFileRef(

@@ -27,7 +27,8 @@ import io.tileverse.stac.StacItem;
  * Builds a core {@link FileStats} from a STAC item. The item's bbox becomes a geometry bound on the collection's
  * primary geometry column, which lets {@link io.tileverse.parquetry.filter.prune.FilePruner} skip a spatially disjoint
  * part before its footer opens. A STAC item does not declare a record count; the stats report {@code -1}. Mapping is
- * best-effort: an item with a missing or unrecognized bbox contributes no bound and is always a pruning survivor.
+ * best-effort: an item with a missing or unrecognized bbox, or with one proving nothing about its geometries
+ * ({@link BoundingBox#provesNothing()}), contributes no bound and is always a pruning survivor.
  */
 final class StacFileStats {
 
@@ -36,7 +37,7 @@ final class StacFileStats {
     static FileStats from(StacItem item, String geometryColumn) {
         FileStats.Builder builder = FileStats.builder().recordCount(-1L);
         BoundingBox box = boundsOf(item.bbox());
-        if (box != null) {
+        if (box != null && !box.provesNothing()) {
             builder.geometryBounds(ColumnPath.of(geometryColumn), box);
         }
         return builder.build();

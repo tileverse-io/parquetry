@@ -215,6 +215,49 @@ class SpatialBoundsSourceTest {
         assertThat(source.rowGroupBounds(GEOMETRY, 1)).isEmpty();
     }
 
+    /** A native box with an infinite bound out of the box of empty geometries counts as no box too. */
+    @Test
+    void aNativeBoxWithAnInfiniteBoundCountsAsNoBox() {
+        BoundingBox real = bbox(0, 10, 0, 10);
+        BoundingBox infiniteMinimum = bbox(Double.POSITIVE_INFINITY, 10, 0, 10);
+        FileMetaData footer = footer(geometryRowGroupWithNative(infiniteMinimum), geometryRowGroupWithNative(real));
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schemaWithGeometry(), empty());
+
+        assertThat(source.rowGroupBounds(GEOMETRY, 0)).isEmpty();
+        assertThat(source.rowGroupBounds(GEOMETRY, 1)).contains(real);
+        assertThat(source.fileBounds(GEOMETRY)).isEmpty();
+    }
+
+    /** Covering statistics with an infinite bound out of the box of empty rows count as no box too. */
+    @Test
+    void aCoveringBoxWithAnInfiniteBoundCountsAsNoBox() {
+        FileMetaData footer = footer(
+                coveringRowGroup(10.0, Double.POSITIVE_INFINITY, 0.0, 10.0), coveringRowGroup(0.0, 10.0, 0.0, 10.0));
+
+        SpatialBoundsSource source =
+                boundsSourceOf(footer, schemaWithGeometryAndCoveringDoubles(), of(geoWithCoveringAndFileBbox()));
+
+        assertThat(source.rowGroupBounds(GEOMETRY, 0)).isEmpty();
+        assertThat(source.rowGroupBounds(GEOMETRY, 1)).contains(bbox(0, 10, 0, 10));
+        assertThat(source.fileBounds(GEOMETRY)).isEmpty();
+    }
+
+    @Test
+    void aGeoJsonFileBboxProvingNothingCountsAsNoBox() {
+        FileMetaData footer = footer(noStatsRowGroup());
+        GeoColumn column = GeoColumn.builder()
+                .encoding(of("WKB"))
+                .geometryTypes(List.of("Polygon"))
+                .bbox(of(bbox(Double.POSITIVE_INFINITY, 10, -5, 5)))
+                .build();
+        GeoParquetMetadata geo = new GeoParquetMetadata.V1_0("1.0.0", "geometry", Map.of("geometry", column));
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schemaWithGeometry(), of(geo));
+
+        assertThat(source.fileBounds(GEOMETRY)).isEmpty();
+    }
+
     @Test
     void geoJsonFileBboxUsedWhenNeitherNativeNorCoveringPresent() {
         FileMetaData footer = footer(noStatsRowGroup());

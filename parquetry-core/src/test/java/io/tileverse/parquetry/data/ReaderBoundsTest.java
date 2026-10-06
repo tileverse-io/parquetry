@@ -36,6 +36,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.columnar.BinaryVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
+import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Pred;
@@ -247,6 +248,67 @@ class ReaderBoundsTest {
     }
 
     /**
+     * A row group box with an infinite bound, other than the box of empty geometries, proves nothing: a filter reaching
+     * the points of that row group reads them, and the file has no geometry box.
+     */
+    @Test
+    void aRowGroupBoxWithAnInfiniteBoundKeepsItsRows() throws IOException {
+        List<Feature> features = List.of(
+                new Feature(0, 0.0, 0.0),
+                new Feature(1, 1.0, 1.0),
+                new Feature(2, 10.0, 10.0),
+                new Feature(3, 11.0, 11.0));
+        Path written = writeGeometryFixture("infinite-bound.parquet", 2L, features);
+        BoundingBox infiniteMinimum = BoundingBox.builder()
+                .xmin(Double.POSITIVE_INFINITY)
+                .xmax(11)
+                .ymin(10)
+                .ymax(11)
+                .build();
+        Path file = FooterRewrite.rewrite(
+                written,
+                tempDir.resolve("infinite-bound-box.parquet"),
+                FooterRewrite.geospatialBbox("geometry", 1, infiniteMinimum));
+        Predicate nearTheSecondGroup = Pred.col("geometry").bboxIntersects(Bbox.of2d(9, 9, 12, 12));
+        BoundingBox allRows =
+                BoundingBox.builder().xmin(0).xmax(11).ymin(0).ymax(11).build();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+
+            long matching = reader.count(nearTheSecondGroup, ReadOptions.DEFAULTS);
+            Optional<BoundingBox> unfiltered = reader.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
+
+            assertThat(matching).isEqualTo(2L);
+            assertThat(reader.fileStats().geometryBounds()).doesNotContainKey(GEOMETRY);
+            assertSameBox2d(unfiltered.orElseThrow(), allRows);
+        }
+    }
+
+    /**
+     * A coordinate beyond the range of a FLOAT covering leaves an infinite covering statistic. The box of that row
+     * group proves nothing: the bounds read its points.
+     */
+    @Test
+    void aCoveringBoxWithAnInfiniteBoundKeepsItsRowsInTheBounds() throws IOException {
+        double beyondFloat = 1e39;
+        List<Feature> features = List.of(
+                new Feature(0, 0.0, 0.0),
+                new Feature(1, 1.0, 1.0),
+                new Feature(2, 10.0, 10.0),
+                new Feature(3, beyondFloat, 11.0));
+        Path file = writeCoveringFixture("covering-overflow.parquet", 2L, features);
+        BoundingBox allRows =
+                BoundingBox.builder().xmin(0).xmax(beyondFloat).ymin(0).ymax(11).build();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+
+            Optional<BoundingBox> unfiltered = reader.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
+
+            assertSameBox2d(unfiltered.orElseThrow(), allRows);
+        }
+    }
+
+    /**
      * A row group without a box could hold any geometry, leaving the file without a geometry box. Bounds then scan that
      * row group, and file pruning keeps the file for a query reaching only its points.
      */
@@ -419,12 +481,27 @@ class ReaderBoundsTest {
     }
 
     private Path writeGeometryFixture(String name, long rowGroupRows, List<Feature> features) throws IOException {
-        ParquetSchema schema = flatSchema(requiredBinary("geometry"), requiredInt32("id"));
         WriteOptions options = WriteOptions.builder()
                 .tempDir(tempDir)
                 .rowGroupSize(RowGroupSize.rows(rowGroupRows))
                 .crsEpsg("geometry", 4326)
                 .build();
+        return writePoints(name, options, features);
+    }
+
+    /** The same rows with GeoParquet 1.1 metadata alone: a FLOAT bbox covering and no native geometry statistics. */
+    private Path writeCoveringFixture(String name, long rowGroupRows, List<Feature> features) throws IOException {
+        WriteOptions options = WriteOptions.builder()
+                .tempDir(tempDir)
+                .rowGroupSize(RowGroupSize.rows(rowGroupRows))
+                .crsEpsg("geometry", 4326)
+                .geoParquetMetadata(GeoParquetMetadataMode.V1_1_ONLY)
+                .build();
+        return writePoints(name, options, features);
+    }
+
+    private Path writePoints(String name, WriteOptions options, List<Feature> features) throws IOException {
+        ParquetSchema schema = flatSchema(requiredBinary("geometry"), requiredInt32("id"));
         Path file = tempDir.resolve(name);
         try (OutputStream out = Files.newOutputStream(file);
                 ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {

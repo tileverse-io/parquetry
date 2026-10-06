@@ -143,14 +143,15 @@ public final class GeoMetadataAggregator {
     }
 
     /**
-     * The union of the bbox declared for {@code columnName} by each file, or empty as soon as one file declares none. A
-     * declared bbox without an extent ({@link BoundingBox#hasExtent()}) adds nothing to the union.
+     * The union of the bbox declared for {@code columnName} by each file, or empty as soon as one file declares none,
+     * or one proving nothing about its geometries ({@link BoundingBox#provesNothing()}). A declared bbox without an
+     * extent ({@link BoundingBox#hasExtent()}) adds nothing to the union.
      */
     private static Optional<BoundingBox> bboxDeclaredByEachFile(
             String columnName, List<Optional<GeoParquetMetadata>> perFile) {
         Optional<BoundingBox> union = Optional.empty();
         for (Optional<GeoParquetMetadata> file : perFile) {
-            Optional<BoundingBox> declared = declaredBbox(file, columnName);
+            Optional<BoundingBox> declared = declaredBbox(file, columnName).filter(bbox -> !bbox.provesNothing());
             if (declared.isEmpty()) {
                 return Optional.empty();
             }

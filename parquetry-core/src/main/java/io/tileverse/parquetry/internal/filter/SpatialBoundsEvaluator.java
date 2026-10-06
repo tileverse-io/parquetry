@@ -103,7 +103,7 @@ public final class SpatialBoundsEvaluator {
             return false;
         }
         BoundingBox union = rowGroupBox.orElseThrow();
-        if (union.hasNaNBound()) {
+        if (union.provesNothing()) {
             return false;
         }
         Bbox query = spatial.bbox();

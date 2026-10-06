@@ -26,8 +26,8 @@ import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
  * The row-group bounds precomputed by a {@link SpatialBoundsSource}: per geometry column, one slot per row group,
- * holding that row group's box where its bounds are known and {@link Optional#empty()} where they are not. A box with a
- * NaN bound counts as not known.
+ * holding that row group's box where its bounds are known and {@link Optional#empty()} where they are not. A box
+ * proving nothing about its geometries ({@link BoundingBox#provesNothing()}) counts as not known.
  */
 final class PerRowGroupBoxes {
 
