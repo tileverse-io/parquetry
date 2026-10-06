@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.GroupKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
@@ -29,7 +30,8 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * <p>The leaf path is the physical column path, including the synthetic LIST {@code list}/{@code element} and MAP
  * {@code key_value}/{@code key}/{@code value} levels the file stores. The schema tree classifies each segment: a
  * {@code repeated} group opens a repeated boundary at which the record holds a list or map; the values inside it are
- * read element by element and the remaining path is resolved on each element record.
+ * read element by element and the remaining path is resolved on each element record. A list held as an element is read
+ * the same way, to any depth.
  *
  * <p>A single-valued path (no repeated boundary) flattens to the singleton of {@link ParquetRecord#get(ColumnPath)}, or
  * to the empty list when that value is null. An empty, null, or absent repeated ancestor flattens to the empty list.
@@ -105,9 +107,14 @@ final class MultiValues {
             int boundary,
             int[] count) {
         Object container = rec.get(containerPath);
-        if (!(container instanceof List<?> elements)) {
-            return;
+        if (container instanceof List<?> elements) {
+            countElements(elements, repeatedGroup, path, boundary, count);
         }
+    }
+
+    /** Counts the slots of the elements of the list repeated at {@code boundary}. */
+    private static void countElements(
+            List<?> elements, SchemaNode.Group repeatedGroup, ColumnPath path, int boundary, int[] count) {
         int tailFrom = boundary + 2;
         SchemaNode.Group elementGroup = elementGroupOrNull(repeatedGroup);
         for (Object element : elements) {
@@ -127,7 +134,38 @@ final class MultiValues {
             countAll(rec, elementGroup, path, tailFrom, count, withinListElement);
             return;
         }
+        if (isList(elementGroup)) {
+            countInnerList(element, elementGroup, path, tailFrom, count);
+            return;
+        }
+        if (element == null && leafLiesInAList(elementGroup, path, tailFrom)) {
+            return;
+        }
         countNullStructElement(count);
+    }
+
+    /**
+     * Counts the slots of a list held as the element of another list. A null inner list holds no slot, like an empty
+     * one.
+     */
+    private static void countInnerList(
+            Object element, SchemaNode.Group listGroup, ColumnPath path, int tailFrom, int[] count) {
+        SchemaNode.Group repeatedGroup = repeatedGroupOrNull(listGroup, path.part(tailFrom));
+        if (element instanceof List<?> elements && repeatedGroup != null) {
+            countElements(elements, repeatedGroup, path, tailFrom, count);
+        }
+    }
+
+    /**
+     * Whether the leaf lies in a list held by the struct element. A null struct holds no such list and no slot, like a
+     * struct with a null list.
+     */
+    private static boolean leafLiesInAList(SchemaNode.Group elementGroup, ColumnPath path, int tailFrom) {
+        if (elementGroup == null) {
+            return false;
+        }
+        Boundary boundary = firstRepeatedBoundary(elementGroup, path, tailFrom);
+        return boundary != null && !isMapWrapper(boundary.repeatedGroup());
     }
 
     /** A null struct element is a present list slot whose tail leaf has no value: one non-matching member. */
@@ -179,8 +217,8 @@ final class MultiValues {
     /**
      * Descends a LIST boundary: reads the list at {@code containerPath}, then resolves the tail (the path beyond the
      * synthetic {@code list} and {@code element} levels) on each non-null element. An element with no remaining tail is
-     * a primitive list entry collected directly; an element with a tail is a struct record the remaining path resolves
-     * on.
+     * a primitive list entry collected directly; an element with a tail is a struct record, resolving the remaining
+     * path, or an inner list, descended in turn.
      */
     private static void collectFromList(
             ParquetRecord rec,
@@ -190,9 +228,14 @@ final class MultiValues {
             int boundary,
             List<Object> out) {
         Object container = rec.get(containerPath);
-        if (!(container instanceof List<?> elements)) {
-            return;
+        if (container instanceof List<?> elements) {
+            collectElements(elements, repeatedGroup, path, boundary, out);
         }
+    }
+
+    /** Collects the values of the elements of the list repeated at {@code boundary}. */
+    private static void collectElements(
+            List<?> elements, SchemaNode.Group repeatedGroup, ColumnPath path, int boundary, List<Object> out) {
         int tailFrom = boundary + 2;
         SchemaNode.Group elementGroup = elementGroupOrNull(repeatedGroup);
         for (Object element : elements) {
@@ -211,6 +254,19 @@ final class MultiValues {
         }
         if (element instanceof ParquetRecord rec) {
             collect(rec, elementGroup, path, tailFrom, out);
+            return;
+        }
+        if (isList(elementGroup)) {
+            collectInnerList(element, elementGroup, path, tailFrom, out);
+        }
+    }
+
+    /** Collects the values of a list held as the element of another list. */
+    private static void collectInnerList(
+            Object element, SchemaNode.Group listGroup, ColumnPath path, int tailFrom, List<Object> out) {
+        SchemaNode.Group repeatedGroup = repeatedGroupOrNull(listGroup, path.part(tailFrom));
+        if (element instanceof List<?> elements && repeatedGroup != null) {
+            collectElements(elements, repeatedGroup, path, tailFrom, out);
         }
     }
 
@@ -271,6 +327,20 @@ final class MultiValues {
         if (repeatedGroup.children().size() == 1
                 && repeatedGroup.children().get(0) instanceof SchemaNode.Group elementGroup) {
             return elementGroup;
+        }
+        return null;
+    }
+
+    /** Whether the element node of a list is itself a list. */
+    private static boolean isList(SchemaNode.Group elementGroup) {
+        return elementGroup != null && GroupKind.of(elementGroup) == GroupKind.LIST;
+    }
+
+    /** The {@code repeated} group of {@code listGroup} named {@code name}, or {@code null} when it has none. */
+    private static SchemaNode.Group repeatedGroupOrNull(SchemaNode.Group listGroup, String name) {
+        SchemaNode child = childNamed(listGroup, name);
+        if (child instanceof SchemaNode.Group repeatedGroup && child.repetition() == Repetition.REPEATED) {
+            return repeatedGroup;
         }
         return null;
     }
