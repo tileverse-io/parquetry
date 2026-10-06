@@ -24,6 +24,7 @@ import java.util.BitSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.function.BiFunction;
 import java.util.function.IntToLongFunction;
 
 import io.tileverse.parquetry.filter.GeometryFilter;
@@ -40,6 +41,7 @@ import io.tileverse.parquetry.internal.filter.ValueComparison;
 import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
@@ -118,16 +120,117 @@ public final class VectorizedPredicateEvaluator {
 
     private static BitSet quantifiedMask(
             Predicate.Quantified quantified, ParquetRecordBatch batch, int rowCount, BitSet restriction) {
+        Predicate.Quantified lowered = lowerTemporalLiterals(quantified, batch);
         BitSet matches = new BitSet(rowCount);
         int row = (restriction == null) ? 0 : restriction.nextSetBit(0);
         while (row >= 0 && row < rowCount) {
             ParquetRecord rec = batch.materialize(row);
-            if (RecordLevelEvaluator.test(quantified, RecordAccessors.of(rec))) {
+            if (RecordLevelEvaluator.test(lowered, RecordAccessors.of(rec))) {
                 matches.set(row);
             }
             row = (restriction == null) ? row + 1 : restriction.nextSetBit(row + 1);
         }
         return matches;
+    }
+
+    /**
+     * The quantified comparison with its timestamp and time literals lowered to the integers stored by the leaf. The
+     * per-row test compares the elements as materialized, and a timestamp or time leaf materializes its stored
+     * integers.
+     */
+    private static Predicate.Quantified lowerTemporalLiterals(
+            Predicate.Quantified quantified, ParquetRecordBatch batch) {
+        Predicate leaf = lowerTemporalLiterals(quantified.leaf(), batch);
+        return new Predicate.Quantified(quantified.match(), leaf);
+    }
+
+    private static Predicate lowerTemporalLiterals(Predicate leaf, ParquetRecordBatch batch) {
+        return switch (leaf) {
+            case Predicate.And(List<Predicate> children) -> new Predicate.And(lowerEach(children, batch));
+            case Predicate.Or(List<Predicate> children) -> new Predicate.Or(lowerEach(children, batch));
+            case Predicate.Not(Predicate negated) -> new Predicate.Not(lowerTemporalLiterals(negated, batch));
+            case Predicate.Eq(ColumnPath col, Value v) ->
+                loweredComparison(col, ComparisonOperator.EQ, v, Predicate.Eq::new, batch);
+            case Predicate.NotEq(ColumnPath col, Value v) ->
+                loweredComparison(col, ComparisonOperator.NOT_EQ, v, Predicate.NotEq::new, batch);
+            case Predicate.Lt(ColumnPath col, Value v) ->
+                loweredComparison(col, ComparisonOperator.LT, v, Predicate.Lt::new, batch);
+            case Predicate.LtEq(ColumnPath col, Value v) ->
+                loweredComparison(col, ComparisonOperator.LT_EQ, v, Predicate.LtEq::new, batch);
+            case Predicate.Gt(ColumnPath col, Value v) ->
+                loweredComparison(col, ComparisonOperator.GT, v, Predicate.Gt::new, batch);
+            case Predicate.GtEq(ColumnPath col, Value v) ->
+                loweredComparison(col, ComparisonOperator.GT_EQ, v, Predicate.GtEq::new, batch);
+            case Predicate.In(ColumnPath col, List<Value> values) ->
+                new Predicate.In(col, loweredValues(col, values, batch));
+            default -> leaf;
+        };
+    }
+
+    private static List<Predicate> lowerEach(List<Predicate> leaves, ParquetRecordBatch batch) {
+        List<Predicate> lowered = new ArrayList<>(leaves.size());
+        for (Predicate leaf : leaves) {
+            lowered.add(lowerTemporalLiterals(leaf, batch));
+        }
+        return lowered;
+    }
+
+    /**
+     * The comparison of the elements of {@code col} with {@code literal}, over the integers stored by the leaf. A
+     * timestamp beyond the range of the leaf compares the same way with each element, and the comparison becomes a test
+     * holding for each element or for none.
+     */
+    private static Predicate loweredComparison(
+            ColumnPath col,
+            ComparisonOperator op,
+            Value literal,
+            BiFunction<ColumnPath, Value, Predicate> comparison,
+            ParquetRecordBatch batch) {
+        if (!isStoredAsInteger(literal, batch, col)) {
+            return comparison.apply(col, literal);
+        }
+        return switch (storedTemporal(literal, batch, col)) {
+            case StoredTemporal.InRange(long stored) -> comparison.apply(col, new Value.LongVal(stored));
+            case StoredTemporal.OutOfRange(int elementComparison) ->
+                sameForEachElement(col, op.holds(elementComparison));
+        };
+    }
+
+    // The per-row test sees the elements holding a value: IS NOT NULL holds for each of them, and an IN list without
+    // values for none.
+    private static Predicate sameForEachElement(ColumnPath col, boolean holds) {
+        return holds ? new Predicate.IsNotNull(col) : new Predicate.In(col, List.of());
+    }
+
+    /**
+     * The values of an IN list as stored by the leaf, without the timestamps beyond its range: no element holds one.
+     */
+    private static List<Value> loweredValues(ColumnPath col, List<Value> values, ParquetRecordBatch batch) {
+        List<Value> lowered = new ArrayList<>(values.size());
+        for (Value value : values) {
+            if (!isStoredAsInteger(value, batch, col)) {
+                lowered.add(value);
+            } else if (storedTemporal(value, batch, col) instanceof StoredTemporal.InRange(long stored)) {
+                lowered.add(new Value.LongVal(stored));
+            }
+        }
+        return lowered;
+    }
+
+    /** Whether {@code literal} is a timestamp on an INT64 timestamp leaf, or a time of day on an INT64 time leaf. */
+    private static boolean isStoredAsInteger(Value literal, ParquetRecordBatch batch, ColumnPath col) {
+        if (!isInt64Leaf(batch, col)) {
+            return false;
+        }
+        LogicalType leafType = leafLogicalType(batch, col).orElse(null);
+        boolean timestamp = literal instanceof Value.TimestampVal && leafType instanceof LogicalType.Timestamp;
+        boolean time = literal instanceof Value.TimeVal && leafType instanceof LogicalType.Time;
+        return timestamp || time;
+    }
+
+    private static boolean isInt64Leaf(ParquetRecordBatch batch, ColumnPath col) {
+        SchemaNode node = batch.projectedSchema().find(col).orElse(null);
+        return node instanceof SchemaNode.Primitive leaf && leaf.kind() == PrimitiveKind.INT64;
     }
 
     private static BitSet all(int rowCount) {
