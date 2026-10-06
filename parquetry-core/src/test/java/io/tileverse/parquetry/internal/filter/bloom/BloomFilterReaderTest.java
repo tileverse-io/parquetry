@@ -29,6 +29,7 @@ import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.io.ByteRangeSource;
 
@@ -90,6 +91,30 @@ class BloomFilterReaderTest {
                     .hasMessageContaining("Invalid bloom filter length");
             assertThatThrownBy(() -> BloomFilterReader.read(source, 0L, -10))
                     .isInstanceOf(ParquetFormatException.class);
+        }
+    }
+
+    @Test
+    void readRejectsALengthReachingPastTheFile(@TempDir Path tmp) throws IOException {
+        byte[] chunk = synthesizeBloomChunk(1, new long[] {SplitBlockBloomFilter.hashInt32(1)});
+        Path file = writeBytes(tmp.resolve("bloom-short.bin"), chunk);
+        int onePastTheFile = chunk.length + 1;
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            assertThatThrownBy(() -> BloomFilterReader.read(source, 0L, onePastTheFile))
+                    .isInstanceOf(MalformedFileException.class)
+                    .hasMessageContaining("reaches outside the file");
+        }
+    }
+
+    @Test
+    void readWithoutLengthRejectsABitsetReachingPastTheFile(@TempDir Path tmp) throws IOException {
+        // The header declares a bitset of 2 GB, and the file holds that header alone.
+        byte[] header = synthesizeHeader(Integer.MAX_VALUE - 31);
+        Path file = writeBytes(tmp.resolve("bloom-header.bin"), header);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            assertThatThrownBy(() -> BloomFilterReader.readWithoutLength(source, 0L))
+                    .isInstanceOf(MalformedFileException.class)
+                    .hasMessageContaining("reaches outside the file");
         }
     }
 

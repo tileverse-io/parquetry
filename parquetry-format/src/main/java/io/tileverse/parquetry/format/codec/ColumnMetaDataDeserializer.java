@@ -160,7 +160,7 @@ final class ColumnMetaDataDeserializer {
      */
     private static List<Encoding> readEncodingList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
-        List<Encoding> result = new ArrayList<>(lh.size());
+        List<Encoding> result = new ArrayList<>(lh.initialCapacity());
         for (int i = 0; i < lh.size(); i++) {
             Optional<Encoding> encoding = Encoding.fromCode(r.readI32());
             encoding.ifPresent(result::add);
@@ -170,7 +170,7 @@ final class ColumnMetaDataDeserializer {
 
     private static List<String> readStringList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
-        List<String> result = new ArrayList<>(lh.size());
+        List<String> result = new ArrayList<>(lh.initialCapacity());
         for (int i = 0; i < lh.size(); i++) {
             result.add(r.readString());
         }
@@ -179,7 +179,7 @@ final class ColumnMetaDataDeserializer {
 
     private static List<KeyValue> readKeyValueList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
-        List<KeyValue> result = new ArrayList<>(lh.size());
+        List<KeyValue> result = new ArrayList<>(lh.initialCapacity());
         for (int i = 0; i < lh.size(); i++) {
             result.add(KeyValueDeserializer.read(r));
         }
@@ -189,7 +189,7 @@ final class ColumnMetaDataDeserializer {
     /** Reads the chunk's page encoding counts, leaving out the entries counting an encoding unknown to parquetry. */
     private static List<EncodingStats> readEncodingStatsList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
-        List<EncodingStats> result = new ArrayList<>(lh.size());
+        List<EncodingStats> result = new ArrayList<>(lh.initialCapacity());
         for (int i = 0; i < lh.size(); i++) {
             Optional<EncodingStats> stats = EncodingStatsDeserializer.read(r);
             stats.ifPresent(result::add);

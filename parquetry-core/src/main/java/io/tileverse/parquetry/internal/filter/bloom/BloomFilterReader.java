@@ -67,6 +67,7 @@ public final class BloomFilterReader {
         if (length <= 0) {
             throw new MalformedFileException("Invalid bloom filter length: " + length);
         }
+        requireWithinFile(source, offset, length);
         byte[] bytes = new byte[length];
         source.readFully(offset, MemorySegment.ofArray(bytes));
         return decode(ByteBuffer.wrap(bytes));
@@ -97,9 +98,20 @@ public final class BloomFilterReader {
             return new SplitBlockBloomFilter(asReadOnlySegment(bitset));
         }
         long bitsetStart = offset + headerByteLength;
+        requireWithinFile(source, bitsetStart, header.numBytes());
         byte[] bitsetBytes = new byte[header.numBytes()];
         source.readFully(bitsetStart, MemorySegment.ofArray(bitsetBytes));
         return new SplitBlockBloomFilter(asReadOnlySegment(ByteBuffer.wrap(bitsetBytes)));
+    }
+
+    /** Refuses a filter located outside the file before a buffer of its declared length is allocated. */
+    private static void requireWithinFile(ByteRangeSource source, long offset, int length) {
+        long fileSize = source.size();
+        boolean within = offset >= 0 && length >= 0 && length <= fileSize - offset;
+        if (!within) {
+            throw new MalformedFileException("Bloom filter of " + length + " bytes at offset " + offset
+                    + " reaches outside the file of " + fileSize + " bytes");
+        }
     }
 
     /**

@@ -32,7 +32,16 @@ import io.tileverse.parquetry.format.MalformedFileException;
  */
 final class CompactProtocolReader {
 
+    // Names, statistics and most metadata values are shorter; a corrupt length up to it wastes that much at most.
+    private static final int LARGEST_LENGTH_ALLOCATED_UP_FRONT = 64 * 1024;
+
+    // The recursion limit of the Apache Thrift libraries, far above the nesting of the format's own structures.
+    private static final int DEEPEST_SKIPPED_NESTING = 64;
+
     private final InputStream in;
+
+    // The lists, sets and structs entered by the skip of an unknown field and not left yet.
+    private int skippedContainers;
 
     public CompactProtocolReader(InputStream in) {
         this.in = in;
@@ -78,14 +87,14 @@ final class CompactProtocolReader {
      * ensures concurrent readers never trample each other.
      */
     public MemorySegment readBinary() throws IOException {
-        int len = (int) readVarLong();
-        byte[] bytes = readN(len);
+        int length = sizeOf(readVarLong(), "binary length");
+        byte[] bytes = readN(length);
         return MemorySegment.ofArray(bytes).asReadOnly();
     }
 
     public String readString() throws IOException {
-        int len = (int) readVarLong();
-        byte[] bytes = readN(len);
+        int length = sizeOf(readVarLong(), "string length");
+        byte[] bytes = readN(length);
         return new String(bytes, StandardCharsets.UTF_8);
     }
 
@@ -95,6 +104,23 @@ final class CompactProtocolReader {
             throw new EOFException("EOF reading bool");
         }
         return b == 0x01;
+    }
+
+    /**
+     * The length or element count declared by an unsigned varint, malformed beyond the {@code int} range. The value
+     * comes from untrusted bytes, and nothing is allocated for it ahead of the bytes announced by it.
+     */
+    private static int sizeOf(long declared, String sizedItem) {
+        // The varint comes from the caller: reading it here would add a level to the call chain of each byte read,
+        // measured at 2% of the time to decode a footer.
+        if (declared < 0 || declared > Integer.MAX_VALUE) {
+            throw outOfRange(declared, sizedItem);
+        }
+        return (int) declared;
+    }
+
+    private static MalformedFileException outOfRange(long declared, String sizedItem) {
+        return new MalformedFileException(sizedItem + " out of range: " + Long.toUnsignedString(declared));
     }
 
     /** Unsigned varint (used for varint64-encoded raw values and lengths). */
@@ -121,9 +147,14 @@ final class CompactProtocolReader {
         return in.read();
     }
 
+    /**
+     * Reads {@code n} bytes. A length up to {@link #LARGEST_LENGTH_ALLOCATED_UP_FRONT} gets its array at once, and a
+     * longer one an array growing with the bytes read. A length declared beyond the end of the stream fails there,
+     * having allocated no more than that bound ahead of the bytes read.
+     */
     byte[] readN(int n) throws IOException {
-        if (n == 0) {
-            return new byte[0];
+        if (n > LARGEST_LENGTH_ALLOCATED_UP_FRONT) {
+            return readIntoAGrowingArray(n);
         }
         byte[] buf = new byte[n];
         int read = 0;
@@ -135,6 +166,14 @@ final class CompactProtocolReader {
             read += r;
         }
         return buf;
+    }
+
+    private byte[] readIntoAGrowingArray(int n) throws IOException {
+        byte[] bytes = in.readNBytes(n);
+        if (bytes.length < n) {
+            throw new EOFException("EOF, expected " + n + " bytes, got " + bytes.length);
+        }
+        return bytes;
     }
 
     /**
@@ -172,7 +211,19 @@ final class CompactProtocolReader {
      *     {@code 0xf})
      * @param elementType wire type shared by every element in the list / set
      */
-    public record ListHeader(int size, CompactType elementType) {}
+    public record ListHeader(int size, CompactType elementType) {
+
+        // The size is declared ahead of the elements, in possibly corrupt bytes.
+        private static final int LARGEST_INITIAL_CAPACITY = 1024;
+
+        /**
+         * The capacity to give a collection before the elements are read into it: the declared size up to a bound. A
+         * larger list grows with the elements read.
+         */
+        public int initialCapacity() {
+            return Math.min(size, LARGEST_INITIAL_CAPACITY);
+        }
+    }
 
     /**
      * Reads a list (or set) header. The high nibble is the size when it fits in 4 bits (0-14); a value of 0xf means the
@@ -186,7 +237,7 @@ final class CompactProtocolReader {
         int size = (b & 0xf0) >>> 4;
         CompactType elementType = CompactType.of(b & 0x0f);
         if (size == 0x0f) {
-            size = (int) readVarLong();
+            size = sizeOf(readVarLong(), "list size");
         }
         return new ListHeader(size, elementType);
     }
@@ -222,16 +273,55 @@ final class CompactProtocolReader {
             case BYTE -> readN(1);
             case I16, I32, I64 -> readVarLong();
             case DOUBLE -> readN(8);
-            case BINARY -> readBinary();
-            case LIST, SET -> {
-                ListHeader lh = readListHeader();
-                for (int i = 0; i < lh.size(); i++) {
-                    skipField(lh.elementType());
-                }
-            }
-            case STRUCT -> skipStruct();
+            case BINARY -> skipBinary();
+            case LIST, SET -> skipList();
+            case STRUCT -> skipNestedStruct();
             case MAP -> throw new MalformedFileException("MAP not used in parquet.thrift");
             case STOP -> throw new MalformedFileException("unexpected STOP in skipField");
+        }
+    }
+
+    private void skipBinary() throws IOException {
+        int length = sizeOf(readVarLong(), "binary length");
+        in.skipNBytes(length);
+    }
+
+    private void skipList() throws IOException {
+        enterSkippedContainer();
+        ListHeader lh = readListHeader();
+        for (int i = 0; i < lh.size(); i++) {
+            skipElement(lh.elementType());
+        }
+        skippedContainers--;
+    }
+
+    /**
+     * Skips one element of a list or a set. A boolean element takes a byte of its own, unlike a boolean field, held by
+     * its field header.
+     */
+    private void skipElement(CompactType type) throws IOException {
+        if (type == CompactType.BOOLEAN_TRUE || type == CompactType.BOOLEAN_FALSE) {
+            readI8();
+            return;
+        }
+        skipField(type);
+    }
+
+    private void skipNestedStruct() throws IOException {
+        enterSkippedContainer();
+        skipStruct();
+        skippedContainers--;
+    }
+
+    /**
+     * Counts one more list, set or struct entered by a skip, malformed beyond {@link #DEEPEST_SKIPPED_NESTING}. The
+     * nesting comes from untrusted bytes, and a skip descends by recursion.
+     */
+    private void enterSkippedContainer() {
+        skippedContainers++;
+        if (skippedContainers > DEEPEST_SKIPPED_NESTING) {
+            throw new MalformedFileException(
+                    "unknown field nests more than " + DEEPEST_SKIPPED_NESTING + " lists and structs");
         }
     }
 }

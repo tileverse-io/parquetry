@@ -85,7 +85,7 @@ final class ColumnIndexDeserializer {
      */
     private static List<Boolean> readBoolList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
-        List<Boolean> result = new ArrayList<>(lh.size());
+        List<Boolean> result = new ArrayList<>(lh.initialCapacity());
         for (int i = 0; i < lh.size(); i++) {
             result.add(r.readBool());
         }
@@ -94,7 +94,7 @@ final class ColumnIndexDeserializer {
 
     private static List<MemorySegment> readBinaryList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
-        List<MemorySegment> result = new ArrayList<>(lh.size());
+        List<MemorySegment> result = new ArrayList<>(lh.initialCapacity());
         for (int i = 0; i < lh.size(); i++) {
             result.add(r.readBinary());
         }
@@ -103,7 +103,7 @@ final class ColumnIndexDeserializer {
 
     private static List<Long> readLongList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
-        List<Long> result = new ArrayList<>(lh.size());
+        List<Long> result = new ArrayList<>(lh.initialCapacity());
         for (int i = 0; i < lh.size(); i++) {
             result.add(r.readI64());
         }

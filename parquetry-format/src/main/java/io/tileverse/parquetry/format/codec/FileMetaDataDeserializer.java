@@ -89,7 +89,7 @@ final class FileMetaDataDeserializer {
 
     private static List<SchemaElement> readSchemaList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
-        List<SchemaElement> result = new ArrayList<>(lh.size());
+        List<SchemaElement> result = new ArrayList<>(lh.initialCapacity());
         for (int i = 0; i < lh.size(); i++) {
             result.add(SchemaElementDeserializer.read(r));
         }
@@ -98,7 +98,7 @@ final class FileMetaDataDeserializer {
 
     private static List<RowGroup> readRowGroupList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
-        List<RowGroup> result = new ArrayList<>(lh.size());
+        List<RowGroup> result = new ArrayList<>(lh.initialCapacity());
         for (int i = 0; i < lh.size(); i++) {
             result.add(RowGroupDeserializer.read(r));
         }
@@ -107,7 +107,7 @@ final class FileMetaDataDeserializer {
 
     private static List<KeyValue> readKeyValueList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
-        List<KeyValue> result = new ArrayList<>(lh.size());
+        List<KeyValue> result = new ArrayList<>(lh.initialCapacity());
         for (int i = 0; i < lh.size(); i++) {
             result.add(KeyValueDeserializer.read(r));
         }
@@ -116,7 +116,7 @@ final class FileMetaDataDeserializer {
 
     private static List<ColumnOrder> readColumnOrderList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
-        List<ColumnOrder> result = new ArrayList<>(lh.size());
+        List<ColumnOrder> result = new ArrayList<>(lh.initialCapacity());
         for (int i = 0; i < lh.size(); i++) {
             result.add(ColumnOrderDeserializer.read(r));
         }

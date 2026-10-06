@@ -75,7 +75,7 @@ final class RowGroupDeserializer {
 
     private static List<ColumnChunk> readColumnChunkList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
-        List<ColumnChunk> result = new ArrayList<>(lh.size());
+        List<ColumnChunk> result = new ArrayList<>(lh.initialCapacity());
         for (int i = 0; i < lh.size(); i++) {
             result.add(ColumnChunkDeserializer.read(r));
         }
@@ -84,7 +84,7 @@ final class RowGroupDeserializer {
 
     private static List<RowGroup.SortingColumn> readSortingColumnList(CompactProtocolReader r) throws IOException {
         CompactProtocolReader.ListHeader lh = r.readListHeader();
-        List<RowGroup.SortingColumn> result = new ArrayList<>(lh.size());
+        List<RowGroup.SortingColumn> result = new ArrayList<>(lh.initialCapacity());
         for (int i = 0; i < lh.size(); i++) {
             result.add(SortingColumnDeserializer.read(r));
         }
