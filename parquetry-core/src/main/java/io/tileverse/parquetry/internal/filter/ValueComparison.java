@@ -23,6 +23,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.OptionalInt;
 import java.util.UUID;
 
 import io.tileverse.parquetry.filter.Value;
@@ -132,52 +133,78 @@ public final class ValueComparison {
 
     /**
      * Compares the predicate-side value to a decoded bound value (the statistics path: query vs decoded min/max).
-     * Returns negative if {@code query < bound}, zero if equal, positive if {@code query > bound}. Returns 0 for type
-     * mismatches (the caller already had its chance via the schema validator).
+     * Returns negative if {@code query < bound}, zero if equal, positive if {@code query > bound}. Returns 0 for a pair
+     * of types without an order between them; {@link #ordered} tells such a pair apart.
      */
+    public static int compareValues(Value query, Value bound) {
+        return order(query, bound).orElse(0);
+    }
+
+    /**
+     * Whether {@link #compareValues} orders {@code query} against {@code bound}. A literal of the physical type of a
+     * column has no order against a bound decoded to the logical type of the column: an integer against a timestamp or
+     * a time, bytes against a decimal.
+     */
+    public static boolean ordered(Value query, Value bound) {
+        return order(query, bound).isPresent();
+    }
+
+    /** The sign of {@code query - bound}, nothing for a pair of types without an order between them. */
     // S3776: dispatch table; cyclomatic complexity is inherent.
     // S7475: palantirJavaFormat 2.90 cannot parse bare _ in nested record patterns; see memory
     // feedback-palantir-unnamed-pattern.
     @SuppressWarnings({"java:S3776", "java:S7475"})
-    public static int compareValues(Value query, Value bound) {
+    private static OptionalInt order(Value query, Value bound) {
         return switch (query) {
-            case Value.BoolVal(boolean qv) when bound instanceof Value.BoolVal(boolean bv) -> Boolean.compare(qv, bv);
-            case Value.IntVal(int qv) when bound instanceof Value.IntVal(int bv) -> Integer.compare(qv, bv);
-            case Value.LongVal(long qv) when bound instanceof Value.LongVal(long bv) -> Long.compare(qv, bv);
+            case Value.BoolVal(boolean qv)
+            when bound instanceof Value.BoolVal(boolean bv) -> OptionalInt.of(Boolean.compare(qv, bv));
+            case Value.IntVal(int qv)
+            when bound instanceof Value.IntVal(int bv) -> OptionalInt.of(Integer.compare(qv, bv));
+            case Value.LongVal(long qv)
+            when bound instanceof Value.LongVal(long bv) -> OptionalInt.of(Long.compare(qv, bv));
             // Int and long widen to each other for Iceberg's lossless int-to-long promotion.
-            case Value.IntVal(int qv) when bound instanceof Value.LongVal(long bv) -> Long.compare(qv, bv);
-            case Value.LongVal(long qv) when bound instanceof Value.IntVal(int bv) -> Long.compare(qv, bv);
-            case Value.FloatVal(float qv) when bound instanceof Value.FloatVal(float bv) -> compareFloating(qv, bv);
-            case Value.DoubleVal(double qv) when bound instanceof Value.DoubleVal(double bv) -> compareFloating(qv, bv);
-            case Value.DoubleVal(double qv) when bound instanceof Value.FloatVal(float bv) -> compareFloating(qv, bv);
-            case Value.FloatVal(float qv) when bound instanceof Value.DoubleVal(double bv) -> compareFloating(qv, bv);
+            case Value.IntVal(int qv)
+            when bound instanceof Value.LongVal(long bv) -> OptionalInt.of(Long.compare(qv, bv));
+            case Value.LongVal(long qv)
+            when bound instanceof Value.IntVal(int bv) -> OptionalInt.of(Long.compare(qv, bv));
+            case Value.FloatVal(float qv)
+            when bound instanceof Value.FloatVal(float bv) -> OptionalInt.of(compareFloating(qv, bv));
+            case Value.DoubleVal(double qv)
+            when bound instanceof Value.DoubleVal(double bv) -> OptionalInt.of(compareFloating(qv, bv));
+            case Value.DoubleVal(double qv)
+            when bound instanceof Value.FloatVal(float bv) -> OptionalInt.of(compareFloating(qv, bv));
+            case Value.FloatVal(float qv)
+            when bound instanceof Value.DoubleVal(double bv) -> OptionalInt.of(compareFloating(qv, bv));
             case Value.StringVal(String qv)
             when bound instanceof Value.BinaryVal(MemorySegment bv) ->
-                compareBytes(MemorySegment.ofArray(qv.getBytes(StandardCharsets.UTF_8)), bv);
+                OptionalInt.of(compareBytes(MemorySegment.ofArray(qv.getBytes(StandardCharsets.UTF_8)), bv));
             // Same-typed pairs arise when both sides are produced as typed values (the Iceberg manifest-bound
             // path), not the Parquet-statistics path that decodes binary columns to BinaryVal. Unsigned byte
             // ordering keeps these in agreement with Parquet's default binary ColumnOrder and with file statistics.
             case Value.StringVal(String qv)
             when bound instanceof Value.StringVal(String bv) ->
-                compareBytes(
+                OptionalInt.of(compareBytes(
                         MemorySegment.ofArray(qv.getBytes(StandardCharsets.UTF_8)),
-                        MemorySegment.ofArray(bv.getBytes(StandardCharsets.UTF_8)));
+                        MemorySegment.ofArray(bv.getBytes(StandardCharsets.UTF_8))));
             case Value.BinaryVal(MemorySegment qv)
-            when bound instanceof Value.BinaryVal(MemorySegment bv) -> compareBytes(qv, bv);
+            when bound instanceof Value.BinaryVal(MemorySegment bv) -> OptionalInt.of(compareBytes(qv, bv));
             case Value.DateVal(LocalDate qv)
-            when bound instanceof Value.IntVal(int bv) -> Integer.compare((int) qv.toEpochDay(), bv);
-            case Value.DateVal(LocalDate qv) when bound instanceof Value.DateVal(LocalDate bv) -> qv.compareTo(bv);
+            when bound instanceof Value.IntVal(int bv) -> OptionalInt.of(Integer.compare((int) qv.toEpochDay(), bv));
+            case Value.DateVal(LocalDate qv)
+            when bound instanceof Value.DateVal(LocalDate bv) -> OptionalInt.of(qv.compareTo(bv));
             case Value.DecimalVal(BigDecimal qv)
-            when bound instanceof Value.DecimalVal(BigDecimal bv) -> qv.compareTo(bv);
-            case Value.TimeVal(LocalTime qv) when bound instanceof Value.TimeVal(LocalTime bv) -> qv.compareTo(bv);
+            when bound instanceof Value.DecimalVal(BigDecimal bv) -> OptionalInt.of(qv.compareTo(bv));
+            case Value.TimeVal(LocalTime qv)
+            when bound instanceof Value.TimeVal(LocalTime bv) -> OptionalInt.of(qv.compareTo(bv));
             case Value.TimestampVal(LocalDateTime qv, boolean _)
-            when bound instanceof Value.TimestampVal(LocalDateTime bv, boolean _) -> qv.compareTo(bv);
+            when bound instanceof Value.TimestampVal(LocalDateTime bv, boolean _) -> OptionalInt.of(qv.compareTo(bv));
             case Value.UuidVal(UUID qv)
-            when bound instanceof Value.BinaryVal(MemorySegment bv) -> -compareSegmentToUuidValue(bv, qv);
+            when bound instanceof Value.BinaryVal(MemorySegment bv) ->
+                OptionalInt.of(-compareSegmentToUuidValue(bv, qv));
             case Value.UuidVal(UUID qv)
             when bound instanceof Value.UuidVal(UUID bv) ->
-                compareSegmentToUuidValue(UuidConverter.toReadOnlySegment(qv), bv);
-            default -> 0;
+                OptionalInt.of(compareSegmentToUuidValue(UuidConverter.toReadOnlySegment(qv), bv));
+            default -> OptionalInt.empty();
         };
     }
 

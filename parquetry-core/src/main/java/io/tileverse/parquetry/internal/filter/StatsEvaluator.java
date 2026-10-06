@@ -262,7 +262,7 @@ public final class StatsEvaluator {
         if (ValueComparison.isNaN(v)) {
             return evalEqNaN(OP_EQ, col, stats, rowCount);
         }
-        return withNumbers(OP_EQ, col, stats, range -> {
+        return withNumbers(OP_EQ, col, stats, orderedAgainst(col, v, range -> {
             int cmpMin = ValueComparison.compareValues(v, range.min());
             int cmpMax = ValueComparison.compareValues(v, range.max());
             if (cmpMin < 0 || cmpMax > 0) {
@@ -272,7 +272,7 @@ public final class StatsEvaluator {
                 return new PruningDecision.PassedAll(TIER, OP_EQ + col.dot() + ": single distinct value matches");
             }
             return new PruningDecision.Inconclusive(TIER, OP_EQ + col.dot() + ": value within [min, max]");
-        });
+        }));
     }
 
     /**
@@ -312,7 +312,7 @@ public final class StatsEvaluator {
         if (nansOf(stats) == NaNCells.ALL) {
             return evalNotEqOnOnlyNaN(col, v, stats, rowCount);
         }
-        return withRange(col, stats, range -> {
+        return withRange(col, stats, orderedAgainst(col, v, range -> {
             int cmpMin = ValueComparison.compareValues(v, range.min());
             int cmpMax = ValueComparison.compareValues(v, range.max());
             if ((cmpMin < 0 || cmpMax > 0) && canProveAllMatch(range)) {
@@ -324,7 +324,7 @@ public final class StatsEvaluator {
                         TIER, OP_NOT_EQ + col.dot() + ": column is single value equal to operand");
             }
             return new PruningDecision.Inconclusive(TIER, OP_NOT_EQ + col.dot() + ": value within [min, max]");
-        });
+        }));
     }
 
     /**
@@ -340,7 +340,7 @@ public final class StatsEvaluator {
     }
 
     private static PruningDecision evalLt(ColumnPath col, Value v, Optional<ColumnSummary> stats) {
-        return withNumbers(OP_LT, col, stats, range -> {
+        return withNumbers(OP_LT, col, stats, orderedAgainst(col, v, range -> {
             if (ValueComparison.isNaN(v)) {
                 return new PruningDecision.Eliminated(TIER, OP_LT + col.dot() + NOTHING_ORDERED_AGAINST_NAN);
             }
@@ -351,11 +351,11 @@ public final class StatsEvaluator {
                 return new PruningDecision.PassedAll(TIER, OP_LT + col.dot() + ": value > max, no nulls");
             }
             return new PruningDecision.Inconclusive(TIER, OP_LT + col.dot() + ": value within (min, max]");
-        });
+        }));
     }
 
     private static PruningDecision evalLtEq(ColumnPath col, Value v, Optional<ColumnSummary> stats) {
-        return withNumbers(OP_LT_EQ, col, stats, range -> {
+        return withNumbers(OP_LT_EQ, col, stats, orderedAgainst(col, v, range -> {
             if (ValueComparison.isNaN(v)) {
                 return new PruningDecision.Eliminated(TIER, OP_LT_EQ + col.dot() + NOTHING_ORDERED_AGAINST_NAN);
             }
@@ -366,11 +366,11 @@ public final class StatsEvaluator {
                 return new PruningDecision.PassedAll(TIER, OP_LT_EQ + col.dot() + ": value >= max, no nulls");
             }
             return new PruningDecision.Inconclusive(TIER, OP_LT_EQ + col.dot() + ": value within [min, max)");
-        });
+        }));
     }
 
     private static PruningDecision evalGt(ColumnPath col, Value v, Optional<ColumnSummary> stats) {
-        return withNumbers(OP_GT, col, stats, range -> {
+        return withNumbers(OP_GT, col, stats, orderedAgainst(col, v, range -> {
             if (ValueComparison.isNaN(v)) {
                 return new PruningDecision.Eliminated(TIER, OP_GT + col.dot() + NOTHING_ORDERED_AGAINST_NAN);
             }
@@ -381,11 +381,11 @@ public final class StatsEvaluator {
                 return new PruningDecision.PassedAll(TIER, OP_GT + col.dot() + ": value < min, no nulls");
             }
             return new PruningDecision.Inconclusive(TIER, OP_GT + col.dot() + ": value within [min, max)");
-        });
+        }));
     }
 
     private static PruningDecision evalGtEq(ColumnPath col, Value v, Optional<ColumnSummary> stats) {
-        return withNumbers(OP_GT_EQ, col, stats, range -> {
+        return withNumbers(OP_GT_EQ, col, stats, orderedAgainst(col, v, range -> {
             if (ValueComparison.isNaN(v)) {
                 return new PruningDecision.Eliminated(TIER, OP_GT_EQ + col.dot() + NOTHING_ORDERED_AGAINST_NAN);
             }
@@ -396,7 +396,7 @@ public final class StatsEvaluator {
                 return new PruningDecision.PassedAll(TIER, OP_GT_EQ + col.dot() + ": value <= min, no nulls");
             }
             return new PruningDecision.Inconclusive(TIER, OP_GT_EQ + col.dot() + ": value within (min, max]");
-        });
+        }));
     }
 
     /**
@@ -419,6 +419,9 @@ public final class StatsEvaluator {
         }
         return withNumbers(OP_IN, col, stats, range -> {
             for (Value v : numbers) {
+                if (!ValueComparison.ordered(v, range.min())) {
+                    return literalOfAnotherType(col);
+                }
                 int cmpMin = ValueComparison.compareValues(v, range.min());
                 int cmpMax = ValueComparison.compareValues(v, range.max());
                 if (cmpMin >= 0 && cmpMax <= 0) {
@@ -500,6 +503,26 @@ public final class StatsEvaluator {
             return new PruningDecision.Eliminated(TIER, op + col.dot() + ONLY_NAN_CELLS);
         }
         return withRange(col, stats, f);
+    }
+
+    /**
+     * Decides a comparison with {@code literal} from the column's range, unless the bounds are of another type than the
+     * literal. A literal of the physical type of the column has no order against bounds decoded to its logical type,
+     * such as an integer against a timestamp. The tier then leaves the comparison to the scan, and the scan compares
+     * the literal with the stored cells.
+     */
+    private static Function<DecodedRange, PruningDecision> orderedAgainst(
+            ColumnPath col, Value literal, Function<DecodedRange, PruningDecision> decision) {
+        return range -> {
+            if (!ValueComparison.ordered(literal, range.min())) {
+                return literalOfAnotherType(col);
+            }
+            return decision.apply(range);
+        };
+    }
+
+    private static PruningDecision literalOfAnotherType(ColumnPath col) {
+        return new PruningDecision.NotApplied(TIER, "literal of another type than the bounds of " + col.dot());
     }
 
     /**

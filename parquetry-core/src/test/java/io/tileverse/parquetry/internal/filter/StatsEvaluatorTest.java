@@ -31,8 +31,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
@@ -644,6 +648,43 @@ class StatsEvaluatorTest {
         Predicate p = new Predicate.Eq(ColumnPath.of("ts"), new Value.TimestampVal(t0.minusDays(1), true));
         PruningDecision d = StatsEvaluator.evaluate(p, cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("comparisonsOfATimestampColumnWithAnInteger")
+    void integerLiteralOnATimestampColumnIsLeftToTheScan(String name, Predicate predicate) {
+        // The bounds decode to timestamps, while the scan compares the literal with the stored integers.
+        LocalDateTime onlyInstant = LocalDateTime.of(2020, 1, 1, 0, 0, 0);
+        FilterPipeline.ColumnStatsLookup cols = singleTimestamp("ts", onlyInstant, onlyInstant);
+
+        PruningDecision d = StatsEvaluator.evaluate(predicate, cols, ROW_COUNT);
+
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    static Stream<Arguments> comparisonsOfATimestampColumnWithAnInteger() {
+        ColumnPath ts = ColumnPath.of("ts");
+        Value five = new Value.LongVal(5L);
+        return Stream.of(
+                Arguments.of("Eq", new Predicate.Eq(ts, five)),
+                Arguments.of("NotEq", new Predicate.NotEq(ts, five)),
+                Arguments.of("Lt", new Predicate.Lt(ts, five)),
+                Arguments.of("LtEq", new Predicate.LtEq(ts, five)),
+                Arguments.of("Gt", new Predicate.Gt(ts, five)),
+                Arguments.of("GtEq", new Predicate.GtEq(ts, five)),
+                Arguments.of("In", new Predicate.In(ts, List.of(five))));
+    }
+
+    @Test
+    void bytesLiteralOnAFixedLengthDecimalColumnIsLeftToTheScan() {
+        // The bounds decode to decimals, while the scan compares the literal with the stored bytes.
+        FilterPipeline.ColumnStatsLookup cols = singleDecimal("amount", 100, 100, 2);
+        Value bytes = new Value.BinaryVal(MemorySegment.ofArray(new byte[] {0, 0, 0, 100}));
+        Predicate differs = new Predicate.NotEq(ColumnPath.of("amount"), bytes);
+
+        PruningDecision d = StatsEvaluator.evaluate(differs, cols, ROW_COUNT);
+
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
     }
 
     @Test
