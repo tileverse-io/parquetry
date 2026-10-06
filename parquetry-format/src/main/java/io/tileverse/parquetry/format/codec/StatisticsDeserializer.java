@@ -34,6 +34,7 @@ import io.tileverse.parquetry.format.Statistics;
  *   6: optional binary min_value
  *   7: optional bool is_max_value_exact
  *   8: optional bool is_min_value_exact
+ *   9: optional i64 nan_count
  * }
  * </pre>
  */
@@ -50,6 +51,7 @@ final class StatisticsDeserializer {
         MemorySegment minValue = MemorySegment.NULL;
         boolean isMaxValueExact = false;
         boolean isMinValueExact = false;
+        OptionalLong nanCount = OptionalLong.empty();
         int lastFieldId = 0;
         while (true) {
             FieldHeader fh = r.readFieldHeader(lastFieldId);
@@ -66,9 +68,11 @@ final class StatisticsDeserializer {
                 case 6 -> minValue = r.readBinary();
                 case 7 -> isMaxValueExact = fh.type() == CompactType.BOOLEAN_TRUE;
                 case 8 -> isMinValueExact = fh.type() == CompactType.BOOLEAN_TRUE;
+                case 9 -> nanCount = OptionalLong.of(r.readI64());
                 default -> r.skipField(fh.type());
             }
         }
-        return new Statistics(max, min, nullCount, distinctCount, maxValue, minValue, isMaxValueExact, isMinValueExact);
+        return new Statistics(
+                max, min, nullCount, distinctCount, maxValue, minValue, isMaxValueExact, isMinValueExact, nanCount);
     }
 }

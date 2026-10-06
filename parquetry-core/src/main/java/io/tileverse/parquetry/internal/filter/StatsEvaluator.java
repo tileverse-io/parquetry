@@ -32,13 +32,13 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
- * Tier-1 (STATS) evaluator. Inspects a row group's per-column statistics (min, max, null count) to decide whether the
- * row group can be eliminated, kept whole, or left for downstream tiers to refine.
+ * Tier-1 (STATS) evaluator. Inspects a row group's per-column statistics (min, max, null count, NaN count) to decide
+ * whether the row group can be eliminated, kept whole, or left for downstream tiers to refine.
  *
  * <p>The evaluator assumes the predicate has already been run through {@code PredicateNormalizer}: {@code Not} is
  * pushed to leaves, {@code Always} is folded, and nested {@code And}/{@code Or} are flattened. It only ever returns
  * {@link PruningDecision.Eliminated}, {@link PruningDecision.PassedAll}, {@link PruningDecision.Inconclusive} (the
- * value fell within the column's min/max), or {@link PruningDecision.NotApplied} (no statistics to consult) - the stats
+ * statistics leave some rows undecided), or {@link PruningDecision.NotApplied} (no statistics to consult) - the stats
  * tier cannot narrow to a subset of rows.
  */
 public final class StatsEvaluator {
@@ -56,16 +56,29 @@ public final class StatsEvaluator {
     private static final String OP_IS_NOT_NULL = "IsNotNull ";
     private static final String NAN_CELLS_OUTSIDE_BOUNDS = ": NaN cells lie outside [min, max]";
     private static final String NOTHING_ORDERED_AGAINST_NAN = ": no value is ordered against NaN";
+    private static final String NO_NAN_CELL = ": no cell is NaN";
+    private static final String EMPTY_LIST = ": no value listed";
+    private static final String ONLY_NAN_CELLS = ": the non-null cells are NaN";
 
     private StatsEvaluator() {}
 
-    /** A typed view of one column's statistics: kind plus already-decoded min/max and null count. */
-    public record ColumnSummary(PrimitiveKind kind, Optional<Value> min, Optional<Value> max, OptionalLong nullCount) {
+    /**
+     * A typed view of one column's statistics: kind plus already-decoded min/max, null count, and what is known of its
+     * NaN cells.
+     */
+    public record ColumnSummary(
+            PrimitiveKind kind, Optional<Value> min, Optional<Value> max, OptionalLong nullCount, NaNCells nans) {
         public ColumnSummary {
             Objects.requireNonNull(kind, "kind");
             Objects.requireNonNull(min, "min");
             Objects.requireNonNull(max, "max");
             Objects.requireNonNull(nullCount, "nullCount");
+            Objects.requireNonNull(nans, "nans");
+        }
+
+        /** A summary telling nothing about NaN cells. */
+        public ColumnSummary(PrimitiveKind kind, Optional<Value> min, Optional<Value> max, OptionalLong nullCount) {
+            this(kind, min, max, nullCount, NaNCells.POSSIBLE);
         }
     }
 
@@ -79,7 +92,7 @@ public final class StatsEvaluator {
      * Evaluates {@code predicate} against already-decoded typed column statistics.
      *
      * @param predicate the normalized predicate
-     * @param columns lookup from column path to its typed stats (kind + decoded min/max + nullCount)
+     * @param columns lookup from column path to its typed stats (kind, decoded min/max, null count, NaN cells)
      * @param rowCount total rows in the row group
      */
     public static PruningDecision evaluate(Predicate predicate, TypedColumns columns, long rowCount) {
@@ -91,15 +104,15 @@ public final class StatsEvaluator {
             case Predicate.And(List<Predicate> children) -> evaluateAnd(children, columns, rowCount);
             case Predicate.Or(List<Predicate> children) -> evaluateOr(children, columns, rowCount);
             case Predicate.Not(Predicate child) -> evaluateNotLeaf(child, columns, rowCount);
-            case Predicate.Eq(ColumnPath col, Value v) -> evalEq(col, v, columns, rowCount);
-            case Predicate.NotEq(ColumnPath col, Value v) -> evalNotEq(col, v, columns, rowCount);
-            case Predicate.Lt(ColumnPath col, Value v) -> evalLt(col, v, columns);
-            case Predicate.LtEq(ColumnPath col, Value v) -> evalLtEq(col, v, columns);
-            case Predicate.Gt(ColumnPath col, Value v) -> evalGt(col, v, columns);
-            case Predicate.GtEq(ColumnPath col, Value v) -> evalGtEq(col, v, columns);
-            case Predicate.In(ColumnPath col, List<Value> values) -> evalIn(col, values, columns);
-            case Predicate.IsNull(ColumnPath col) -> evalIsNull(col, columns, rowCount);
-            case Predicate.IsNotNull(ColumnPath col) -> evalIsNotNull(col, columns, rowCount);
+            case Predicate.Eq(ColumnPath col, Value v) -> evalEq(col, v, columns.get(col), rowCount);
+            case Predicate.NotEq(ColumnPath col, Value v) -> evalNotEq(col, v, columns.get(col), rowCount);
+            case Predicate.Lt(ColumnPath col, Value v) -> evalLt(col, v, columns.get(col));
+            case Predicate.LtEq(ColumnPath col, Value v) -> evalLtEq(col, v, columns.get(col));
+            case Predicate.Gt(ColumnPath col, Value v) -> evalGt(col, v, columns.get(col));
+            case Predicate.GtEq(ColumnPath col, Value v) -> evalGtEq(col, v, columns.get(col));
+            case Predicate.In(ColumnPath col, List<Value> values) -> evalIn(col, values, columns.get(col), rowCount);
+            case Predicate.IsNull(ColumnPath col) -> evalIsNull(col, columns.get(col), rowCount);
+            case Predicate.IsNotNull(ColumnPath col) -> evalIsNotNull(col, columns.get(col), rowCount);
             case Predicate.Spatial _ ->
                 new PruningDecision.NotApplied(TIER, "spatial predicate handled by the bounds source");
             case Predicate.GeometryFilterPredicate _ ->
@@ -128,25 +141,54 @@ public final class StatsEvaluator {
         return path -> columns.get(path).map(StatsEvaluator::summarize);
     }
 
-    /** Decodes one column's PLAIN-encoded min/max statistic bytes into a typed {@link ColumnSummary}. */
+    /**
+     * Decodes one column's PLAIN-encoded min/max statistic bytes into a typed {@link ColumnSummary}. A minimum above
+     * its maximum leaves both out; see {@link ValueComparison#inverted}.
+     */
     public static ColumnSummary summarize(FilterPipeline.ColumnStats cs) {
         PrimitiveKind kind = cs.kind();
         Optional<LogicalType> logicalType = cs.logicalType();
-        Optional<Value> min = decodeBound(kind, logicalType, cs.minValue());
-        Optional<Value> max = decodeBound(kind, logicalType, cs.maxValue());
-        return new ColumnSummary(kind, min, max, cs.nullCount());
+        Optional<Value> decodedMin = decode(kind, logicalType, cs.minValue());
+        Optional<Value> decodedMax = decode(kind, logicalType, cs.maxValue());
+        NaNCells nans = nanCells(cs, decodedMin, decodedMax);
+        Optional<Value> min = usable(decodedMin);
+        Optional<Value> max = usable(decodedMax);
+        if (inverted(min, max)) {
+            return new ColumnSummary(kind, Optional.empty(), Optional.empty(), cs.nullCount(), nans);
+        }
+        return new ColumnSummary(kind, min, max, cs.nullCount(), nans);
     }
 
     /**
-     * A bound not recorded by the writer, one that the decoder cannot type, or a NaN leaves that end of the range open.
+     * What the NaN count recorded for the chunk tells, checked against its bounds. The count is read for FLOAT and
+     * DOUBLE columns alone: the cells of a FLOAT16 column compare as bytes, and a byte literal matches a NaN cell.
      */
-    private static Optional<Value> decodeBound(
-            PrimitiveKind kind, Optional<LogicalType> logicalType, Optional<MemorySegment> bound) {
-        Optional<Value> decoded = bound.flatMap(bytes -> StatisticsValueDecoder.decode(kind, logicalType, bytes));
-        return usable(decoded);
+    private static NaNCells nanCells(FilterPipeline.ColumnStats cs, Optional<Value> min, Optional<Value> max) {
+        if (!comparesAsNumbers(cs.kind())) {
+            return NaNCells.POSSIBLE;
+        }
+        return cs.nans().checkedAgainst(min, max);
     }
 
-    /** A NaN bound orders nothing: the format asks a reader to ignore it, and NaN cells stay out of min/max. */
+    /** Whether {@code kind} is FLOAT or DOUBLE: the cells of such a column compare as numbers, and may be NaN. */
+    private static boolean comparesAsNumbers(PrimitiveKind kind) {
+        return kind == PrimitiveKind.FLOAT || kind == PrimitiveKind.DOUBLE;
+    }
+
+    private static boolean inverted(Optional<Value> min, Optional<Value> max) {
+        if (min.isEmpty() || max.isEmpty()) {
+            return false;
+        }
+        return ValueComparison.inverted(min.orElseThrow(), max.orElseThrow());
+    }
+
+    /** A bound not recorded by the writer, or of a type unknown to the decoder, decodes to nothing. */
+    private static Optional<Value> decode(
+            PrimitiveKind kind, Optional<LogicalType> logicalType, Optional<MemorySegment> bound) {
+        return bound.flatMap(bytes -> StatisticsValueDecoder.decode(kind, logicalType, bytes));
+    }
+
+    /** A NaN bound orders no number and leaves its end of the range open. */
     private static Optional<Value> usable(Optional<Value> bound) {
         return bound.filter(value -> !ValueComparison.isNaN(value));
     }
@@ -221,32 +263,68 @@ public final class StatsEvaluator {
         };
     }
 
-    private static PruningDecision evalEq(ColumnPath col, Value v, TypedColumns cols, long rowCount) {
-        return withRange(col, cols, range -> {
-            if (ValueComparison.isNaN(v)) {
-                return new PruningDecision.Inconclusive(TIER, OP_EQ + col.dot() + NAN_CELLS_OUTSIDE_BOUNDS);
-            }
+    private static PruningDecision evalEq(ColumnPath col, Value v, Optional<ColumnSummary> stats, long rowCount) {
+        if (ValueComparison.isNaN(v)) {
+            return evalEqNaN(OP_EQ, col, stats, rowCount);
+        }
+        return withNumbers(OP_EQ, col, stats, range -> {
             int cmpMin = ValueComparison.compareValues(v, range.min());
             int cmpMax = ValueComparison.compareValues(v, range.max());
             if (cmpMin < 0 || cmpMax > 0) {
                 return new PruningDecision.Eliminated(TIER, OP_EQ + col.dot() + ": value outside [min, max]");
             }
-            if (cmpMin == 0 && cmpMax == 0 && rowCount > 0 && canProveAllMatch(range.kind(), range.nullCount())) {
+            if (cmpMin == 0 && cmpMax == 0 && rowCount > 0 && canProveAllMatch(range)) {
                 return new PruningDecision.PassedAll(TIER, OP_EQ + col.dot() + ": single distinct value matches");
             }
             return new PruningDecision.Inconclusive(TIER, OP_EQ + col.dot() + ": value within [min, max]");
         });
     }
 
-    private static PruningDecision evalNotEq(ColumnPath col, Value v, TypedColumns cols, long rowCount) {
-        return withRange(col, cols, range -> {
+    /**
+     * Decides a NaN literal matched by the NaN cells alone, as in {@code Eq} and {@code In}. The bounds tell nothing
+     * about those cells; the NaN count of the chunk does.
+     */
+    private static PruningDecision evalEqNaN(String op, ColumnPath col, Optional<ColumnSummary> stats, long rowCount) {
+        return switch (nansOf(stats)) {
+            case ABSENT -> new PruningDecision.Eliminated(TIER, op + col.dot() + NO_NAN_CELL);
+            case ALL -> onlyNaNCellsMatch(op, col, stats, rowCount);
+            case POSSIBLE -> undecidedForNaNLiteral(op, col, stats);
+        };
+    }
+
+    /**
+     * NaN cells lie outside the bounds, and a chunk with possible NaN cells stays undecided for a NaN literal. A chunk
+     * without bounds reports the tier as not applied, as for the other comparisons.
+     */
+    private static PruningDecision undecidedForNaNLiteral(String op, ColumnPath col, Optional<ColumnSummary> stats) {
+        Function<DecodedRange, PruningDecision> undecided =
+                range -> new PruningDecision.Inconclusive(TIER, op + col.dot() + NAN_CELLS_OUTSIDE_BOUNDS);
+        return withRange(col, stats, undecided);
+    }
+
+    /** A predicate matched by NaN cells passes a row group holding nothing else: no number, and no null. */
+    private static PruningDecision onlyNaNCellsMatch(
+            String op, ColumnPath col, Optional<ColumnSummary> stats, long rowCount) {
+        OptionalLong nullCount = nullCountOf(stats);
+        boolean noNulls = nullCount.isPresent() && nullCount.getAsLong() == 0;
+        if (noNulls && rowCount > 0) {
+            return new PruningDecision.PassedAll(TIER, op + col.dot() + ONLY_NAN_CELLS + ", no nulls");
+        }
+        return new PruningDecision.Inconclusive(TIER, op + col.dot() + ONLY_NAN_CELLS);
+    }
+
+    private static PruningDecision evalNotEq(ColumnPath col, Value v, Optional<ColumnSummary> stats, long rowCount) {
+        if (nansOf(stats) == NaNCells.ALL) {
+            return evalNotEqOnOnlyNaN(col, v, stats, rowCount);
+        }
+        return withRange(col, stats, range -> {
             int cmpMin = ValueComparison.compareValues(v, range.min());
             int cmpMax = ValueComparison.compareValues(v, range.max());
-            if ((cmpMin < 0 || cmpMax > 0) && canProveAllMatch(range.kind(), range.nullCount())) {
+            if ((cmpMin < 0 || cmpMax > 0) && canProveAllMatch(range)) {
                 return new PruningDecision.PassedAll(
                         TIER, OP_NOT_EQ + col.dot() + ": value outside [min, max], no nulls");
             }
-            if (cmpMin == 0 && cmpMax == 0 && range.nullCount() == 0 && rowCount > 0 && !mayHoldNaN(range.kind())) {
+            if (cmpMin == 0 && cmpMax == 0 && range.nullCount() == 0 && rowCount > 0 && !mayHoldNaN(range)) {
                 return new PruningDecision.Eliminated(
                         TIER, OP_NOT_EQ + col.dot() + ": column is single value equal to operand");
             }
@@ -254,76 +332,98 @@ public final class StatsEvaluator {
         });
     }
 
-    private static PruningDecision evalLt(ColumnPath col, Value v, TypedColumns cols) {
-        return withRange(col, cols, range -> {
+    /**
+     * On a chunk holding only NaN, {@code NotEq} with a number matches each non-null cell and {@code NotEq(NaN)}
+     * matches none.
+     */
+    private static PruningDecision evalNotEqOnOnlyNaN(
+            ColumnPath col, Value v, Optional<ColumnSummary> stats, long rowCount) {
+        if (ValueComparison.isNaN(v)) {
+            return new PruningDecision.Eliminated(TIER, OP_NOT_EQ + col.dot() + ONLY_NAN_CELLS);
+        }
+        return onlyNaNCellsMatch(OP_NOT_EQ, col, stats, rowCount);
+    }
+
+    private static PruningDecision evalLt(ColumnPath col, Value v, Optional<ColumnSummary> stats) {
+        return withNumbers(OP_LT, col, stats, range -> {
             if (ValueComparison.isNaN(v)) {
                 return new PruningDecision.Eliminated(TIER, OP_LT + col.dot() + NOTHING_ORDERED_AGAINST_NAN);
             }
             if (ValueComparison.compareValues(v, range.min()) <= 0) {
                 return new PruningDecision.Eliminated(TIER, OP_LT + col.dot() + ": value <= min");
             }
-            if (ValueComparison.compareValues(v, range.max()) > 0
-                    && canProveAllMatch(range.kind(), range.nullCount())) {
+            if (ValueComparison.compareValues(v, range.max()) > 0 && canProveAllMatch(range)) {
                 return new PruningDecision.PassedAll(TIER, OP_LT + col.dot() + ": value > max, no nulls");
             }
             return new PruningDecision.Inconclusive(TIER, OP_LT + col.dot() + ": value within (min, max]");
         });
     }
 
-    private static PruningDecision evalLtEq(ColumnPath col, Value v, TypedColumns cols) {
-        return withRange(col, cols, range -> {
+    private static PruningDecision evalLtEq(ColumnPath col, Value v, Optional<ColumnSummary> stats) {
+        return withNumbers(OP_LT_EQ, col, stats, range -> {
             if (ValueComparison.isNaN(v)) {
                 return new PruningDecision.Eliminated(TIER, OP_LT_EQ + col.dot() + NOTHING_ORDERED_AGAINST_NAN);
             }
             if (ValueComparison.compareValues(v, range.min()) < 0) {
                 return new PruningDecision.Eliminated(TIER, OP_LT_EQ + col.dot() + ": value < min");
             }
-            if (ValueComparison.compareValues(v, range.max()) >= 0
-                    && canProveAllMatch(range.kind(), range.nullCount())) {
+            if (ValueComparison.compareValues(v, range.max()) >= 0 && canProveAllMatch(range)) {
                 return new PruningDecision.PassedAll(TIER, OP_LT_EQ + col.dot() + ": value >= max, no nulls");
             }
             return new PruningDecision.Inconclusive(TIER, OP_LT_EQ + col.dot() + ": value within [min, max)");
         });
     }
 
-    private static PruningDecision evalGt(ColumnPath col, Value v, TypedColumns cols) {
-        return withRange(col, cols, range -> {
+    private static PruningDecision evalGt(ColumnPath col, Value v, Optional<ColumnSummary> stats) {
+        return withNumbers(OP_GT, col, stats, range -> {
             if (ValueComparison.isNaN(v)) {
                 return new PruningDecision.Eliminated(TIER, OP_GT + col.dot() + NOTHING_ORDERED_AGAINST_NAN);
             }
             if (ValueComparison.compareValues(v, range.max()) >= 0) {
                 return new PruningDecision.Eliminated(TIER, OP_GT + col.dot() + ": value >= max");
             }
-            if (ValueComparison.compareValues(v, range.min()) < 0
-                    && canProveAllMatch(range.kind(), range.nullCount())) {
+            if (ValueComparison.compareValues(v, range.min()) < 0 && canProveAllMatch(range)) {
                 return new PruningDecision.PassedAll(TIER, OP_GT + col.dot() + ": value < min, no nulls");
             }
             return new PruningDecision.Inconclusive(TIER, OP_GT + col.dot() + ": value within [min, max)");
         });
     }
 
-    private static PruningDecision evalGtEq(ColumnPath col, Value v, TypedColumns cols) {
-        return withRange(col, cols, range -> {
+    private static PruningDecision evalGtEq(ColumnPath col, Value v, Optional<ColumnSummary> stats) {
+        return withNumbers(OP_GT_EQ, col, stats, range -> {
             if (ValueComparison.isNaN(v)) {
                 return new PruningDecision.Eliminated(TIER, OP_GT_EQ + col.dot() + NOTHING_ORDERED_AGAINST_NAN);
             }
             if (ValueComparison.compareValues(v, range.max()) > 0) {
                 return new PruningDecision.Eliminated(TIER, OP_GT_EQ + col.dot() + ": value > max");
             }
-            if (ValueComparison.compareValues(v, range.min()) <= 0
-                    && canProveAllMatch(range.kind(), range.nullCount())) {
+            if (ValueComparison.compareValues(v, range.min()) <= 0 && canProveAllMatch(range)) {
                 return new PruningDecision.PassedAll(TIER, OP_GT_EQ + col.dot() + ": value <= min, no nulls");
             }
             return new PruningDecision.Inconclusive(TIER, OP_GT_EQ + col.dot() + ": value within (min, max]");
         });
     }
 
-    private static PruningDecision evalIn(ColumnPath col, List<Value> values, TypedColumns cols) {
-        return withRange(col, cols, range -> {
-            if (values.stream().anyMatch(ValueComparison::isNaN)) {
-                return new PruningDecision.Inconclusive(TIER, OP_IN + col.dot() + NAN_CELLS_OUTSIDE_BOUNDS);
-            }
-            for (Value v : values) {
+    /**
+     * Decides the NaN literals of the list from what is known of the NaN cells, and its numbers from the bounds. A NaN
+     * literal keeps a row group with possible NaN cells regardless of its bounds.
+     */
+    private static PruningDecision evalIn(
+            ColumnPath col, List<Value> values, Optional<ColumnSummary> stats, long rowCount) {
+        if (values.isEmpty()) {
+            return new PruningDecision.Eliminated(TIER, OP_IN + col.dot() + EMPTY_LIST);
+        }
+        boolean namesNaN = values.stream().anyMatch(ValueComparison::isNaN);
+        if (namesNaN && nansOf(stats) != NaNCells.ABSENT) {
+            return evalEqNaN(OP_IN, col, stats, rowCount);
+        }
+        List<Value> numbers =
+                values.stream().filter(value -> !ValueComparison.isNaN(value)).toList();
+        if (numbers.isEmpty()) {
+            return new PruningDecision.Eliminated(TIER, OP_IN + col.dot() + NO_NAN_CELL);
+        }
+        return withNumbers(OP_IN, col, stats, range -> {
+            for (Value v : numbers) {
                 int cmpMin = ValueComparison.compareValues(v, range.min());
                 int cmpMax = ValueComparison.compareValues(v, range.max());
                 if (cmpMin >= 0 && cmpMax <= 0) {
@@ -335,8 +435,8 @@ public final class StatsEvaluator {
         });
     }
 
-    private static PruningDecision evalIsNull(ColumnPath col, TypedColumns cols, long rowCount) {
-        OptionalLong nullCountOpt = lookupNullCount(col, cols);
+    private static PruningDecision evalIsNull(ColumnPath col, Optional<ColumnSummary> stats, long rowCount) {
+        OptionalLong nullCountOpt = nullCountOf(stats);
         if (nullCountOpt.isEmpty()) {
             return new PruningDecision.NotApplied(TIER, OP_IS_NULL + col.dot() + ": nullCount missing");
         }
@@ -350,8 +450,8 @@ public final class StatsEvaluator {
         return new PruningDecision.Inconclusive(TIER, OP_IS_NULL + col.dot() + ": some nulls");
     }
 
-    private static PruningDecision evalIsNotNull(ColumnPath col, TypedColumns cols, long rowCount) {
-        OptionalLong nullCountOpt = lookupNullCount(col, cols);
+    private static PruningDecision evalIsNotNull(ColumnPath col, Optional<ColumnSummary> stats, long rowCount) {
+        OptionalLong nullCountOpt = nullCountOf(stats);
         if (nullCountOpt.isEmpty()) {
             return new PruningDecision.NotApplied(TIER, OP_IS_NOT_NULL + col.dot() + ": nullCount missing");
         }
@@ -366,26 +466,45 @@ public final class StatsEvaluator {
     }
 
     /**
-     * A min/max comparison can prove all-match only for exactly-bounded primitive kinds with no nulls. FLOAT/DOUBLE
-     * (NaN cells lie outside min/max) and binary (possibly truncated stats) are excluded; INT96 has no stats path.
+     * A min/max comparison can prove all-match only when the bounds cover the cells of a column without nulls. Binary
+     * bounds may be truncated, and FLOAT/DOUBLE bounds leave the NaN cells out: only a column known to hold no NaN is
+     * covered. INT96 has no stats path.
      */
-    private static boolean canProveAllMatch(PrimitiveKind kind, long nullCount) {
-        if (nullCount != 0) {
+    private static boolean canProveAllMatch(DecodedRange range) {
+        if (range.nullCount() != 0) {
             return false;
         }
-        return switch (kind) {
+        return switch (range.kind()) {
             case BOOLEAN, INT32, INT64 -> true;
-            case FLOAT, DOUBLE, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> false;
+            case FLOAT, DOUBLE -> range.nans() == NaNCells.ABSENT;
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> false;
         };
     }
 
-    /** A FLOAT or DOUBLE chunk may hold NaN cells outside its min/max. */
-    private static boolean mayHoldNaN(PrimitiveKind kind) {
-        return kind == PrimitiveKind.FLOAT || kind == PrimitiveKind.DOUBLE;
+    /** A FLOAT or DOUBLE chunk may hold NaN cells outside its min/max, unless its statistics rule them out. */
+    private static boolean mayHoldNaN(DecodedRange range) {
+        return comparesAsNumbers(range.kind()) && range.nans() != NaNCells.ABSENT;
     }
 
-    private static OptionalLong lookupNullCount(ColumnPath col, TypedColumns cols) {
-        return cols.get(col).map(ColumnSummary::nullCount).orElseGet(OptionalLong::empty);
+    /** What is known of the NaN cells of a column; nothing for a column without statistics. */
+    private static NaNCells nansOf(Optional<ColumnSummary> stats) {
+        return stats.map(ColumnSummary::nans).orElse(NaNCells.POSSIBLE);
+    }
+
+    private static OptionalLong nullCountOf(Optional<ColumnSummary> stats) {
+        return stats.map(ColumnSummary::nullCount).orElseGet(OptionalLong::empty);
+    }
+
+    /**
+     * Decides a comparison matched by numbers alone: a column holding nothing but NaN cells has no number to match, and
+     * any other column is decided from its range as {@link #withRange} does.
+     */
+    private static PruningDecision withNumbers(
+            String op, ColumnPath col, Optional<ColumnSummary> stats, Function<DecodedRange, PruningDecision> f) {
+        if (nansOf(stats) == NaNCells.ALL) {
+            return new PruningDecision.Eliminated(TIER, op + col.dot() + ONLY_NAN_CELLS);
+        }
+        return withRange(col, stats, f);
     }
 
     /**
@@ -393,8 +512,7 @@ public final class StatsEvaluator {
      * lack the data we need (no entry, or no usable decoded min/max value).
      */
     private static PruningDecision withRange(
-            ColumnPath col, TypedColumns cols, Function<DecodedRange, PruningDecision> f) {
-        Optional<ColumnSummary> stats = cols.get(col);
+            ColumnPath col, Optional<ColumnSummary> stats, Function<DecodedRange, PruningDecision> f) {
         if (stats.isEmpty()) {
             return new PruningDecision.NotApplied(TIER, "no stats for " + col.dot());
         }
@@ -405,9 +523,12 @@ public final class StatsEvaluator {
             return new PruningDecision.NotApplied(TIER, "min/max missing for " + col.dot());
         }
         long nullCount = cs.nullCount().orElse(-1L);
-        return f.apply(new DecodedRange(cs.kind(), min.orElseThrow(), max.orElseThrow(), nullCount));
+        return f.apply(new DecodedRange(cs.kind(), min.orElseThrow(), max.orElseThrow(), nullCount, cs.nans()));
     }
 
-    /** Aggregate of a column's decoded min/max plus its null count (or {@code -1} if absent). */
-    private record DecodedRange(PrimitiveKind kind, Value min, Value max, long nullCount) {}
+    /**
+     * Aggregate of a column's decoded min/max, its null count (or {@code -1} if absent) and what is known of its NaN
+     * cells.
+     */
+    private record DecodedRange(PrimitiveKind kind, Value min, Value max, long nullCount, NaNCells nans) {}
 }

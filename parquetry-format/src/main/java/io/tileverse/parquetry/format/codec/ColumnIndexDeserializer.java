@@ -36,6 +36,7 @@ import io.tileverse.parquetry.format.ColumnIndex;
  *   5: optional list&lt;i64&gt; null_counts
  *   6: optional list&lt;i64&gt; repetition_level_histograms
  *   7: optional list&lt;i64&gt; definition_level_histograms
+ *   8: optional list&lt;i64&gt; nan_counts
  * }
  * </pre>
  */
@@ -51,6 +52,7 @@ final class ColumnIndexDeserializer {
         Optional<List<Long>> nullCounts = Optional.empty();
         Optional<List<Long>> repetitionLevelHistograms = Optional.empty();
         Optional<List<Long>> definitionLevelHistograms = Optional.empty();
+        Optional<List<Long>> nanCounts = Optional.empty();
         int lastFieldId = 0;
         while (true) {
             FieldHeader fh = r.readFieldHeader(lastFieldId);
@@ -66,6 +68,7 @@ final class ColumnIndexDeserializer {
                 case 5 -> nullCounts = Optional.of(readLongList(r));
                 case 6 -> repetitionLevelHistograms = Optional.of(readLongList(r));
                 case 7 -> definitionLevelHistograms = Optional.of(readLongList(r));
+                case 8 -> nanCounts = Optional.of(readLongList(r));
                 default -> r.skipField(fh.type());
             }
         }
@@ -76,7 +79,8 @@ final class ColumnIndexDeserializer {
                 boundaryOrder,
                 nullCounts,
                 repetitionLevelHistograms,
-                definitionLevelHistograms);
+                definitionLevelHistograms,
+                nanCounts);
     }
 
     /**

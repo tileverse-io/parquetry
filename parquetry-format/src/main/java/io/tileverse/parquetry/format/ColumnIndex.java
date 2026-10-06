@@ -40,6 +40,8 @@ import java.util.Optional;
  *     ({@code repetition_level_histograms} in the thrift schema)
  * @param definitionLevelHistograms definition-level histograms for every page, concatenated in page order
  *     ({@code definition_level_histograms} in the thrift schema)
+ * @param nanCounts per-page NaN value count, recorded for FLOAT, DOUBLE and FLOAT16 columns only; empty when not
+ *     recorded, and a page may then hold NaN values
  * @see ParquetFormat#readColumnIndex(io.tileverse.parquetry.io.ByteRangeSource, long, int)
  */
 public record ColumnIndex(
@@ -49,7 +51,8 @@ public record ColumnIndex(
         BoundaryOrder boundaryOrder,
         Optional<List<Long>> nullCounts,
         Optional<List<Long>> repetitionLevelHistograms,
-        Optional<List<Long>> definitionLevelHistograms) {
+        Optional<List<Long>> definitionLevelHistograms,
+        Optional<List<Long>> nanCounts) {
 
     public ColumnIndex {
         nullPages = List.copyOf(nullPages);
@@ -58,6 +61,7 @@ public record ColumnIndex(
         nullCounts = nullCounts.map(List::copyOf);
         repetitionLevelHistograms = repetitionLevelHistograms.map(List::copyOf);
         definitionLevelHistograms = definitionLevelHistograms.map(List::copyOf);
+        nanCounts = nanCounts.map(List::copyOf);
     }
 
     private static List<MemorySegment> freezeBoundsList(List<MemorySegment> bounds) {

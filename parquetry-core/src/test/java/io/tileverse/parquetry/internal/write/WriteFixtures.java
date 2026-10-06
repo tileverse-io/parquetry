@@ -15,20 +15,164 @@
  */
 package io.tileverse.parquetry.internal.write;
 
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+
+import java.io.IOException;
+import java.io.OutputStream;
 import java.lang.foreign.MemorySegment;
+import java.math.BigInteger;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalInt;
+import java.util.Random;
 import java.util.UUID;
 
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
+import io.tileverse.parquetry.data.WriteOptions;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.Repetition;
+import io.tileverse.parquetry.schema.SchemaNode;
 
-/** Builds a one-batch {@link ParquetRecordBatch} from rows expressed as per-leaf value maps, for write tests. */
+/**
+ * Fixtures for write tests: schemas and their leaf columns, a one-batch {@link ParquetRecordBatch} or a file written
+ * from rows expressed as per-leaf value maps, and the cells of the columns compared by the statistics accumulators.
+ */
 public final class WriteFixtures {
 
+    /** The byte length of a FLOAT16 cell. */
+    public static final int HALF_FLOAT_BYTES = HalfFloats.BYTES;
+
     private WriteFixtures() {}
+
+    /**
+     * A required leaf of {@code kind} annotated with {@code logicalType}, or with nothing when it is {@code null}. A
+     * FLOAT16 annotation gives the leaf its two-byte type length; any other leaf has none.
+     */
+    public static SchemaNode.Primitive leaf(PrimitiveKind kind, LogicalType logicalType) {
+        boolean halfFloat = logicalType instanceof LogicalType.Float16Type;
+        OptionalInt typeLength = halfFloat ? OptionalInt.of(HALF_FLOAT_BYTES) : OptionalInt.empty();
+        return leaf(kind, typeLength, logicalType);
+    }
+
+    /** A required {@code FIXED_LEN_BYTE_ARRAY} leaf of {@code typeLength} bytes annotated with {@code logicalType}. */
+    public static SchemaNode.Primitive fixedLeaf(int typeLength, LogicalType logicalType) {
+        return leaf(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, OptionalInt.of(typeLength), logicalType);
+    }
+
+    private static SchemaNode.Primitive leaf(PrimitiveKind kind, OptionalInt typeLength, LogicalType logicalType) {
+        return requiredLeaf("column", kind, typeLength, logicalType);
+    }
+
+    /** A required leaf column without annotation. */
+    public static SchemaNode.Primitive requiredLeaf(String name, PrimitiveKind kind) {
+        return requiredLeaf(name, kind, OptionalInt.empty(), null);
+    }
+
+    /** A required leaf column, annotated with {@code logicalType} unless it is {@code null}. */
+    public static SchemaNode.Primitive requiredLeaf(
+            String name, PrimitiveKind kind, OptionalInt typeLength, LogicalType logicalType) {
+        return leaf(name, Repetition.REQUIRED, kind, typeLength, logicalType);
+    }
+
+    /** A nullable leaf column without annotation. */
+    public static SchemaNode.Primitive optionalLeaf(String name, PrimitiveKind kind) {
+        return optionalLeaf(name, kind, OptionalInt.empty(), null);
+    }
+
+    /** A nullable leaf column, annotated with {@code logicalType} unless it is {@code null}. */
+    public static SchemaNode.Primitive optionalLeaf(
+            String name, PrimitiveKind kind, OptionalInt typeLength, LogicalType logicalType) {
+        return leaf(name, Repetition.OPTIONAL, kind, typeLength, logicalType);
+    }
+
+    private static SchemaNode.Primitive leaf(
+            String name, Repetition repetition, PrimitiveKind kind, OptionalInt typeLength, LogicalType logicalType) {
+        return new SchemaNode.Primitive(name, repetition, kind, typeLength, Optional.ofNullable(logicalType), -1);
+    }
+
+    /** A schema of the given top-level columns under a {@code message schema { ... }} root. */
+    public static ParquetSchema schemaOf(SchemaNode... columns) {
+        return schemaOf(List.of(columns));
+    }
+
+    /** A schema of the given top-level columns under a {@code message schema { ... }} root. */
+    public static ParquetSchema schemaOf(List<SchemaNode> columns) {
+        SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, columns, Optional.empty(), -1);
+        return new ParquetSchema(root);
+    }
+
+    /**
+     * A fresh statistics accumulator for a required leaf of {@code kind} annotated with {@code logicalType}, or with
+     * nothing when it is {@code null}.
+     */
+    public static StatisticsAccumulator accumulator(PrimitiveKind kind, LogicalType logicalType) {
+        return StatisticsAccumulator.forColumn(leaf(kind, logicalType));
+    }
+
+    /** The cell of a FLOAT16 column holding {@code value}. */
+    public static MemorySegment halfFloat(float value) {
+        return MemorySegment.ofArray(halfFloatBytes(Float.floatToFloat16(value)))
+                .asReadOnly();
+    }
+
+    /** The two little-endian bytes of the half float with the given bits. */
+    public static byte[] halfFloatBytes(short bits) {
+        return new byte[] {(byte) bits, (byte) (bits >> Byte.SIZE)};
+    }
+
+    /** The bits of the half float held by the two little-endian bytes of {@code cell}. */
+    public static short halfFloatBits(MemorySegment cell) {
+        int low = cell.get(JAVA_BYTE, 0) & 0xFF;
+        int high = cell.get(JAVA_BYTE, 1) & 0xFF;
+        return (short) (high << Byte.SIZE | low);
+    }
+
+    /** A quiet FLOAT NaN with a random sign and payload. */
+    public static float randomFloatNaN(Random random) {
+        return Float.intBitsToFloat(0x7FC00000 | (random.nextInt() & 0x803FFFFF));
+    }
+
+    /** A quiet DOUBLE NaN with a random sign and payload. */
+    public static double randomDoubleNaN(Random random) {
+        return Double.longBitsToDouble(0x7FF8000000000000L | (random.nextLong() & 0x8007FFFFFFFFFFFFL));
+    }
+
+    /** The bits of a quiet FLOAT16 NaN with a random sign and payload. */
+    public static short randomHalfFloatNaN(Random random) {
+        return (short) (0x7E00 | (random.nextInt() & 0x81FF));
+    }
+
+    /** {@code number} as {@code length} big-endian two's complement bytes, extended on the left with its sign. */
+    public static byte[] signedBytes(BigInteger number, int length) {
+        byte[] minimal = number.toByteArray();
+        byte[] extended = new byte[length];
+        Arrays.fill(extended, (byte) (number.signum() < 0 ? 0xFF : 0x00));
+        System.arraycopy(minimal, 0, extended, length - minimal.length, minimal.length);
+        return extended;
+    }
+
+    /** Writes {@code rows} to the file {@code target}; a row names its non-null cells by leaf column. */
+    public static Path writeRows(
+            Path target, ParquetSchema schema, WriteOptions options, List<Map<ColumnPath, Object>> rows)
+            throws IOException {
+        try (OutputStream out = Files.newOutputStream(target);
+                ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender(1);
+            for (Map<ColumnPath, Object> row : rows) {
+                appendRow(appender, schema, row);
+            }
+        }
+        return target;
+    }
 
     public static ParquetRecordBatch batch(ParquetSchema schema, List<Map<ColumnPath, Object>> rows) {
         ParquetRecordBatchBuilder builder = ParquetRecordBatchBuilder.forSchema(schema);

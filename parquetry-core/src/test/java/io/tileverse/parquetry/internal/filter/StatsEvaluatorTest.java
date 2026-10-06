@@ -25,6 +25,7 @@ import java.lang.foreign.MemorySegment;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -166,7 +167,12 @@ class StatsEvaluatorTest {
     @Test
     void missingMinMaxYieldsNotApplied() {
         FilterPipeline.ColumnStats noBounds = new FilterPipeline.ColumnStats(
-                PrimitiveKind.INT32, Optional.empty(), Optional.empty(), OptionalLong.of(0L), Optional.empty());
+                PrimitiveKind.INT32,
+                Optional.empty(),
+                Optional.empty(),
+                OptionalLong.of(0L),
+                Optional.empty(),
+                NaNCells.POSSIBLE);
         FilterPipeline.ColumnStatsLookup cols = single("year", noBounds);
         PruningDecision d = StatsEvaluator.evaluate(col("year").eq(2020), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
@@ -296,6 +302,208 @@ class StatsEvaluatorTest {
     }
 
     @Test
+    void eqNaNOnANaNFreeColumnIsEliminated() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", nanFreeStats(1.0, 5.0, 0));
+
+        PruningDecision d = StatsEvaluator.evaluate(col("price").eq(Double.NaN), cols, ROW_COUNT);
+
+        assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void inOfOnlyNaNOnANaNFreeColumnIsEliminated() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", nanFreeStats(1.0, 5.0, 0));
+        Predicate p = new Predicate.In(ColumnPath.of("price"), List.of(new Value.DoubleVal(Double.NaN)));
+
+        assertThat(StatsEvaluator.evaluate(p, cols, ROW_COUNT)).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void inWithANaNOnANaNFreeColumnFollowsItsNumbers() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", nanFreeStats(1.0, 5.0, 0));
+        Predicate withinBounds = new Predicate.In(
+                ColumnPath.of("price"), List.of(new Value.DoubleVal(Double.NaN), new Value.DoubleVal(3.0)));
+        Predicate outsideBounds = new Predicate.In(
+                ColumnPath.of("price"), List.of(new Value.DoubleVal(Double.NaN), new Value.DoubleVal(9.0)));
+
+        assertThat(StatsEvaluator.evaluate(withinBounds, cols, ROW_COUNT))
+                .isInstanceOf(PruningDecision.Inconclusive.class);
+        assertThat(StatsEvaluator.evaluate(outsideBounds, cols, ROW_COUNT))
+                .isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void notEqNaNOnANaNFreeColumnPassesAllWithoutNulls() {
+        Predicate p = col("price").notEq(Double.NaN);
+
+        assertThat(StatsEvaluator.evaluate(p, single("price", nanFreeStats(1.0, 5.0, 0)), ROW_COUNT))
+                .isInstanceOf(PruningDecision.PassedAll.class);
+        assertThat(StatsEvaluator.evaluate(p, single("price", nanFreeStats(1.0, 5.0, 2)), ROW_COUNT))
+                .isInstanceOf(PruningDecision.Inconclusive.class);
+    }
+
+    @Test
+    void comparisonIsProvenAllMatchOnANaNFreeColumnWithoutNulls() {
+        Predicate p = col("price").gt(0.5);
+
+        assertThat(StatsEvaluator.evaluate(p, single("price", nanFreeStats(1.0, 5.0, 0)), ROW_COUNT))
+                .isInstanceOf(PruningDecision.PassedAll.class);
+        assertThat(StatsEvaluator.evaluate(p, single("price", nanFreeStats(1.0, 5.0, 1)), ROW_COUNT))
+                .isNotInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void notEqOnASingleValueNaNFreeColumnIsEliminated() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", nanFreeStats(2.0, 2.0, 0));
+
+        PruningDecision d = StatsEvaluator.evaluate(col("price").notEq(2.0), cols, ROW_COUNT);
+
+        assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void eqOnASingleValueNaNFreeColumnPassesAll() {
+        FilterPipeline.ColumnStatsLookup oneValue = single("price", nanFreeStats(2.0, 2.0, 0));
+        FilterPipeline.ColumnStatsLookup bothZeros = single("price", nanFreeStats(-0.0, 0.0, 0));
+
+        assertThat(StatsEvaluator.evaluate(col("price").eq(2.0), oneValue, ROW_COUNT))
+                .isInstanceOf(PruningDecision.PassedAll.class);
+        assertThat(StatsEvaluator.evaluate(col("price").eq(0.0), bothZeros, ROW_COUNT))
+                .isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void comparisonWithANumberOnAColumnOfOnlyNaNIsEliminated() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", onlyNaNStats(0));
+        Predicate in =
+                new Predicate.In(ColumnPath.of("price"), List.of(new Value.DoubleVal(1.0), new Value.DoubleVal(2.0)));
+
+        assertThat(StatsEvaluator.evaluate(col("price").gt(1.0), cols, ROW_COUNT))
+                .isInstanceOf(PruningDecision.Eliminated.class);
+        assertThat(StatsEvaluator.evaluate(col("price").ltEq(1.0), cols, ROW_COUNT))
+                .isInstanceOf(PruningDecision.Eliminated.class);
+        assertThat(StatsEvaluator.evaluate(col("price").eq(1.0), cols, ROW_COUNT))
+                .isInstanceOf(PruningDecision.Eliminated.class);
+        assertThat(StatsEvaluator.evaluate(in, cols, ROW_COUNT)).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void eqNaNOnAColumnOfOnlyNaNPassesAllWithoutNulls() {
+        Predicate p = col("price").eq(Double.NaN);
+
+        assertThat(StatsEvaluator.evaluate(p, single("price", onlyNaNStats(0)), ROW_COUNT))
+                .isInstanceOf(PruningDecision.PassedAll.class);
+        assertThat(StatsEvaluator.evaluate(p, single("price", onlyNaNStats(3)), ROW_COUNT))
+                .isInstanceOf(PruningDecision.Inconclusive.class);
+    }
+
+    @Test
+    void inWithANaNOnAColumnOfOnlyNaNPassesAllWithoutNulls() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", onlyNaNStats(0));
+        Predicate p = new Predicate.In(
+                ColumnPath.of("price"), List.of(new Value.DoubleVal(7.0), new Value.DoubleVal(Double.NaN)));
+
+        assertThat(StatsEvaluator.evaluate(p, cols, ROW_COUNT)).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void notEqOnAColumnOfOnlyNaNFollowsItsLiteral() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", onlyNaNStats(0));
+
+        assertThat(StatsEvaluator.evaluate(col("price").notEq(1.0), cols, ROW_COUNT))
+                .as("NaN cells differ from a number")
+                .isInstanceOf(PruningDecision.PassedAll.class);
+        assertThat(StatsEvaluator.evaluate(col("price").notEq(Double.NaN), cols, ROW_COUNT))
+                .as("no cell differs from NaN")
+                .isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void summaryTellsWhatIsKnownOfTheNaNCells() {
+        assertThat(StatsEvaluator.summarize(doubleStats(1.0, 5.0, 0)).nans()).isEqualTo(NaNCells.POSSIBLE);
+        assertThat(StatsEvaluator.summarize(nanFreeStats(1.0, 5.0, 0)).nans()).isEqualTo(NaNCells.ABSENT);
+        assertThat(StatsEvaluator.summarize(doubleStats(Double.NaN, Double.NaN, 0))
+                        .nans())
+                .as("NaN bounds without a NaN count")
+                .isEqualTo(NaNCells.POSSIBLE);
+
+        StatsEvaluator.ColumnSummary onlyNaN = StatsEvaluator.summarize(onlyNaNStats(0));
+        assertThat(onlyNaN.nans()).isEqualTo(NaNCells.ALL);
+        assertThat(onlyNaN.min()).isEmpty();
+        assertThat(onlyNaN.max()).isEmpty();
+    }
+
+    @Test
+    void aNumberBoundContradictsACountOfOnlyNaN() {
+        StatsEvaluator.ColumnSummary summary =
+                StatsEvaluator.summarize(floatingStats(Double.NaN, 5.0, 0, NaNCells.ALL));
+
+        assertThat(summary.nans()).isEqualTo(NaNCells.POSSIBLE);
+        assertThat(summary.min()).isEmpty();
+        assertThat(summary.max()).contains(new Value.DoubleVal(5.0));
+    }
+
+    @Test
+    void aNaNBoundContradictsANaNCountOfZero() {
+        StatsEvaluator.ColumnSummary summary =
+                StatsEvaluator.summarize(floatingStats(1.0, Double.NaN, 0, NaNCells.ABSENT));
+
+        assertThat(summary.nans()).isEqualTo(NaNCells.POSSIBLE);
+    }
+
+    @Test
+    void nanBoundsWithoutACountOfOnlyNaNDecideNothing() {
+        // A writer taking the min and the max over the NaN cells too bounds a chunk holding numbers by two NaNs.
+        FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(Double.NaN, Double.NaN, 0));
+
+        assertThat(StatsEvaluator.evaluate(col("price").eq(1.0), cols, ROW_COUNT))
+                .isNotInstanceOf(PruningDecision.Eliminated.class);
+        assertThat(StatsEvaluator.evaluate(col("price").notEq(1.0), cols, ROW_COUNT))
+                .isNotInstanceOf(PruningDecision.PassedAll.class);
+        assertThat(StatsEvaluator.evaluate(col("price").eq(Double.NaN), cols, ROW_COUNT))
+                .isNotInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void columnOfOnlyNaNBoundedByNaNIsDecidedFromItsCounts() {
+        // A writer following IEEE 754 total order bounds a chunk holding no number by its NaN cells.
+        FilterPipeline.ColumnStatsLookup cols = single("price", floatingStats(Double.NaN, Double.NaN, 0, NaNCells.ALL));
+
+        assertThat(StatsEvaluator.evaluate(col("price").gt(1.0), cols, ROW_COUNT))
+                .isInstanceOf(PruningDecision.Eliminated.class);
+        assertThat(StatsEvaluator.evaluate(col("price").eq(Double.NaN), cols, ROW_COUNT))
+                .isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void countedNaNCellsDecideNothingForAHalfFloatColumn() {
+        // The cells of a FLOAT16 column compare as bytes, and a byte literal matches a NaN cell with the same bits.
+        FilterPipeline.ColumnStats onlyNaNHalves = new FilterPipeline.ColumnStats(
+                PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                Optional.empty(),
+                Optional.empty(),
+                OptionalLong.of(0L),
+                Optional.of(new LogicalType.Float16Type()),
+                NaNCells.ALL);
+        FilterPipeline.ColumnStatsLookup cols = single("half", onlyNaNHalves);
+        Value nanBits = new Value.BinaryVal(MemorySegment.ofArray(new byte[] {0x00, 0x7E}));
+
+        assertThat(StatsEvaluator.summarize(onlyNaNHalves).nans()).isEqualTo(NaNCells.POSSIBLE);
+        assertThat(StatsEvaluator.evaluate(new Predicate.Eq(ColumnPath.of("half"), nanBits), cols, ROW_COUNT))
+                .isNotInstanceOf(PruningDecision.Eliminated.class);
+        assertThat(StatsEvaluator.evaluate(new Predicate.NotEq(ColumnPath.of("half"), nanBits), cols, ROW_COUNT))
+                .isNotInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void inWithoutValuesIsEliminated() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(1.0, 5.0, 0));
+        Predicate empty = new Predicate.In(ColumnPath.of("price"), List.of());
+
+        assertThat(StatsEvaluator.evaluate(empty, cols, ROW_COUNT)).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
     void zeroBoundsCompareEqualToEitherZero() {
         FilterPipeline.ColumnStatsLookup fromPositiveZero = single("price", doubleStats(0.0, 5.0, 0));
         FilterPipeline.ColumnStatsLookup toNegativeZero = single("price", doubleStats(-5.0, -0.0, 0));
@@ -321,6 +529,53 @@ class StatsEvaluatorTest {
         FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
         Predicate notIn = PredicateNormalizer.normalize(col("year").inInts(2015).negate());
         assertThat(StatsEvaluator.evaluate(notIn, cols, ROW_COUNT)).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void notInOfOnlyNaNOnANaNFreeColumnPassesAllDespiteNulls() {
+        // No cell is NaN, hence each row, a null one included, matches the negation.
+        FilterPipeline.ColumnStatsLookup cols = single("price", nanFreeStats(1.0, 5.0, 3));
+
+        PruningDecision d = StatsEvaluator.evaluate(notInDoubles("price", Double.NaN), cols, ROW_COUNT);
+
+        assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void notInOfNumbersOnAColumnOfOnlyNaNPassesAllDespiteNulls() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", onlyNaNStats(3));
+
+        PruningDecision d = StatsEvaluator.evaluate(notInDoubles("price", 1.0, 2.0), cols, ROW_COUNT);
+
+        assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void notInOfOnlyNaNIsNotDecidedWherePossibleNaNCellsMayMatch() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(1.0, 5.0, 0));
+
+        PruningDecision d = StatsEvaluator.evaluate(notInDoubles("price", Double.NaN), cols, ROW_COUNT);
+
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void notInOfOnlyNaNIsNotDecidedOnAColumnOfOnlyNaNWithNulls() {
+        // The NaN cells match the list and the null cells do not: the negation matches some rows and not others.
+        FilterPipeline.ColumnStatsLookup cols = single("price", onlyNaNStats(3));
+
+        PruningDecision d = StatsEvaluator.evaluate(notInDoubles("price", Double.NaN), cols, ROW_COUNT);
+
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void notInWithoutValuesPassesAll() {
+        FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(1.0, 5.0, 3));
+
+        PruningDecision d = StatsEvaluator.evaluate(notInDoubles("price"), cols, ROW_COUNT);
+
+        assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
     }
 
     @Test
@@ -421,6 +676,44 @@ class StatsEvaluatorTest {
         Predicate p = new Predicate.Gt(ColumnPath.of("amount"), new Value.DecimalVal(BigDecimal.valueOf(400, 2)));
         PruningDecision d = StatsEvaluator.evaluate(p, cols, ROW_COUNT);
         assertThat(d).isNotInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void invertedDecimalBoundsAreIgnored() {
+        // The bounds left by a writer ordering a binary decimal by its unsigned bytes: a chunk spanning
+        // [-49.95, 49.91] gets 5.50 as its minimum and -1.11 as its maximum.
+        FilterPipeline.ColumnStatsLookup cols = singleDecimal("amount", 550, -111, 2);
+        Predicate p = new Predicate.Gt(ColumnPath.of("amount"), new Value.DecimalVal(BigDecimal.valueOf(1000, 2)));
+
+        PruningDecision d = StatsEvaluator.evaluate(p, cols, ROW_COUNT);
+
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void invertedIntegerBoundsAreIgnored() {
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2020, 2010, 0));
+
+        PruningDecision d = StatsEvaluator.evaluate(col("year").eq(2015), cols, ROW_COUNT);
+
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void summaryLeavesInvertedBoundsOut() {
+        StatsEvaluator.ColumnSummary summary = StatsEvaluator.summarize(intStats(2020, 2010, 3));
+
+        assertThat(summary.min()).isEmpty();
+        assertThat(summary.max()).isEmpty();
+        assertThat(summary.nullCount()).hasValue(3L);
+    }
+
+    @Test
+    void summaryKeepsEqualBounds() {
+        StatsEvaluator.ColumnSummary summary = StatsEvaluator.summarize(intStats(2020, 2020, 0));
+
+        assertThat(summary.min()).contains(new Value.IntVal(2020));
+        assertThat(summary.max()).contains(new Value.IntVal(2020));
     }
 
     @Test
@@ -527,6 +820,14 @@ class StatsEvaluatorTest {
         return single(name, stats);
     }
 
+    /** The normalized negation of an {@code IN} over the given DOUBLE literals. */
+    private static Predicate notInDoubles(String column, double... values) {
+        List<Value> literals =
+                Arrays.stream(values).<Value>mapToObj(Value.DoubleVal::new).toList();
+        Predicate in = new Predicate.In(ColumnPath.of(column), literals);
+        return PredicateNormalizer.normalize(new Predicate.Not(in));
+    }
+
     private static FilterPipeline.ColumnStatsLookup single(String name, FilterPipeline.ColumnStats stats) {
         Map<ColumnPath, FilterPipeline.ColumnStats> map = new HashMap<>();
         map.put(ColumnPath.of(name), stats);
@@ -549,6 +850,32 @@ class StatsEvaluatorTest {
         return plainStats(PrimitiveKind.DOUBLE, encodeDouble(min), encodeDouble(max), nullCount);
     }
 
+    /** Bounds of a DOUBLE column with a recorded NaN count of zero. */
+    private static FilterPipeline.ColumnStats nanFreeStats(double min, double max, long nullCount) {
+        return floatingStats(min, max, nullCount, NaNCells.ABSENT);
+    }
+
+    /** A DOUBLE column with NaN and null counts adding up to its values, and no bounds. */
+    private static FilterPipeline.ColumnStats onlyNaNStats(long nullCount) {
+        return new FilterPipeline.ColumnStats(
+                PrimitiveKind.DOUBLE,
+                Optional.empty(),
+                Optional.empty(),
+                OptionalLong.of(nullCount),
+                Optional.empty(),
+                NaNCells.ALL);
+    }
+
+    private static FilterPipeline.ColumnStats floatingStats(double min, double max, long nullCount, NaNCells nans) {
+        return new FilterPipeline.ColumnStats(
+                PrimitiveKind.DOUBLE,
+                Optional.of(encodeDouble(min)),
+                Optional.of(encodeDouble(max)),
+                OptionalLong.of(nullCount),
+                Optional.empty(),
+                nans);
+    }
+
     private static FilterPipeline.ColumnStats binaryStats(String min, String max, long nullCount) {
         return plainStats(PrimitiveKind.BYTE_ARRAY, encodeUtf8(min), encodeUtf8(max), nullCount);
     }
@@ -557,14 +884,24 @@ class StatsEvaluatorTest {
     private static FilterPipeline.ColumnStats plainStats(
             PrimitiveKind kind, MemorySegment min, MemorySegment max, long nullCount) {
         return new FilterPipeline.ColumnStats(
-                kind, Optional.of(min), Optional.of(max), OptionalLong.of(nullCount), Optional.empty());
+                kind,
+                Optional.of(min),
+                Optional.of(max),
+                OptionalLong.of(nullCount),
+                Optional.empty(),
+                NaNCells.POSSIBLE);
     }
 
     /** Bounds on a null-free column annotated with {@code logicalType}, which drives typed decoding. */
     private static FilterPipeline.ColumnStats annotatedStats(
             PrimitiveKind kind, MemorySegment min, MemorySegment max, LogicalType logicalType) {
         return new FilterPipeline.ColumnStats(
-                kind, Optional.of(min), Optional.of(max), OptionalLong.of(0L), Optional.of(logicalType));
+                kind,
+                Optional.of(min),
+                Optional.of(max),
+                OptionalLong.of(0L),
+                Optional.of(logicalType),
+                NaNCells.POSSIBLE);
     }
 
     private static MemorySegment encodeUtf8(String v) {

@@ -24,6 +24,7 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+import java.util.OptionalLong;
 
 import org.junit.jupiter.api.Test;
 
@@ -249,7 +250,103 @@ class PageWriterV2Test {
         assertThat(decodeV2IntPage(writer, column, large)).containsExactly(large);
     }
 
+    @Test
+    void v2DataPageHeaderRecordsTheNaNCountOfAFloatPage() throws Exception {
+        float[] values = {1.0f, Float.NaN, 2.0f, Float.NaN};
+        PageStatistics stats = new PageStatistics(
+                MemorySegment.ofArray(encodeFloat(1.0f)),
+                MemorySegment.ofArray(encodeFloat(2.0f)),
+                0L,
+                false,
+                OptionalLong.of(2L),
+                true,
+                true);
+        ColumnContext column =
+                new ColumnContext(0, 0, PrimitiveKind.FLOAT, ParquetVersion.V2_0, Compression.uncompressed());
+        PageEncodeJob job =
+                new PageEncodeJob(values, values.length, 0, values.length, null, null, new PlainFloatEncoder(), stats);
+
+        GrowableByteSink out = new GrowableByteSink(64);
+        new PageWriter(column).writeDataPageV2(job, out);
+
+        PageHeader header = ParquetFormat.readPageHeader(new ByteArrayInputStream(out.toByteArray()));
+        Statistics written =
+                header.dataPageHeaderV2().orElseThrow().statistics().orElseThrow();
+        assertThat(written.nanCount()).hasValue(2L);
+    }
+
+    @Test
+    void v2DataPageHeaderRecordsNoNaNCountForAnIntegerPage() throws Exception {
+        int[] values = {1, 2, 3};
+        PageStatistics stats = pageStats(encodeInt32(1), encodeInt32(3), 0, false);
+        ColumnContext column =
+                new ColumnContext(0, 0, PrimitiveKind.INT32, ParquetVersion.V2_0, Compression.uncompressed());
+        PageEncodeJob job =
+                new PageEncodeJob(values, values.length, 0, values.length, null, null, new PlainInt32Encoder(), stats);
+
+        GrowableByteSink out = new GrowableByteSink(64);
+        new PageWriter(column).writeDataPageV2(job, out);
+
+        PageHeader header = ParquetFormat.readPageHeader(new ByteArrayInputStream(out.toByteArray()));
+        Statistics written =
+                header.dataPageHeaderV2().orElseThrow().statistics().orElseThrow();
+        assertThat(written.nanCount()).isEmpty();
+    }
+
+    @Test
+    void v2DataPageHeaderRecordsTheNaNCountOfAPageOfOnlyNaN() throws Exception {
+        float[] values = {Float.NaN, Float.NaN};
+        PageStatistics stats = new PageStatistics(
+                MemorySegment.NULL, MemorySegment.NULL, 0L, false, OptionalLong.of(2L), false, false);
+        ColumnContext column =
+                new ColumnContext(0, 0, PrimitiveKind.FLOAT, ParquetVersion.V2_0, Compression.uncompressed());
+        PageEncodeJob job =
+                new PageEncodeJob(values, values.length, 0, values.length, null, null, new PlainFloatEncoder(), stats);
+
+        GrowableByteSink out = new GrowableByteSink(64);
+        new PageWriter(column).writeDataPageV2(job, out);
+
+        PageHeader header = ParquetFormat.readPageHeader(new ByteArrayInputStream(out.toByteArray()));
+        Statistics written =
+                header.dataPageHeaderV2().orElseThrow().statistics().orElseThrow();
+        assertThat(written.nanCount()).hasValue(2L);
+        assertThat(written.minValue()).isEqualTo(MemorySegment.NULL);
+        assertThat(written.maxValue()).isEqualTo(MemorySegment.NULL);
+    }
+
+    @Test
+    void v2DataPageHeaderFlagsABoundHeldByNoCell() throws Exception {
+        float[] values = {0.0f, 1.0f};
+        PageStatistics stats = new PageStatistics(
+                MemorySegment.ofArray(encodeFloat(-0.0f)),
+                MemorySegment.ofArray(encodeFloat(1.0f)),
+                0L,
+                false,
+                OptionalLong.of(0L),
+                false,
+                true);
+        ColumnContext column =
+                new ColumnContext(0, 0, PrimitiveKind.FLOAT, ParquetVersion.V2_0, Compression.uncompressed());
+        PageEncodeJob job =
+                new PageEncodeJob(values, values.length, 0, values.length, null, null, new PlainFloatEncoder(), stats);
+
+        GrowableByteSink out = new GrowableByteSink(64);
+        new PageWriter(column).writeDataPageV2(job, out);
+
+        PageHeader header = ParquetFormat.readPageHeader(new ByteArrayInputStream(out.toByteArray()));
+        Statistics written =
+                header.dataPageHeaderV2().orElseThrow().statistics().orElseThrow();
+        assertThat(written.isMinValueExact()).isFalse();
+        assertThat(written.isMaxValueExact()).isTrue();
+    }
+
     // --- helpers ---
+
+    private static byte[] encodeFloat(float value) {
+        byte[] out = new byte[Float.BYTES];
+        ByteBuffer.wrap(out).order(LITTLE_ENDIAN).putFloat(value);
+        return out;
+    }
 
     private static int[] decodeV2IntPage(PageWriter writer, ColumnContext column, int[] values) throws Exception {
         int min = Arrays.stream(values).min().orElseThrow();
@@ -273,11 +370,15 @@ class PageWriterV2Test {
                 MemorySegment.ofArray(min).asReadOnly(),
                 MemorySegment.ofArray(max).asReadOnly(),
                 nullCount,
-                isNullPage);
+                isNullPage,
+                OptionalLong.empty(),
+                true,
+                true);
     }
 
     private static PageStatistics pageStats(MemorySegment min, MemorySegment max, long nullCount, boolean isNullPage) {
-        return new PageStatistics(min, max, nullCount, isNullPage);
+        boolean bounded = min != MemorySegment.NULL && max != MemorySegment.NULL;
+        return new PageStatistics(min, max, nullCount, isNullPage, OptionalLong.empty(), bounded, bounded);
     }
 
     private static byte[] encodeInt32(int value) {

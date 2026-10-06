@@ -107,13 +107,14 @@ final class CompactProtocolWriter {
     // -- primitive writers -----------------------------------------------------------------------
 
     /**
-     * Writes a standalone boolean as a single byte ({@code 0x01} true / {@code 0x00} false). For boolean values inside
-     * a field, prefer {@link #writeBoolField(short, boolean)}, which folds the value into the field-header type nibble
-     * per the Thrift Compact Protocol. This method is the symmetric inverse of {@link CompactProtocolReader#readBool()}
-     * and is the right entry point when a boolean appears as a list, set, or map element.
+     * Writes a boolean element of a list, set or map as a single byte: {@code 0x01} for true and {@code 0x02} for
+     * false, the codes of the two boolean types of the Thrift Compact Protocol. Strict readers (the Rust thrift crate,
+     * for one) reject any other byte. {@link #writeBoolField(short, boolean)} writes a boolean struct field, folding
+     * its value into the type nibble of the field header.
      */
     public void writeBool(boolean value) throws IOException {
-        out.write(value ? 0x01 : 0x00);
+        CompactType element = value ? CompactType.BOOLEAN_TRUE : CompactType.BOOLEAN_FALSE;
+        out.write(element.code);
     }
 
     /** Writes a raw byte (8 bits, no encoding). */

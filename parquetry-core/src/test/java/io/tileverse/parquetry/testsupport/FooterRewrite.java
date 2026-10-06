@@ -279,23 +279,35 @@ public final class FooterRewrite {
 
     /** An edit setting the PLAIN-encoded maximum statistic of {@code column} in the row group at {@code rowGroup}. */
     public static UnaryOperator<FileMetaData> statisticsMax(ColumnPath column, int rowGroup, MemorySegment max) {
-        return footer -> withRowGroups(footer, rowGroupsWithMax(footer.rowGroups(), column, rowGroup, max));
+        return statistics(column, rowGroup, stats -> withBounds(stats, stats.minValue(), max));
     }
 
-    private static List<RowGroup> rowGroupsWithMax(
-            List<RowGroup> rowGroups, ColumnPath column, int rowGroup, MemorySegment max) {
+    /** An edit setting both PLAIN-encoded bounds of {@code column} in the row group at {@code rowGroup}. */
+    public static UnaryOperator<FileMetaData> statisticsBounds(
+            ColumnPath column, int rowGroup, MemorySegment min, MemorySegment max) {
+        return statistics(column, rowGroup, stats -> withBounds(stats, min, max));
+    }
+
+    private static UnaryOperator<FileMetaData> statistics(
+            ColumnPath column, int rowGroup, UnaryOperator<Statistics> edit) {
+        return footer -> withRowGroups(footer, rowGroupsWithStatistics(footer.rowGroups(), column, rowGroup, edit));
+    }
+
+    private static List<RowGroup> rowGroupsWithStatistics(
+            List<RowGroup> rowGroups, ColumnPath column, int rowGroup, UnaryOperator<Statistics> edit) {
         List<RowGroup> edited = new ArrayList<>(rowGroups);
         RowGroup target = rowGroups.get(rowGroup);
-        edited.set(rowGroup, withColumns(target, chunksWithMax(target.columns(), column, max)));
+        edited.set(rowGroup, withColumns(target, chunksWithStatistics(target.columns(), column, edit)));
         return edited;
     }
 
-    private static List<ColumnChunk> chunksWithMax(List<ColumnChunk> chunks, ColumnPath column, MemorySegment max) {
+    private static List<ColumnChunk> chunksWithStatistics(
+            List<ColumnChunk> chunks, ColumnPath column, UnaryOperator<Statistics> edit) {
         List<ColumnChunk> edited = new ArrayList<>(chunks.size());
         for (ColumnChunk chunk : chunks) {
             ColumnMetaData metaData = chunk.metaData().orElseThrow();
             if (ColumnPath.of(metaData.pathInSchema()).equals(column)) {
-                edited.add(withMetaData(chunk, withMax(metaData, max)));
+                edited.add(withMetaData(chunk, withStatistics(metaData, edit)));
             } else {
                 edited.add(chunk);
             }
@@ -303,17 +315,21 @@ public final class FooterRewrite {
         return edited;
     }
 
-    private static ColumnMetaData withMax(ColumnMetaData metaData, MemorySegment max) {
-        Statistics stats = metaData.statistics().orElseThrow();
-        Statistics edited = new Statistics(
+    private static Statistics withBounds(Statistics stats, MemorySegment min, MemorySegment max) {
+        return new Statistics(
                 stats.max(),
                 stats.min(),
                 stats.nullCount(),
                 stats.distinctCount(),
                 max,
-                stats.minValue(),
+                min,
                 stats.isMaxValueExact(),
-                stats.isMinValueExact());
+                stats.isMinValueExact(),
+                stats.nanCount());
+    }
+
+    private static ColumnMetaData withStatistics(ColumnMetaData metaData, UnaryOperator<Statistics> edit) {
+        Statistics edited = edit.apply(metaData.statistics().orElseThrow());
         return new ColumnMetaData(
                 metaData.type(),
                 metaData.encodings(),

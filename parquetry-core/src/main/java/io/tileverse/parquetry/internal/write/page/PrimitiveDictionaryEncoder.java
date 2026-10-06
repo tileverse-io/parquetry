@@ -23,11 +23,9 @@ import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
- * Dictionary attempt for the numeric kinds (INT32, INT64, FLOAT, DOUBLE), keyed by the value's 64-bit pattern instead
- * of boxed objects. Equality follows the boxed wrappers' contract: floats and doubles key on their canonical bits
- * ({@link Float#floatToIntBits}/{@link Double#doubleToLongBits} - every NaN pattern is one dictionary entry, negative
- * and positive zero are distinct), while the retained value keeps the FIRST occurrence's raw bits, which is what the
- * dictionary page emits.
+ * Dictionary attempt for the numeric kinds (INT32, INT64, FLOAT, DOUBLE), keyed by the value's bit pattern. Floats and
+ * doubles key on their raw bits: negative and positive zero are distinct entries, and so is each NaN pattern. A cell
+ * reads back with its sign and payload bits unchanged.
  *
  * <p>Page contract and fallback semantics match the binary counterpart {@link BinaryDictionaryEncoder}: values append
  * to the current page, {@link #flushPage(LittleEndianSink)} closes it; pages encode as {@link Encoding#RLE_DICTIONARY}
@@ -70,30 +68,30 @@ public final class PrimitiveDictionaryEncoder implements PageDictionaryEncoder {
 
     /** Append one INT32 cell to the current page. */
     public void appendInt(int value) {
-        append(value, value);
+        append(value);
     }
 
     /** Append one INT64 cell to the current page. */
     public void appendLong(long value) {
-        append(value, value);
+        append(value);
     }
 
-    /** Append one FLOAT cell; keys on canonical bits, retains the first occurrence's raw bits. */
+    /** Append one FLOAT cell, keyed on its raw bits. */
     public void appendFloat(float value) {
-        append(Float.floatToRawIntBits(value), Float.floatToIntBits(value));
+        append(Float.floatToRawIntBits(value));
     }
 
-    /** Append one DOUBLE cell; keys on canonical bits, retains the first occurrence's raw bits. */
+    /** Append one DOUBLE cell, keyed on its raw bits. */
     public void appendDouble(double value) {
-        append(Double.doubleToRawLongBits(value), Double.doubleToLongBits(value));
+        append(Double.doubleToRawLongBits(value));
     }
 
-    private void append(long rawBits, long keyBits) {
+    private void append(long rawBits) {
         if (overflowed) {
             addFallback(rawBits);
             return;
         }
-        int slot = findSlot(keyBits);
+        int slot = findSlot(rawBits);
         int existing = tableIndices[slot];
         if (existing != EMPTY_SLOT) {
             addPageIndex(existing);
@@ -104,7 +102,7 @@ public final class PrimitiveDictionaryEncoder implements PageDictionaryEncoder {
             overflowToPlain(rawBits);
             return;
         }
-        insert(slot, keyBits, rawBits, candidateBytes);
+        insert(slot, rawBits, candidateBytes);
     }
 
     @Override
@@ -135,20 +133,20 @@ public final class PrimitiveDictionaryEncoder implements PageDictionaryEncoder {
         return Arrays.copyOf(dictionaryBits, dictionarySize);
     }
 
-    /** The FLOAT dictionary values in insertion order, raw first-occurrence bit patterns. */
+    /** The FLOAT dictionary values in insertion order, their bit patterns unchanged. */
     public float[] floatCarrier() {
         return floatsFrom(dictionaryBits, dictionarySize);
     }
 
-    /** The DOUBLE dictionary values in insertion order, raw first-occurrence bit patterns. */
+    /** The DOUBLE dictionary values in insertion order, their bit patterns unchanged. */
     public double[] doubleCarrier() {
         return doublesFrom(dictionaryBits, dictionarySize);
     }
 
-    private int findSlot(long keyBits) {
+    private int findSlot(long rawBits) {
         int mask = tableKeys.length - 1;
-        int slot = spread(keyBits) & mask;
-        while (tableIndices[slot] != EMPTY_SLOT && tableKeys[slot] != keyBits) {
+        int slot = spread(rawBits) & mask;
+        while (tableIndices[slot] != EMPTY_SLOT && tableKeys[slot] != rawBits) {
             slot = (slot + 1) & mask;
         }
         return slot;
@@ -159,8 +157,8 @@ public final class PrimitiveDictionaryEncoder implements PageDictionaryEncoder {
      * integers cluster badly under an identity hash, and linear probing amplifies clustering into long occupied runs. A
      * full avalanche keeps probe chains short regardless of key distribution.
      */
-    private static int spread(long keyBits) {
-        long h = keyBits;
+    private static int spread(long rawBits) {
+        long h = rawBits;
         h ^= h >>> 33;
         h *= 0xff51afd7ed558ccdL;
         h ^= h >>> 33;
@@ -169,14 +167,14 @@ public final class PrimitiveDictionaryEncoder implements PageDictionaryEncoder {
         return (int) h;
     }
 
-    private void insert(int slot, long keyBits, long rawBits, long newDictionaryBytes) {
+    private void insert(int slot, long rawBits, long newDictionaryBytes) {
         if (dictionarySize == dictionaryBits.length) {
             dictionaryBits = Arrays.copyOf(dictionaryBits, dictionaryBits.length * 2);
         }
         int newIndex = dictionarySize;
         dictionaryBits[newIndex] = rawBits;
         dictionarySize++;
-        tableKeys[slot] = keyBits;
+        tableKeys[slot] = rawBits;
         tableIndices[slot] = newIndex;
         dictionaryBytes = newDictionaryBytes;
         addPageIndex(newIndex);

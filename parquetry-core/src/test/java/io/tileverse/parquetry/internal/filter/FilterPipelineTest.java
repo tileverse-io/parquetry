@@ -170,7 +170,8 @@ class FilterPipelineTest {
                 Optional.of(encodeInt(min)),
                 Optional.of(encodeInt(max)),
                 OptionalLong.of(nullCount),
-                Optional.empty());
+                Optional.empty(),
+                NaNCells.POSSIBLE);
     }
 
     private static MemorySegment encodeInt(int v) {

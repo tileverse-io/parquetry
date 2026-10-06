@@ -85,11 +85,18 @@ sound, not just useful. A false `MATCHED` would overcount. The guard
 
 - **`nullCount == 0`.** A null never satisfies a comparison. A column with any
   null cannot be all-match (`year > 5` is false for a null `year`).
-- **the column kind is exactly bounded:** `BOOLEAN`, `INT32`, `INT64`. `FLOAT` and
-  `DOUBLE` are excluded (`NaN` cells lie outside min/max, and under IEEE 754 an
-  ordered comparison never matches them), and binary
+- **the bounds cover each cell:** `BOOLEAN`, `INT32` and `INT64` always. `FLOAT` and
+  `DOUBLE` only when the writer recorded a NaN count of zero: `NaN` cells lie outside
+  min/max, and under IEEE 754 an ordered comparison never matches them. Binary
   (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`) is excluded because its statistics may be
   truncated, leaving the stored max below the true max.
+
+One proof does not go through the bounds. A `FLOAT` or `DOUBLE` row group holds
+nothing but `NaN` when the writer recorded a NaN count and a null count adding up
+to its values. With `nullCount == 0` each row then matches `x = NaN` and
+`x <> 1.0`, and the row group is `MATCHED`. NaN bounds alone prove nothing: a
+writer taking the min and the max over the `NaN` cells as well records NaN bounds
+for a row group holding numbers.
 
 Two more conservative edges: a missing null count reads back as `-1` and fails the
 `== 0` test, and an empty row group (`rowCount == 0`) is never promoted to

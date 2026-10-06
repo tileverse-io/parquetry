@@ -54,6 +54,8 @@ class ColumnIndexEvaluatorTest {
      */
     private static final long ROW_GROUP_ROWS = 300;
 
+    private static final long ROWS_PER_PAGE = 100;
+
     @Test
     void eqInMiddlePageNarrows() {
         FilterPipeline.ColumnPageStatsLookup cols = year3Pages();
@@ -306,13 +308,35 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void nanLiteralEqualityKeepsTheValuedPages() {
-        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").eq(Double.NaN), priceWithANaNPage(), 300);
+        PruningDecision d =
+                ColumnIndexEvaluator.evaluate(col("price").eq(Double.NaN), priceWithANaNPage(), ROW_GROUP_ROWS);
         assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
     }
 
     @Test
     void pageWithNaNBoundsSurvivesAnyComparison() {
-        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").gt(10.0), priceWithANaNPage(), 300);
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").gt(10.0), priceWithANaNPage(), ROW_GROUP_ROWS);
+        assertThat(d).isInstanceOf(PruningDecision.NarrowedTo.class);
+        RowRanges r = ((PruningDecision.NarrowedTo) d).ranges();
+        assertThat(r.ranges()).containsExactly(new Range(100, 199));
+    }
+
+    @Test
+    void pageWithInvertedBoundsIsKept() {
+        // 3 pages of 100 rows at scale 2. The middle page spans [-49.95, 49.91] and has the bounds left by a writer
+        // ordering a binary decimal by its unsigned bytes: 5.50 as its minimum, -1.11 as its maximum.
+        FilterPipeline.ColumnPageStatsLookup cols = singleColumn(
+                "amount",
+                PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                List.of(false, false, false),
+                List.of(encodeSignedFlba(-900), encodeSignedFlba(550), encodeSignedFlba(100)),
+                List.of(encodeSignedFlba(-800), encodeSignedFlba(-111), encodeSignedFlba(200)),
+                List.of(0L, 100L, 200L),
+                new LogicalType.Decimal(2, 9));
+        Predicate p = new Predicate.Gt(ColumnPath.of("amount"), new Value.DecimalVal(BigDecimal.valueOf(1000, 2)));
+
+        PruningDecision d = ColumnIndexEvaluator.evaluate(p, cols, ROW_GROUP_ROWS);
+
         assertThat(d).isInstanceOf(PruningDecision.NarrowedTo.class);
         RowRanges r = ((PruningDecision.NarrowedTo) d).ranges();
         assertThat(r.ranges()).containsExactly(new Range(100, 199));
@@ -320,7 +344,8 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void orderedComparisonAgainstANaNLiteralLeavesNoPage() {
-        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").lt(Double.NaN), priceWithANaNPage(), 300);
+        PruningDecision d =
+                ColumnIndexEvaluator.evaluate(col("price").lt(Double.NaN), priceWithANaNPage(), ROW_GROUP_ROWS);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
     }
 
@@ -332,18 +357,134 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void zeroPageBoundsCompareEqualToEitherZero() {
-        PruningDecision above = ColumnIndexEvaluator.evaluate(col("price").gt(0.0), priceWithANaNPage(), 300);
+        PruningDecision above =
+                ColumnIndexEvaluator.evaluate(col("price").gt(0.0), priceWithANaNPage(), ROW_GROUP_ROWS);
         assertThat(((PruningDecision.NarrowedTo) above).ranges().ranges())
                 .containsExactly(new Range(0, 99), new Range(100, 199));
-        PruningDecision atLeast = ColumnIndexEvaluator.evaluate(col("price").gtEq(0.0), priceWithANaNPage(), 300);
+        PruningDecision atLeast =
+                ColumnIndexEvaluator.evaluate(col("price").gtEq(0.0), priceWithANaNPage(), ROW_GROUP_ROWS);
         assertThat(atLeast).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void nanLiteralKeepsThePagesCountingNaNCells() {
+        FilterPipeline.ColumnPageStatsLookup cols = pricePages(
+                Optional.of(List.of(0L, 2L, 0L)), new double[] {1.0, 3.0, 5.0}, new double[] {2.0, 4.0, 6.0});
+
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").eq(Double.NaN), cols, ROW_GROUP_ROWS);
+
+        assertThat(rangesOf(d)).containsExactly(new Range(100, 199));
+    }
+
+    @Test
+    void nanLiteralIsEliminatedWhenNoPageCountsANaNCell() {
+        FilterPipeline.ColumnPageStatsLookup cols = pricePages(
+                Optional.of(List.of(0L, 0L, 0L)), new double[] {1.0, 3.0, 5.0}, new double[] {2.0, 4.0, 6.0});
+
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").eq(Double.NaN), cols, ROW_GROUP_ROWS);
+
+        assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void nanCountsOfAnotherLengthThanThePagesAreIgnored() {
+        FilterPipeline.ColumnPageStatsLookup cols =
+                pricePages(Optional.of(List.of(0L)), new double[] {1.0, 3.0, 5.0}, new double[] {2.0, 4.0, 6.0});
+
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").eq(Double.NaN), cols, ROW_GROUP_ROWS);
+
+        assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void notEqSkipsThePageHoldingTheLiteralAlone() {
+        FilterPipeline.ColumnPageStatsLookup singleValuePages = pricePages(
+                Optional.of(List.of(0L, 3L, 0L)), new double[] {2.0, 2.0, 1.0}, new double[] {2.0, 2.0, 5.0});
+
+        PruningDecision notTwo =
+                ColumnIndexEvaluator.evaluate(col("price").notEq(2.0), singleValuePages, ROW_GROUP_ROWS);
+
+        assertThat(rangesOf(notTwo))
+                .as("the first page holds 2.0 alone; the second holds NaN cells too")
+                .containsExactly(new Range(100, 199), new Range(200, 299));
+    }
+
+    @Test
+    void inWithANaNAndANumberKeepsThePagesMatchedByEither() {
+        FilterPipeline.ColumnPageStatsLookup cols = pricePages(
+                Optional.of(List.of(0L, 2L, 0L)), new double[] {1.0, 3.0, 5.0}, new double[] {2.0, 4.0, 6.0});
+        List<Value> nanOrNumber = List.of(new Value.DoubleVal(Double.NaN), new Value.DoubleVal(5.5));
+        Predicate in = new Predicate.In(ColumnPath.of("price"), nanOrNumber);
+
+        PruningDecision d = ColumnIndexEvaluator.evaluate(in, cols, ROW_GROUP_ROWS);
+
+        assertThat(rangesOf(d))
+                .as("the second page counts NaN cells; the third may hold 5.5")
+                .containsExactly(new Range(100, 199), new Range(200, 299));
+    }
+
+    @Test
+    void notEqNaNKeepsEachPageHoldingANumber() {
+        FilterPipeline.ColumnPageStatsLookup cols = pricePages(
+                Optional.of(List.of(0L, 2L, 0L)), new double[] {1.0, 3.0, 5.0}, new double[] {2.0, 4.0, 6.0});
+
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").notEq(Double.NaN), cols, ROW_GROUP_ROWS);
+
+        assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void pageCountingNoNaNWhileBoundedByNaNIsKept() {
+        // A NaN count of zero and NaN bounds contradict each other: the page is trusted for neither claim.
+        double[] mins = {1.0, Double.NaN, 6.0};
+        double[] maxs = {2.0, Double.NaN, 7.0};
+        FilterPipeline.ColumnPageStatsLookup cols = pricePages(Optional.of(List.of(0L, 0L, 0L)), mins, maxs);
+
+        PruningDecision number = ColumnIndexEvaluator.evaluate(col("price").eq(1.5), cols, ROW_GROUP_ROWS);
+        PruningDecision nan = ColumnIndexEvaluator.evaluate(col("price").eq(Double.NaN), cols, ROW_GROUP_ROWS);
+
+        assertThat(rangesOf(number)).containsExactly(new Range(0, 99), new Range(100, 199));
+        assertThat(rangesOf(nan)).containsExactly(new Range(100, 199));
     }
 
     // --- helpers ---
 
+    private static List<Range> rangesOf(PruningDecision decision) {
+        assertThat(decision).isInstanceOf(PruningDecision.NarrowedTo.class);
+        return ((PruningDecision.NarrowedTo) decision).ranges().ranges();
+    }
+
+    /** DOUBLE pages of 100 rows each, none of them a null page, with the given bounds and NaN counts. */
+    private static FilterPipeline.ColumnPageStatsLookup pricePages(
+            Optional<List<Long>> nanCounts, double[] mins, double[] maxs) {
+        List<Boolean> nullPages = new ArrayList<>();
+        List<MemorySegment> minValues = new ArrayList<>();
+        List<MemorySegment> maxValues = new ArrayList<>();
+        List<PageLocation> pages = new ArrayList<>();
+        for (int page = 0; page < mins.length; page++) {
+            nullPages.add(false);
+            minValues.add(encodeDouble(mins[page]));
+            maxValues.add(encodeDouble(maxs[page]));
+            pages.add(new PageLocation(0L, 0, page * ROWS_PER_PAGE));
+        }
+        ColumnIndex idx = new ColumnIndex(
+                nullPages,
+                minValues,
+                maxValues,
+                BoundaryOrder.UNORDERED,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                nanCounts);
+        OffsetIndex off = new OffsetIndex(pages, Optional.empty());
+        FilterPipeline.ColumnPageStats stats =
+                new FilterPipeline.ColumnPageStats(PrimitiveKind.DOUBLE, idx, off, Optional.empty(), true);
+        return path -> path.equals(ColumnPath.of("price")) ? Optional.of(stats) : Optional.empty();
+    }
+
     /**
-     * Three DOUBLE pages of 100 rows: [1.0, 5.0], a page of NaN values bounded by NaN as written under the IEEE 754
-     * total order, and [-5.0, -0.0].
+     * Three DOUBLE pages of 100 rows as left by a writer bounding a page of NaN by NaN: [1.0, 5.0], a page bounded by
+     * NaN, and [-5.0, -0.0].
      */
     private static FilterPipeline.ColumnPageStatsLookup priceWithANaNPage() {
         return singleColumn(
@@ -380,6 +521,7 @@ class ColumnIndexEvaluatorTest {
                 List.of(encodeInt(2015), encodeInt(2022), encodeInt(2030)),
                 BoundaryOrder.ASCENDING,
                 Optional.of(List.of(0L, 5L, 0L)),
+                Optional.empty(),
                 Optional.empty(),
                 Optional.empty());
         List<PageLocation> pages =
@@ -423,6 +565,7 @@ class ColumnIndexEvaluatorTest {
                 minValues,
                 maxValues,
                 BoundaryOrder.ASCENDING,
+                Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty());

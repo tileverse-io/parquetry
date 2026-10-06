@@ -239,7 +239,8 @@ class ParquetFormatWriteTest {
                 heapSegment(new byte[] {2, 3, 4}),
                 heapSegment(new byte[] {0, 1, 2}),
                 true,
-                true);
+                true,
+                OptionalLong.empty());
         PageHeader original = new PageHeader(
                 PageType.DATA_PAGE,
                 4096,
@@ -560,7 +561,8 @@ class ParquetFormatWriteTest {
                 heapSegment(new byte[] {8}),
                 heapSegment(new byte[] {2}),
                 true,
-                false);
+                false,
+                OptionalLong.empty());
     }
 
     private static DataPageHeader sampleDataPageHeader() {
@@ -577,7 +579,8 @@ class ParquetFormatWriteTest {
                         heapSegment(new byte[] {9, 9}),
                         heapSegment(new byte[] {0, 0}),
                         true,
-                        false)));
+                        false,
+                        OptionalLong.empty())));
     }
 
     private static DataPageHeaderV2 sampleDataPageHeaderV2() {
@@ -597,7 +600,8 @@ class ParquetFormatWriteTest {
                         heapSegment(new byte[] {1, 2}),
                         heapSegment(new byte[] {0, 1}),
                         false,
-                        true)));
+                        true,
+                        OptionalLong.empty())));
     }
 
     private static ColumnIndex sampleColumnIndex() {
@@ -616,7 +620,8 @@ class ParquetFormatWriteTest {
                 BoundaryOrder.ASCENDING,
                 Optional.of(List.of(0L, 1L, 10L, 0L)),
                 Optional.of(List.of(0L, 0L, 0L, 0L, 1L, 2L, 3L, 4L)),
-                Optional.of(List.of(0L, 1L, 1L, 2L, 2L, 3L, 3L, 4L)));
+                Optional.of(List.of(0L, 1L, 1L, 2L, 2L, 3L, 3L, 4L)),
+                Optional.empty());
     }
 
     private static OffsetIndex sampleOffsetIndex() {

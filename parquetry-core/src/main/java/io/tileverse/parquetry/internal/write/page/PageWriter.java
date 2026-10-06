@@ -333,7 +333,8 @@ public final class PageWriter {
         MemorySegment max = pageStats.max();
         boolean hasMinMax = min != MemorySegment.NULL || max != MemorySegment.NULL;
         boolean hasNullCount = pageStats.nullCount() > 0L || pageStats.isNullPage();
-        if (!hasMinMax && !hasNullCount) {
+        boolean hasNaNCount = pageStats.nanCount().isPresent();
+        if (!hasMinMax && !hasNullCount && !hasNaNCount) {
             return Optional.empty();
         }
         Statistics statistics = Statistics.builder()
@@ -341,8 +342,9 @@ public final class PageWriter {
                 .distinctCount(OptionalLong.empty())
                 .minValue(min)
                 .maxValue(max)
-                .isMinValueExact(min != MemorySegment.NULL)
-                .isMaxValueExact(max != MemorySegment.NULL)
+                .isMinValueExact(pageStats.minExact())
+                .isMaxValueExact(pageStats.maxExact())
+                .nanCount(pageStats.nanCount())
                 .build();
         return Optional.of(statistics);
     }

@@ -152,6 +152,22 @@ public final class ChunkMeta {
     }
 
     /**
+     * Whether the writer recorded that the chunk holds no NaN cell: a NaN count of zero. False for a chunk with NaN
+     * cells, and for one with no NaN count, where NaN cells may be present.
+     */
+    public boolean holdsNoNaN() {
+        return (nanFlags() & CompactFooter.NAN_FLAG_ZERO_COUNT) != 0;
+    }
+
+    /**
+     * Whether the counts recorded by the writer tell that the non-null cells of the chunk are all NaN: at least one NaN
+     * cell, and NaN and null counts adding up to the values of the chunk. False for a chunk with no NaN count.
+     */
+    public boolean holdsOnlyNaN() {
+        return (nanFlags() & CompactFooter.NAN_FLAG_ONLY_NAN) != 0;
+    }
+
+    /**
      * The bounding box of every geometry in the chunk, empty when the column has no native geospatial statistics. Each
      * of the four optional halves stands on its own, as it does on the wire. The record is rebuilt from the blob's
      * lanes on every call rather than retained.
@@ -182,6 +198,10 @@ public final class ChunkMeta {
 
     private byte flags() {
         return footer.byteAt(base() + CompactFooter.CHUNK_FLAGS);
+    }
+
+    private byte nanFlags() {
+        return footer.byteAt(base() + CompactFooter.CHUNK_NAN_FLAGS);
     }
 
     /**

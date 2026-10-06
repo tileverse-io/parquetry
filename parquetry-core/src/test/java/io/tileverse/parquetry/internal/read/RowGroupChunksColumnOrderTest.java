@@ -250,6 +250,7 @@ class RowGroupChunksColumnOrderTest {
                         BoundaryOrder.UNORDERED,
                         Optional.of(List.of(NULL_COUNT)),
                         Optional.empty(),
+                        Optional.empty(),
                         Optional.empty());
             }
 

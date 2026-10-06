@@ -48,6 +48,8 @@ import lombok.Builder;
  *     default for absent / explicit-false) means the writer may have rounded up
  * @param isMinValueExact {@code true} when {@link #minValue} is the actual minimum; {@code false} means the writer may
  *     have rounded down
+ * @param nanCount number of NaN values across the row group / page covered by these stats, recorded for FLOAT, DOUBLE
+ *     and FLOAT16 columns only; empty when not recorded, and NaN values may then be present
  */
 @Builder
 public record Statistics(
@@ -58,7 +60,8 @@ public record Statistics(
         MemorySegment maxValue,
         MemorySegment minValue,
         boolean isMaxValueExact,
-        boolean isMinValueExact) {
+        boolean isMinValueExact,
+        OptionalLong nanCount) {
 
     public Statistics {
         max = Segments.readOnlyOrAbsent(max);
@@ -67,6 +70,7 @@ public record Statistics(
         distinctCount = distinctCount == null ? OptionalLong.empty() : distinctCount;
         maxValue = Segments.readOnlyOrAbsent(maxValue);
         minValue = Segments.readOnlyOrAbsent(minValue);
+        nanCount = nanCount == null ? OptionalLong.empty() : nanCount;
     }
 
     /**

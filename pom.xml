@@ -103,7 +103,7 @@
     <duckdb.version>1.5.5.1</duckdb.version>
     <roaringbitmap.version>1.6.14</roaringbitmap.version>
     <flatbuffers.version>25.2.10</flatbuffers.version>
-    <parquet-java.version>1.17.0</parquet-java.version>
+    <parquet-java.version>1.18.1</parquet-java.version>
     <picocli.version>4.7.6</picocli.version>
     <cucumber.version>7.20.1</cucumber.version>
     <native-maven-plugin.version>0.10.6</native-maven-plugin.version>

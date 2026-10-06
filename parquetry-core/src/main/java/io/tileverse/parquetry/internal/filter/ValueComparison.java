@@ -182,6 +182,14 @@ public final class ValueComparison {
     }
 
     /**
+     * Whether {@code min} orders after {@code max}. Such a pair bounds nothing: it is left by a writer ordering the
+     * values of the column unlike the column's type, and a value between the true bounds can lie outside it.
+     */
+    static boolean inverted(Value min, Value max) {
+        return compareValues(min, max) > 0;
+    }
+
+    /**
      * Compares a primitive {@code int} actual value against a predicate-side {@link Value}, without boxing. Used by the
      * vectorized evaluator's typed scan. Agrees with the {@link Value.IntVal} and {@link Value.DateVal} arms of
      * {@link #compareBoxed}. Returns 0 for unknown bound kinds.
