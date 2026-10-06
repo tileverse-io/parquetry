@@ -25,7 +25,6 @@ import java.lang.foreign.MemorySegment;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -520,64 +519,56 @@ class StatsEvaluatorTest {
     }
 
     @Test
-    void notInWithValuesOutsideTheBoundsPassesAll() {
-        // No row matches the IN, hence each row, a null one included, matches its negation.
+    void notInWithValuesOutsideTheBoundsPassesAllWithoutNullCells() {
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
+        Predicate notIn =
+                PredicateNormalizer.normalize(col("year").inInts(2030, 2040).negate());
+
+        assertThat(StatsEvaluator.evaluate(notIn, cols, ROW_COUNT)).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    @Test
+    void notInWithValuesOutsideTheBoundsIsNotDecidedOverNullCells() {
+        // A null cell is in no list and outside none: the rows holding one do not match the negation.
         FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 3));
         Predicate notIn =
                 PredicateNormalizer.normalize(col("year").inInts(2030, 2040).negate());
-        assertThat(StatsEvaluator.evaluate(notIn, cols, ROW_COUNT)).isInstanceOf(PruningDecision.PassedAll.class);
+
+        PruningDecision d = StatsEvaluator.evaluate(notIn, cols, ROW_COUNT);
+
+        assertThat(d)
+                .isNotInstanceOf(PruningDecision.PassedAll.class)
+                .isNotInstanceOf(PruningDecision.Eliminated.class);
     }
 
     @Test
     void notInWithAValueInsideTheBoundsIsNotDecided() {
         FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
         Predicate notIn = PredicateNormalizer.normalize(col("year").inInts(2015).negate());
-        assertThat(StatsEvaluator.evaluate(notIn, cols, ROW_COUNT)).isInstanceOf(PruningDecision.NotApplied.class);
+
+        PruningDecision d = StatsEvaluator.evaluate(notIn, cols, ROW_COUNT);
+
+        assertThat(d)
+                .isNotInstanceOf(PruningDecision.PassedAll.class)
+                .isNotInstanceOf(PruningDecision.Eliminated.class);
     }
 
     @Test
-    void notInOfOnlyNaNOnANaNFreeColumnPassesAllDespiteNulls() {
-        // No cell is NaN, hence each row, a null one included, matches the negation.
-        FilterPipeline.ColumnStatsLookup cols = single("price", nanFreeStats(1.0, 5.0, 3));
+    void notInOfTheSingleValueOfAColumnIsEliminated() {
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2015, 2015, 0));
+        Predicate notIn =
+                PredicateNormalizer.normalize(col("year").inInts(2015, 2040).negate());
 
-        PruningDecision d = StatsEvaluator.evaluate(notInDoubles("price", Double.NaN), cols, ROW_COUNT);
-
-        assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
-    }
-
-    @Test
-    void notInOfNumbersOnAColumnOfOnlyNaNPassesAllDespiteNulls() {
-        FilterPipeline.ColumnStatsLookup cols = single("price", onlyNaNStats(3));
-
-        PruningDecision d = StatsEvaluator.evaluate(notInDoubles("price", 1.0, 2.0), cols, ROW_COUNT);
-
-        assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
-    }
-
-    @Test
-    void notInOfOnlyNaNIsNotDecidedWherePossibleNaNCellsMayMatch() {
-        FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(1.0, 5.0, 0));
-
-        PruningDecision d = StatsEvaluator.evaluate(notInDoubles("price", Double.NaN), cols, ROW_COUNT);
-
-        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
-    }
-
-    @Test
-    void notInOfOnlyNaNIsNotDecidedOnAColumnOfOnlyNaNWithNulls() {
-        // The NaN cells match the list and the null cells do not: the negation matches some rows and not others.
-        FilterPipeline.ColumnStatsLookup cols = single("price", onlyNaNStats(3));
-
-        PruningDecision d = StatsEvaluator.evaluate(notInDoubles("price", Double.NaN), cols, ROW_COUNT);
-
-        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+        assertThat(StatsEvaluator.evaluate(notIn, cols, ROW_COUNT)).isInstanceOf(PruningDecision.Eliminated.class);
     }
 
     @Test
     void notInWithoutValuesPassesAll() {
         FilterPipeline.ColumnStatsLookup cols = single("price", doubleStats(1.0, 5.0, 3));
+        Predicate inNothing = new Predicate.In(ColumnPath.of("price"), List.of());
+        Predicate notInNothing = PredicateNormalizer.normalize(inNothing.negate());
 
-        PruningDecision d = StatsEvaluator.evaluate(notInDoubles("price"), cols, ROW_COUNT);
+        PruningDecision d = StatsEvaluator.evaluate(notInNothing, cols, ROW_COUNT);
 
         assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
     }
@@ -859,14 +850,6 @@ class StatsEvaluatorTest {
         FilterPipeline.ColumnStats stats =
                 annotatedStats(PrimitiveKind.INT64, encodeLong(unscaledMin), encodeLong(unscaledMax), logicalType);
         return single(name, stats);
-    }
-
-    /** The normalized negation of an {@code IN} over the given DOUBLE literals. */
-    private static Predicate notInDoubles(String column, double... values) {
-        List<Value> literals =
-                Arrays.stream(values).<Value>mapToObj(Value.DoubleVal::new).toList();
-        Predicate in = new Predicate.In(ColumnPath.of(column), literals);
-        return PredicateNormalizer.normalize(new Predicate.Not(in));
     }
 
     private static FilterPipeline.ColumnStatsLookup single(String name, FilterPipeline.ColumnStats stats) {

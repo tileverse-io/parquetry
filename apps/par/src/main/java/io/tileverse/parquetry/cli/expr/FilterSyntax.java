@@ -48,6 +48,8 @@ public final class FilterSyntax {
                 "Notes:",
                 "  - The left side of a comparison is a column; the right side is a literal"
                         + " (number, 'string', or true/false).",
+                "  - In a column holding one value per row, a NULL cell matches no comparison and no negation of one:"
+                        + " x <> 1, NOT (x = 1) and x NOT IN (1) skip it. IS NULL selects it.",
                 "  - Contains/Within and Covers/CoveredBy honor argument order; ST_DWithin takes a trailing distance.",
                 "  - Spatial tests run in the file's native CRS; the query geometry is assumed to be in that CRS"
                         + " (no reprojection).",

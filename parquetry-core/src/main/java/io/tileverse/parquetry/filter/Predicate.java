@@ -34,6 +34,12 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * in {@link Eq} or {@link In} matches the NaN cells, whatever their payload bits, and {@link NotEq} with a NaN literal
  * matches the other non-null cells, while {@code NotEq} with a number matches the NaN cells. Negating an ordered
  * comparison flips its operator, and the NaN cells stay unmatched either way.
+ *
+ * <p>Comparisons over a single-valued column treat null cells as SQL does: a comparison matches no null cell, and
+ * neither does its negation. {@code NOT (x = 5)} reads as {@code x <> 5}, and {@code x NOT IN (a, b)} as the
+ * conjunction of {@code x <> a} and {@code x <> b}. The negation of an empty {@link In} list has no value to differ
+ * from and matches each row, a null cell included. {@link IsNull} and {@link IsNotNull} are the leaves matching by
+ * nullness.
  */
 public sealed interface Predicate {
 

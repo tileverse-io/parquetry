@@ -247,13 +247,13 @@ class ColumnIndexEvaluatorTest {
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(notIn, year3Pages(), ROW_GROUP_ROWS);
 
-        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+        assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
     }
 
     @Test
     void negationInsideAConjunctionLeavesTheOtherLeavesNarrowing() {
-        Predicate p = PredicateNormalizer.normalize(
-                col("year").inInts(2020).negate().and(col("year").gt(2023)));
+        Predicate p =
+                PredicateNormalizer.normalize(notInTheBox().and(col("year").gt(2023)));
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(p, year3Pages(), ROW_GROUP_ROWS);
 
@@ -262,9 +262,15 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void consultedColumnsOmitsANegation() {
-        Predicate notIn = PredicateNormalizer.normalize(col("year").inInts(2020).negate());
+        Predicate negation = PredicateNormalizer.normalize(notInTheBox());
 
-        assertThat(ColumnIndexEvaluator.consultedColumns(notIn)).isEmpty();
+        assertThat(ColumnIndexEvaluator.consultedColumns(negation)).isEmpty();
+    }
+
+    /** A negation left as it is by normalization: a spatial relation has no complementary operator. */
+    private static Predicate notInTheBox() {
+        Predicate inTheBox = new Predicate.Spatial.BboxIntersects(ColumnPath.of("geometry"), Bbox.of2d(-1, -1, 1, 1));
+        return inTheBox.negate();
     }
 
     @Test

@@ -32,23 +32,29 @@ import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.UuidConverter;
 
 /**
- * Rewrites a {@link Predicate} into a canonical form expected by the filter pipeline. Applies three structural passes -
- * push {@link Predicate.Not} down to the leaves via De Morgan's laws, constant-fold {@link Predicate.Always} nodes, and
- * flatten nested {@link Predicate.And} / {@link Predicate.Or} - and offers a separate schema-validation pass that
- * throws {@link ParquetSchemaException} for unknown columns, value/type mismatches, and multi-valued columns compared
- * without a quantifier.
+ * Rewrites a {@link Predicate} into a canonical form expected by the filter pipeline. Applies four structural passes -
+ * push {@link Predicate.Not} down to the leaves via De Morgan's laws, rewrite a bare negated {@link Predicate.In} with
+ * values into its inequalities, constant-fold {@link Predicate.Always} nodes, and flatten nested {@link Predicate.And}
+ * / {@link Predicate.Or} - and offers a separate schema-validation pass that throws {@link ParquetSchemaException} for
+ * unknown columns, value/type mismatches, and multi-valued columns compared without a quantifier.
+ *
+ * <p>The negation of a comparison over a single-valued column follows SQL for null cells: a null cell matches neither a
+ * comparison nor its negation.
  */
 public final class PredicateNormalizer {
 
     private PredicateNormalizer() {}
 
     /**
-     * Returns a structurally-normalized copy of {@code p}: {@code Not} pushed to leaves, {@code Always} folded, nested
-     * {@code And}/{@code Or} flattened, single-child connectives unwrapped, empty connectives collapsed to
-     * {@link Predicate#ALWAYS_TRUE} (for {@code And}) or {@link Predicate#ALWAYS_FALSE} (for {@code Or}).
+     * Returns a structurally-normalized copy of {@code p}: {@code Not} pushed to leaves, a bare negated {@code In}
+     * rewritten into its inequalities, {@code Always} folded, nested {@code And}/{@code Or} flattened, single-child
+     * connectives unwrapped, empty connectives collapsed to {@link Predicate#ALWAYS_TRUE} (for {@code And}) or
+     * {@link Predicate#ALWAYS_FALSE} (for {@code Or}).
      */
     public static Predicate normalize(Predicate p) {
-        return flatten(foldAlways(pushDownNot(p)));
+        Predicate notAtLeaves = pushDownNot(p);
+        Predicate withoutNegatedIn = expandNegatedIn(notAtLeaves);
+        return flatten(foldAlways(withoutNegatedIn));
     }
 
     /**
@@ -128,7 +134,8 @@ public final class PredicateNormalizer {
     /**
      * Returns the logical negation of an already-Not-pushed predicate. For comparison atoms (Eq/Lt/...) returns the
      * complementary operator. For {@code In} and the spatial relations - which have no simple leaf complement - wraps
-     * in a {@code Not}; the pipeline keeps these as outer negations.
+     * in a {@code Not}. The pipeline keeps the negated spatial relations as outer negations, and
+     * {@link #expandNegatedIn} rewrites a bare negated {@code In} with values.
      */
     private static Predicate negate(Predicate p) {
         return switch (p) {
@@ -173,6 +180,37 @@ public final class PredicateNormalizer {
         }
         MatchAction flipped = match == MatchAction.ANY ? MatchAction.ALL : MatchAction.ANY;
         return new Predicate.Quantified(flipped, negatedLeaf);
+    }
+
+    /**
+     * Rewrites a bare {@code NOT IN}, one outside a quantifier, into the conjunction of its inequalities. A null cell
+     * differs from no value, as in SQL: {@code x NOT IN (a, b)} reads as {@code x <> a AND x <> b} and matches no null
+     * cell. The negation of an empty list stays as it is: there is no value to differ from, and it matches each row.
+     *
+     * <p>A negated list under a quantifier stays as it is too: the quantifier tests the non-null elements one by one.
+     */
+    private static Predicate expandNegatedIn(Predicate p) {
+        return switch (p) {
+            case Predicate.Not(Predicate.In(ColumnPath col, List<Value> values))
+            when !values.isEmpty() -> differsFromEach(col, values);
+            case Predicate.And(List<Predicate> children) ->
+                new Predicate.And(children.stream()
+                        .map(PredicateNormalizer::expandNegatedIn)
+                        .toList());
+            case Predicate.Or(List<Predicate> children) ->
+                new Predicate.Or(children.stream()
+                        .map(PredicateNormalizer::expandNegatedIn)
+                        .toList());
+            default -> p;
+        };
+    }
+
+    private static Predicate differsFromEach(ColumnPath col, List<Value> values) {
+        List<Predicate> inequalities = new ArrayList<>(values.size());
+        for (Value value : values) {
+            inequalities.add(new Predicate.NotEq(col, value));
+        }
+        return new Predicate.And(inequalities);
     }
 
     private static Predicate foldAlways(Predicate p) {

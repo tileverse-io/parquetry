@@ -52,6 +52,8 @@ class PredicateNormalizerTest {
 
     private static final ColumnPath REPEATED_TAG = ColumnPath.of("tag");
 
+    private static final ColumnPath YEAR = ColumnPath.of("year");
+
     @Test
     void notEqualBecomesNotEqAfterPushDown() {
         Predicate normalized =
@@ -89,6 +91,66 @@ class PredicateNormalizerTest {
                 new Predicate.NotEq(ColumnPath.of("year"), new Value.IntVal(2020)),
                 new Predicate.NotEq(ColumnPath.of("country"), new Value.StringVal("AR"))));
         assertThat(PredicateNormalizer.normalize(input)).isEqualTo(expected);
+    }
+
+    @Test
+    void notInBecomesTheConjunctionOfItsInequalities() {
+        Predicate in = new Predicate.In(YEAR, List.of(new Value.IntVal(2020), new Value.IntVal(2021)));
+
+        Predicate normalized = PredicateNormalizer.normalize(new Predicate.Not(in));
+
+        Predicate expected = new Predicate.And(List.of(
+                new Predicate.NotEq(YEAR, new Value.IntVal(2020)), new Predicate.NotEq(YEAR, new Value.IntVal(2021))));
+        assertThat(normalized).isEqualTo(expected);
+    }
+
+    @Test
+    void notInOfASingleValueBecomesItsInequality() {
+        Predicate in = new Predicate.In(YEAR, List.of(new Value.IntVal(2020)));
+
+        Predicate normalized = PredicateNormalizer.normalize(new Predicate.Not(in));
+
+        assertThat(normalized).isEqualTo(new Predicate.NotEq(YEAR, new Value.IntVal(2020)));
+    }
+
+    @Test
+    void notInWithoutValuesStaysNegated() {
+        Predicate notInNothing = new Predicate.Not(new Predicate.In(YEAR, List.of()));
+
+        assertThat(PredicateNormalizer.normalize(notInNothing)).isEqualTo(notInNothing);
+    }
+
+    @Test
+    void notInWithoutValuesOverARepeatedLeafIsRejected() {
+        Predicate notInNothing = new Predicate.Not(new Predicate.In(LIST_ITEM, List.of()));
+        ParquetSchema schema = listSchema();
+
+        assertThatThrownBy(() -> PredicateNormalizer.normalizeAndValidate(notInNothing, schema))
+                .isInstanceOf(ParquetSchemaException.class)
+                .hasMessage(multiValuedMessage(LIST_ITEM.dot()));
+    }
+
+    @Test
+    void negatedDisjunctionWithAnInFlattensItsInequalities() {
+        Predicate in = new Predicate.In(YEAR, List.of(new Value.IntVal(2020), new Value.IntVal(2021)));
+        Predicate input = in.or(col("country").eq("AR")).negate();
+
+        Predicate normalized = PredicateNormalizer.normalize(input);
+
+        Predicate expected = new Predicate.And(List.of(
+                new Predicate.NotEq(YEAR, new Value.IntVal(2020)),
+                new Predicate.NotEq(YEAR, new Value.IntVal(2021)),
+                new Predicate.NotEq(ColumnPath.of("country"), new Value.StringVal("AR"))));
+        assertThat(normalized).isEqualTo(expected);
+    }
+
+    @Test
+    void doublyNegatedInIsTheIn() {
+        Predicate in = new Predicate.In(YEAR, List.of(new Value.IntVal(2020), new Value.IntVal(2021)));
+
+        Predicate normalized = PredicateNormalizer.normalize(in.negate().negate());
+
+        assertThat(normalized).isEqualTo(in);
     }
 
     @Test
