@@ -160,7 +160,7 @@ final class SpatialFilterTranslator {
     }
 
     private ColumnPath requireGeometryColumn(Column column) {
-        ColumnPath path = columnPath(column);
+        ColumnPath path = ColumnReferences.pathOf(column);
         if (!geometryColumns.contains(path)) {
             throw new FilterParseException("ST_* requires a geometry column, got: " + path.dot());
         }
@@ -168,7 +168,7 @@ final class SpatialFilterTranslator {
     }
 
     private ColumnPath requireGeometryColumn(Column column, String extentFunction) {
-        ColumnPath path = columnPath(column);
+        ColumnPath path = ColumnReferences.pathOf(column);
         if (!geometryColumns.contains(path)) {
             throw new FilterParseException(extentFunction + " takes a geometry column, got: " + path.dot()
                     + " (the bbox covering columns are used automatically; filter the geometry column)");
@@ -182,10 +182,6 @@ final class SpatialFilterTranslator {
 
     private static boolean isEnvelopeConstructor(String name) {
         return QueryConstructor.ST_MAKE_ENVELOPE.sqlName().equalsIgnoreCase(name);
-    }
-
-    private ColumnPath columnPath(Column column) {
-        return ColumnPath.of(column.getFullyQualifiedName().split("\\."));
     }
 
     private Geometry queryGeometry(Function constructor) {

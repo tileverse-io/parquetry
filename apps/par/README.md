@@ -69,13 +69,14 @@ Notes:
 (on any filtering command) to print the supported set:
 
 - **Comparisons**: `=` `!=` `<>` `<` `<=` `>` `>=`
-- **Logical**: `AND`, `OR`, `NOT`
+- **Logical**: `AND`, `OR`, `NOT`, parentheses to group conditions
 - **Sets / ranges**: `IN (...)`, `NOT IN (...)`, `BETWEEN x AND y`, `IS NULL`, `IS NOT NULL`
 - **Spatial relations**: `ST_Intersects`, `ST_Touches`, `ST_Crosses`, `ST_Overlaps`, `ST_Disjoint`, `ST_Equals`,
   `ST_Contains`, `ST_Within`, `ST_Covers`, `ST_CoveredBy`, `ST_DWithin(geom, query, distance)`
 - **Query geometry**: `ST_GeomFromText('WKT')`, `ST_MakeEnvelope(minx, miny, maxx, maxy)`
 
 The left side of a comparison is a column; the right side is a literal (number, `'string'`, or `true`/`false`).
+A column named as a SQL keyword, or with a space, goes in double quotes: `"from" > 1`, `"my column" = 2`.
 `ST_Contains`/`ST_Within` and `ST_Covers`/`ST_CoveredBy` honor argument order. Spatial tests run in the file's native
 CRS; the query geometry is assumed to already be in that CRS (no reprojection). An unsupported predicate fails with
 exit code 5 and a message pointing back at `--filter-help`.
