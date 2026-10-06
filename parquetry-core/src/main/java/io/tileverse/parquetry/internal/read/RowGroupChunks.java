@@ -28,6 +28,7 @@ import java.util.Set;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.OffsetIndex;
+import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnBloom;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStats;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnStats;
@@ -272,7 +273,10 @@ public final class RowGroupChunks {
         ranges.add(new IndexSectionRange(purpose, offset.getAsLong(), length));
     }
 
-    /** The memoized {@link OffsetIndex}, or empty when absent or unreadable. */
+    /**
+     * The memoized {@link OffsetIndex}, or empty when absent, unreadable, or with pages not following one another in
+     * the rows of the row group and in the bytes of the file.
+     */
     public Optional<OffsetIndex> offsetIndex(ColumnPath path) {
         return offsetIndexMemo.computeIfAbsent(path, this::loadOffsetIndex);
     }
@@ -283,7 +287,8 @@ public final class RowGroupChunks {
     }
 
     /**
-     * The memoized column-index tier input (kind + column index + offset index). Loading it populates the
+     * The memoized column-index tier input (kind + column index + offset index), or empty when either index is not
+     * usable or the column index lacks an entry per page of the offset index. Loading it populates the
      * {@link #offsetIndex} and {@link #columnIndex} memos, and a later {@code offsetIndex(path)} for the same column
      * does not re-read.
      */
@@ -306,10 +311,44 @@ public final class RowGroupChunks {
             return Optional.empty();
         }
         try {
-            return Optional.of(loader.readOffsetIndex(offset.getAsLong(), chunk.offsetIndexLength()));
+            OffsetIndex index = loader.readOffsetIndex(offset.getAsLong(), chunk.offsetIndexLength());
+            return Optional.of(index).filter(this::placesItsPagesInOrder);
         } catch (RuntimeException _) {
             return Optional.empty();
         }
+    }
+
+    /**
+     * Whether the pages of {@code index} follow one another in the rows of this row group and in the bytes of the file:
+     * the first page starts at the first row, each later page starts after the rows and the bytes of the previous one,
+     * and the last page starts before the last row ends. Readers find the rows of a page between its first row and the
+     * first row of the next page, and its bytes at its offset; an index failing this places rows in the wrong page, or
+     * in none.
+     */
+    private boolean placesItsPagesInOrder(OffsetIndex index) {
+        List<PageLocation> pages = index.pageLocations();
+        if (pages.isEmpty()) {
+            return numRows() == 0L;
+        }
+        PageLocation previous = pages.get(0);
+        if (previous.firstRowIndex() != 0L || previous.compressedPageSize() <= 0) {
+            return false;
+        }
+        for (PageLocation page : pages.subList(1, pages.size())) {
+            if (!follows(page, previous)) {
+                return false;
+            }
+            previous = page;
+        }
+        return previous.firstRowIndex() < numRows();
+    }
+
+    /** Whether {@code page} holds bytes and starts after the rows and the bytes of {@code previous}. */
+    private static boolean follows(PageLocation page, PageLocation previous) {
+        boolean laterRows = page.firstRowIndex() > previous.firstRowIndex();
+        long endOfPrevious = previous.offset() + previous.compressedPageSize();
+        boolean laterBytes = page.offset() >= endOfPrevious;
+        return laterRows && laterBytes && page.compressedPageSize() > 0;
     }
 
     private Optional<ColumnIndex> loadColumnIndex(ColumnPath path) {
@@ -338,8 +377,19 @@ public final class RowGroupChunks {
         if (ci.isEmpty() || oi.isEmpty()) {
             return Optional.empty();
         }
+        if (!hasOneEntryPerPage(ci.orElseThrow(), oi.orElseThrow())) {
+            return Optional.empty();
+        }
         return Optional.of(new ColumnPageStats(
                 kind.orElseThrow(), ci.orElseThrow(), oi.orElseThrow(), logicalType(path), boundsOrdered(path)));
+    }
+
+    /** Whether the null flags and the bounds of {@code columnIndex} have one entry per page of {@code offsetIndex}. */
+    private static boolean hasOneEntryPerPage(ColumnIndex columnIndex, OffsetIndex offsetIndex) {
+        int pages = offsetIndex.pageLocations().size();
+        return columnIndex.nullPages().size() == pages
+                && columnIndex.minValues().size() == pages
+                && columnIndex.maxValues().size() == pages;
     }
 
     private boolean boundsOrdered(ColumnPath path) {

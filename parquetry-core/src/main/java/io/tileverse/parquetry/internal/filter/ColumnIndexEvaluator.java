@@ -321,7 +321,8 @@ final class ColumnIndexEvaluator {
         if (off.pageLocations().size() != pageCount) {
             return Optional.empty();
         }
-        Optional<List<Long>> nullCounts = idx.nullCounts();
+        // null counts are usable only when the list has one count per page, as for the NaN rule
+        Optional<List<Long>> nullCounts = idx.nullCounts().filter(counts -> counts.size() == pageCount);
         List<Range> surviving = new ArrayList<>();
         for (int i = 0; i < pageCount; i++) {
             if (pageMatchesNullPredicate(i, idx, off, nullCounts, rowGroupRowCount, wantNulls)) {
