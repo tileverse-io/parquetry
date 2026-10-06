@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.cli.cmd;
 
+import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.OutputStream;
@@ -52,8 +53,11 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
+import io.tileverse.parquetry.format.ColumnOrder;
 import io.tileverse.parquetry.format.FileMetaData;
+import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -68,6 +72,8 @@ import io.tileverse.parquetry.testkit.TestCorpus;
 import picocli.CommandLine;
 
 class CpCmdTest {
+
+    private static final ColumnPath NAN_COLUMN = ColumnPath.of("value");
 
     @Test
     void preservesOpaqueKeyValueMetadata(@TempDir Path dir) throws Exception {
@@ -640,22 +646,115 @@ class CpCmdTest {
         assertThat(pageCount(dst, ColumnPath.of("bbox", "xmin"))).isEqualTo(1);
     }
 
-    /** The number of data pages written for {@code column} in the file's first row group. */
-    private static int pageCount(Path file, ColumnPath column) throws Exception {
+    @Test
+    void floatColumnOrderFlagDeclaresTotalOrderForTheFloatingPointColumns(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("geo-cities.parquet");
+        Path dst = dir.resolve("total-order.parquet");
+        Fixtures.writeGeoCities(src);
+
+        int code = Par.newCommandLine()
+                .execute("cp", src.toString(), dst.toString(), "--float-column-order", "ieee_754_total_order");
+
+        assertThat(code).isZero();
+        assertThat(columnOrder(dst, "bbox.xmin")).isInstanceOf(ColumnOrder.Ieee754TotalOrder.class);
+        assertThat(columnOrder(dst, "id")).isInstanceOf(ColumnOrder.TypeDefined.class);
+    }
+
+    @Test
+    void withoutTheFlagTheFloatingPointColumnsDeclareTheTypeDefinedOrder(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("geo-cities.parquet");
+        Path dst = dir.resolve("type-defined.parquet");
+        Fixtures.writeGeoCities(src);
+
+        int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString());
+
+        assertThat(code).isZero();
+        assertThat(columnOrder(dst, "bbox.xmin")).isInstanceOf(ColumnOrder.TypeDefined.class);
+    }
+
+    @Test
+    void floatColumnOrderFlagBoundsAColumnOfOnlyNaNAndKeepsItsColumnIndex(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("nan.parquet");
+        Path dst = dir.resolve("total-order.parquet");
+        writeColumnOfOnlyNaN(src);
+
+        int code = Par.newCommandLine()
+                .execute("cp", src.toString(), dst.toString(), "--float-column-order", "ieee_754_total_order");
+
+        assertThat(code).isZero();
+        ColumnChunk chunk = chunkOf(dst, NAN_COLUMN);
+        Statistics statistics = statisticsOf(chunk);
+        int nanBits = Float.floatToRawIntBits(Float.NaN);
+        assertThat(statistics.minValue().get(INT32, 0)).as("min").isEqualTo(nanBits);
+        assertThat(statistics.maxValue().get(INT32, 0)).as("max").isEqualTo(nanBits);
+        assertThat(chunk.columnIndexOffset()).as("column index").isPresent();
+    }
+
+    @Test
+    void rejectsAnUnknownFloatColumnOrder(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("geo-cities.parquet");
+        Path dst = dir.resolve("dst.parquet");
+        Fixtures.writeGeoCities(src);
+
+        int code = Par.newCommandLine()
+                .execute("cp", src.toString(), dst.toString(), "--float-column-order", "alphabetical");
+
+        assertThat(code).isEqualTo(CliExitCode.USAGE);
+    }
+
+    /** Writes two rows of a single FLOAT column holding NaN alone. */
+    private static void writeColumnOfOnlyNaN(Path file) throws Exception {
+        SchemaNode.Primitive value = new SchemaNode.Primitive(
+                NAN_COLUMN.dot(), Repetition.REQUIRED, PrimitiveKind.FLOAT, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Group root =
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(value), Optional.empty(), -1);
+        WriteOptions options = WriteOptions.builder().tempDir(file.getParent()).build();
+        try (OutputStream out = Files.newOutputStream(file);
+                ParquetFileWriter writer = ParquetFileWriter.create(out, new ParquetSchema(root), options)) {
+            ParquetRecordBatchBuilder appender = writer.appender();
+            appender.setFloat(NAN_COLUMN, Float.NaN).endRow();
+            appender.setFloat(NAN_COLUMN, Float.NaN).endRow();
+            appender.flush();
+        }
+    }
+
+    /** The chunk of {@code column} in the first row group of {@code file}. */
+    private static ColumnChunk chunkOf(Path file, ColumnPath column) throws Exception {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             FileMetaData footer = ParquetFormat.readFooter(source);
             for (ColumnChunk chunk : footer.rowGroups().getFirst().columns()) {
                 ColumnMetaData meta = chunk.metaData().orElseThrow();
-                if (!column.equals(ColumnPath.of(meta.pathInSchema()))) {
-                    continue;
+                if (column.equals(ColumnPath.of(meta.pathInSchema()))) {
+                    return chunk;
                 }
-                long offset = chunk.offsetIndexOffset().orElseThrow();
-                int length = chunk.offsetIndexLength().orElseThrow();
-                return ParquetFormat.readOffsetIndex(source, offset, length)
-                        .pageLocations()
-                        .size();
             }
-            throw new IllegalStateException("the copy has no column chunk for " + column.dot());
+            throw new IllegalStateException("the file has no column chunk for " + column.dot());
+        }
+    }
+
+    private static Statistics statisticsOf(ColumnChunk chunk) {
+        ColumnMetaData meta = chunk.metaData().orElseThrow();
+        return meta.statistics().orElseThrow();
+    }
+
+    /** The column order declared in the footer of {@code file} for the leaf at the dotted path {@code leaf}. */
+    private static ColumnOrder columnOrder(Path file, String leaf) throws Exception {
+        int ordinal = leafPaths(file).indexOf(leaf);
+        assertThat(ordinal).as("leaf %s of the copy", leaf).isNotNegative();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            FileMetaData footer = ParquetFormat.readFooter(source);
+            return footer.columnOrders().orElseThrow().get(ordinal);
+        }
+    }
+
+    /** The number of data pages written for {@code column} in the file's first row group. */
+    private static int pageCount(Path file, ColumnPath column) throws Exception {
+        ColumnChunk chunk = chunkOf(file, column);
+        long offset = chunk.offsetIndexOffset().orElseThrow();
+        int length = chunk.offsetIndexLength().orElseThrow();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            OffsetIndex offsetIndex = ParquetFormat.readOffsetIndex(source, offset, length);
+            return offsetIndex.pageLocations().size();
         }
     }
 

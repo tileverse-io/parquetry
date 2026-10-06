@@ -15,38 +15,35 @@
  */
 package io.tileverse.parquetry.internal.write;
 
-import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
-import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
+import static io.tileverse.parquetry.internal.write.WriteFixtures.DOUBLE_LEAF;
+import static io.tileverse.parquetry.internal.write.WriteFixtures.DOUBLE_NEGATIVE_NAN;
+import static io.tileverse.parquetry.internal.write.WriteFixtures.FLOAT_LEAF;
+import static io.tileverse.parquetry.internal.write.WriteFixtures.FLOAT_NEGATIVE_NAN;
+import static io.tileverse.parquetry.internal.write.WriteFixtures.HALF_FLOAT_LEAF;
+import static io.tileverse.parquetry.internal.write.WriteFixtures.HALF_NAN;
+import static io.tileverse.parquetry.internal.write.WriteFixtures.HALF_NEGATIVE_NAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
+import io.tileverse.parquetry.data.WriteOptions.FloatColumnOrder;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.internal.write.page.PageStatistics;
 import io.tileverse.parquetry.schema.PrimitiveKind;
-import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * The statistics of FLOAT, DOUBLE and FLOAT16 columns follow the rules of the format for the type-defined order: the
  * bounds are the smallest and largest numbers, a zero bound is recorded as {@code -0.0} for a minimum and as
  * {@code +0.0} for a maximum, the NaN cells are counted and left out of the bounds, and a window holding nothing but
- * NaN has no bounds.
+ * NaN has no bounds. The rules shared with IEEE 754 total order are checked in both orders.
  */
 class StatisticsAccumulatorFloatingPointTest {
-
-    private static final SchemaNode.Primitive FLOAT = WriteFixtures.leaf(PrimitiveKind.FLOAT, null);
-    private static final SchemaNode.Primitive DOUBLE = WriteFixtures.leaf(PrimitiveKind.DOUBLE, null);
-    private static final SchemaNode.Primitive HALF =
-            WriteFixtures.leaf(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, new LogicalType.Float16Type());
-
-    private static final int FLOAT_NEGATIVE_NAN = 0xFFC00000;
-    private static final long DOUBLE_NEGATIVE_NAN = 0xFFF8000000000000L;
-    private static final short HALF_NAN = (short) 0x7E00;
-    private static final short HALF_NEGATIVE_NAN = (short) 0xFE00;
 
     private static final int FLOAT_NEGATIVE_ZERO = Float.floatToRawIntBits(-0.0f);
     private static final int FLOAT_POSITIVE_ZERO = Float.floatToRawIntBits(0.0f);
@@ -55,9 +52,10 @@ class StatisticsAccumulatorFloatingPointTest {
     private static final short HALF_NEGATIVE_ZERO = Float.floatToFloat16(-0.0f);
     private static final short HALF_POSITIVE_ZERO = Float.floatToFloat16(0.0f);
 
-    @Test
-    void floatBoundsCoverTheNumbersAndTheNaNsAreCounted() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forColumn(FLOAT);
+    @ParameterizedTest
+    @EnumSource(FloatColumnOrder.class)
+    void floatBoundsCoverTheNumbersAndTheNaNsAreCounted(FloatColumnOrder order) {
+        StatisticsAccumulator acc = WriteFixtures.accumulator(FLOAT_LEAF, order);
         acc.updateFloat(1.5f);
         acc.updateFloat(Float.NaN);
         acc.updateFloat(-2.25f);
@@ -67,34 +65,49 @@ class StatisticsAccumulatorFloatingPointTest {
 
         Statistics stats = acc.finishChunk();
 
-        assertThat(floatBits(stats.minValue())).isEqualTo(Float.floatToRawIntBits(-2.25f));
-        assertThat(floatBits(stats.maxValue())).isEqualTo(Float.floatToRawIntBits(3.0f));
+        assertThat(WriteFixtures.floatBits(stats.minValue())).isEqualTo(Float.floatToRawIntBits(-2.25f));
+        assertThat(WriteFixtures.floatBits(stats.maxValue())).isEqualTo(Float.floatToRawIntBits(3.0f));
         assertThat(stats.nanCount()).hasValue(2L);
         assertThat(stats.nullCount()).hasValue(1L);
     }
 
-    @Test
-    void floatColumnWithoutNaNsRecordsANaNCountOfZero() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forColumn(FLOAT);
+    @ParameterizedTest
+    @EnumSource(FloatColumnOrder.class)
+    void floatColumnWithoutNaNsRecordsANaNCountOfZero(FloatColumnOrder order) {
+        StatisticsAccumulator acc = WriteFixtures.accumulator(FLOAT_LEAF, order);
         acc.updateFloat(1.5f);
 
         assertThat(acc.finishChunk().nanCount()).hasValue(0L);
         assertThat(acc.finishPage().nanCount()).hasValue(0L);
     }
 
-    @Test
-    void emptyFloatChunkRecordsANaNCountOfZeroAndNoBounds() {
-        Statistics stats = StatisticsAccumulator.forColumn(FLOAT).finishChunk();
+    @ParameterizedTest
+    @EnumSource(FloatColumnOrder.class)
+    void emptyFloatChunkRecordsANaNCountOfZeroAndNoBounds(FloatColumnOrder order) {
+        Statistics stats = WriteFixtures.accumulator(FLOAT_LEAF, order).finishChunk();
 
         assertThat(stats.nanCount()).hasValue(0L);
         assertThat(stats.minValue()).isEqualTo(MemorySegment.NULL);
         assertThat(stats.maxValue()).isEqualTo(MemorySegment.NULL);
     }
 
+    @ParameterizedTest
+    @EnumSource(FloatColumnOrder.class)
+    void floatColumnOfBothZerosIsBoundedByNegativeZeroAndPositiveZero(FloatColumnOrder order) {
+        StatisticsAccumulator acc = WriteFixtures.accumulator(FLOAT_LEAF, order);
+        acc.updateFloat(0.0f);
+        acc.updateFloat(-0.0f);
+
+        Statistics stats = acc.finishChunk();
+
+        assertThat(WriteFixtures.floatBits(stats.minValue())).isEqualTo(FLOAT_NEGATIVE_ZERO);
+        assertThat(WriteFixtures.floatBits(stats.maxValue())).isEqualTo(FLOAT_POSITIVE_ZERO);
+    }
+
     @Test
     void halfFloatAnnotationOnAnotherWidthRecordsNoNaNCount() {
         StatisticsAccumulator acc =
-                StatisticsAccumulator.forColumn(WriteFixtures.fixedLeaf(4, new LogicalType.Float16Type()));
+                WriteFixtures.accumulator(WriteFixtures.fixedLeaf(4, new LogicalType.Float16Type()));
         acc.updateBinary(MemorySegment.ofArray(new byte[] {0x00, 0x7E, 0x00, 0x7E}));
 
         assertThat(acc.finishChunk().nanCount()).isEmpty();
@@ -102,7 +115,7 @@ class StatisticsAccumulatorFloatingPointTest {
 
     @Test
     void integerColumnRecordsNoNaNCount() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forColumn(WriteFixtures.leaf(PrimitiveKind.INT32, null));
+        StatisticsAccumulator acc = WriteFixtures.accumulator(WriteFixtures.leaf(PrimitiveKind.INT32, null));
         acc.updateInt(7);
 
         assertThat(acc.finishChunk().nanCount()).isEmpty();
@@ -111,7 +124,7 @@ class StatisticsAccumulatorFloatingPointTest {
 
     @Test
     void floatChunkOfOnlyNaNsHasNoBounds() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forColumn(FLOAT);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(FLOAT_LEAF);
         acc.updateFloat(Float.NaN);
         acc.updateFloat(Float.intBitsToFloat(FLOAT_NEGATIVE_NAN));
 
@@ -126,47 +139,47 @@ class StatisticsAccumulatorFloatingPointTest {
 
     @Test
     void floatZeroMinimumIsRecordedAsNegativeZero() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forColumn(FLOAT);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(FLOAT_LEAF);
         acc.updateFloat(0.0f);
         acc.updateFloat(1.0f);
 
         Statistics stats = acc.finishChunk();
 
-        assertThat(floatBits(stats.minValue())).isEqualTo(FLOAT_NEGATIVE_ZERO);
-        assertThat(floatBits(stats.maxValue())).isEqualTo(Float.floatToRawIntBits(1.0f));
+        assertThat(WriteFixtures.floatBits(stats.minValue())).isEqualTo(FLOAT_NEGATIVE_ZERO);
+        assertThat(WriteFixtures.floatBits(stats.maxValue())).isEqualTo(Float.floatToRawIntBits(1.0f));
     }
 
     @Test
     void floatZeroMaximumIsRecordedAsPositiveZero() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forColumn(FLOAT);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(FLOAT_LEAF);
         acc.updateFloat(-0.0f);
         acc.updateFloat(-1.0f);
 
         Statistics stats = acc.finishChunk();
 
-        assertThat(floatBits(stats.minValue())).isEqualTo(Float.floatToRawIntBits(-1.0f));
-        assertThat(floatBits(stats.maxValue())).isEqualTo(FLOAT_POSITIVE_ZERO);
+        assertThat(WriteFixtures.floatBits(stats.minValue())).isEqualTo(Float.floatToRawIntBits(-1.0f));
+        assertThat(WriteFixtures.floatBits(stats.maxValue())).isEqualTo(FLOAT_POSITIVE_ZERO);
     }
 
     @Test
     void floatColumnOfOneZeroIsBoundedByBothZeros() {
-        StatisticsAccumulator positiveZero = StatisticsAccumulator.forColumn(FLOAT);
+        StatisticsAccumulator positiveZero = WriteFixtures.accumulator(FLOAT_LEAF);
         positiveZero.updateFloat(0.0f);
-        StatisticsAccumulator negativeZero = StatisticsAccumulator.forColumn(FLOAT);
+        StatisticsAccumulator negativeZero = WriteFixtures.accumulator(FLOAT_LEAF);
         negativeZero.updateFloat(-0.0f);
 
         for (Statistics stats : List.of(positiveZero.finishChunk(), negativeZero.finishChunk())) {
-            assertThat(floatBits(stats.minValue())).isEqualTo(FLOAT_NEGATIVE_ZERO);
-            assertThat(floatBits(stats.maxValue())).isEqualTo(FLOAT_POSITIVE_ZERO);
+            assertThat(WriteFixtures.floatBits(stats.minValue())).isEqualTo(FLOAT_NEGATIVE_ZERO);
+            assertThat(WriteFixtures.floatBits(stats.maxValue())).isEqualTo(FLOAT_POSITIVE_ZERO);
         }
     }
 
     @Test
     void zeroBoundWrittenOverACellOfTheOtherSignIsNotFlaggedExact() {
-        StatisticsAccumulator positiveZeroMinimum = StatisticsAccumulator.forColumn(FLOAT);
+        StatisticsAccumulator positiveZeroMinimum = WriteFixtures.accumulator(FLOAT_LEAF);
         positiveZeroMinimum.updateFloat(0.0f);
         positiveZeroMinimum.updateFloat(1.0f);
-        StatisticsAccumulator negativeZeroMaximum = StatisticsAccumulator.forColumn(FLOAT);
+        StatisticsAccumulator negativeZeroMaximum = WriteFixtures.accumulator(FLOAT_LEAF);
         negativeZeroMaximum.updateFloat(-0.0f);
         negativeZeroMaximum.updateFloat(-1.0f);
 
@@ -185,7 +198,7 @@ class StatisticsAccumulatorFloatingPointTest {
 
     @Test
     void zeroBoundHeldByACellIsFlaggedExact() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forColumn(DOUBLE);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(DOUBLE_LEAF);
         acc.updateDouble(-0.0);
         acc.updateDouble(0.0);
 
@@ -197,7 +210,7 @@ class StatisticsAccumulatorFloatingPointTest {
 
     @Test
     void pageStatisticsTellWhetherAZeroBoundIsHeldByACell() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forColumn(HALF);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(HALF_FLOAT_LEAF);
         acc.updateBinary(WriteFixtures.halfFloat(0.0f));
         acc.updateBinary(WriteFixtures.halfFloat(2.0f));
 
@@ -207,27 +220,29 @@ class StatisticsAccumulatorFloatingPointTest {
         assertThat(page.maxExact()).isTrue();
     }
 
-    @Test
-    void floatBoundsMirrorIntoTheDeprecatedFields() {
-        StatisticsAccumulator floats = StatisticsAccumulator.forColumn(FLOAT);
+    @ParameterizedTest
+    @EnumSource(FloatColumnOrder.class)
+    void floatBoundsMirrorIntoTheDeprecatedFields(FloatColumnOrder order) {
+        StatisticsAccumulator floats = WriteFixtures.accumulator(FLOAT_LEAF, order);
         floats.updateFloat(0.0f);
         floats.updateFloat(-2.0f);
-        StatisticsAccumulator doubles = StatisticsAccumulator.forColumn(DOUBLE);
+        StatisticsAccumulator doubles = WriteFixtures.accumulator(DOUBLE_LEAF, order);
         doubles.updateDouble(1.0);
         doubles.updateDouble(-2.0);
 
         Statistics floatStats = floats.finishChunk();
         Statistics doubleStats = doubles.finishChunk();
 
-        assertThat(floatBits(floatStats.min())).isEqualTo(Float.floatToRawIntBits(-2.0f));
-        assertThat(floatBits(floatStats.max())).isEqualTo(FLOAT_POSITIVE_ZERO);
-        assertThat(doubleBits(doubleStats.min())).isEqualTo(Double.doubleToRawLongBits(-2.0));
-        assertThat(doubleBits(doubleStats.max())).isEqualTo(Double.doubleToRawLongBits(1.0));
+        assertThat(WriteFixtures.floatBits(floatStats.min())).isEqualTo(Float.floatToRawIntBits(-2.0f));
+        assertThat(WriteFixtures.floatBits(floatStats.max())).isEqualTo(FLOAT_POSITIVE_ZERO);
+        assertThat(WriteFixtures.doubleBits(doubleStats.min())).isEqualTo(Double.doubleToRawLongBits(-2.0));
+        assertThat(WriteFixtures.doubleBits(doubleStats.max())).isEqualTo(Double.doubleToRawLongBits(1.0));
     }
 
-    @Test
-    void halfFloatBoundsStayOutOfTheDeprecatedFields() {
-        StatisticsAccumulator halves = StatisticsAccumulator.forColumn(HALF);
+    @ParameterizedTest
+    @EnumSource(FloatColumnOrder.class)
+    void halfFloatBoundsStayOutOfTheDeprecatedFields(FloatColumnOrder order) {
+        StatisticsAccumulator halves = WriteFixtures.accumulator(HALF_FLOAT_LEAF, order);
         halves.updateBinary(WriteFixtures.halfFloat(1.0f));
 
         Statistics stats = halves.finishChunk();
@@ -236,9 +251,10 @@ class StatisticsAccumulatorFloatingPointTest {
         assertThat(stats.max()).isEqualTo(MemorySegment.NULL);
     }
 
-    @Test
-    void doubleBoundsCoverTheNumbersAndTheNaNsAreCounted() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forColumn(DOUBLE);
+    @ParameterizedTest
+    @EnumSource(FloatColumnOrder.class)
+    void doubleBoundsCoverTheNumbersAndTheNaNsAreCounted(FloatColumnOrder order) {
+        StatisticsAccumulator acc = WriteFixtures.accumulator(DOUBLE_LEAF, order);
         acc.updateDouble(Double.NaN);
         acc.updateDouble(2.5);
         acc.updateDouble(Double.longBitsToDouble(DOUBLE_NEGATIVE_NAN));
@@ -246,25 +262,26 @@ class StatisticsAccumulatorFloatingPointTest {
 
         Statistics stats = acc.finishChunk();
 
-        assertThat(doubleBits(stats.minValue())).isEqualTo(Double.doubleToRawLongBits(Double.NEGATIVE_INFINITY));
-        assertThat(doubleBits(stats.maxValue())).isEqualTo(Double.doubleToRawLongBits(2.5));
+        assertThat(WriteFixtures.doubleBits(stats.minValue()))
+                .isEqualTo(Double.doubleToRawLongBits(Double.NEGATIVE_INFINITY));
+        assertThat(WriteFixtures.doubleBits(stats.maxValue())).isEqualTo(Double.doubleToRawLongBits(2.5));
         assertThat(stats.nanCount()).hasValue(2L);
     }
 
     @Test
     void doubleZeroBoundsAreRecordedAsNegativeAndPositiveZero() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forColumn(DOUBLE);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(DOUBLE_LEAF);
         acc.updateDouble(0.0);
 
         Statistics stats = acc.finishChunk();
 
-        assertThat(doubleBits(stats.minValue())).isEqualTo(DOUBLE_NEGATIVE_ZERO);
-        assertThat(doubleBits(stats.maxValue())).isEqualTo(DOUBLE_POSITIVE_ZERO);
+        assertThat(WriteFixtures.doubleBits(stats.minValue())).isEqualTo(DOUBLE_NEGATIVE_ZERO);
+        assertThat(WriteFixtures.doubleBits(stats.maxValue())).isEqualTo(DOUBLE_POSITIVE_ZERO);
     }
 
     @Test
     void doubleChunkOfOnlyNaNsHasNoBounds() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forColumn(DOUBLE);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(DOUBLE_LEAF);
         acc.updateDouble(Double.NaN);
         acc.updateDouble(Double.longBitsToDouble(DOUBLE_NEGATIVE_NAN));
 
@@ -275,13 +292,14 @@ class StatisticsAccumulatorFloatingPointTest {
         assertThat(stats.nanCount()).hasValue(2L);
     }
 
-    @Test
-    void halfFloatBoundsCoverTheNumbersAndTheNaNsAreCounted() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forColumn(HALF);
+    @ParameterizedTest
+    @EnumSource(FloatColumnOrder.class)
+    void halfFloatBoundsCoverTheNumbersAndTheNaNsAreCounted(FloatColumnOrder order) {
+        StatisticsAccumulator acc = WriteFixtures.accumulator(HALF_FLOAT_LEAF, order);
         acc.updateBinary(WriteFixtures.halfFloat(0.5f));
-        acc.updateBinary(halfCell(HALF_NAN));
+        acc.updateBinary(WriteFixtures.halfFloatCell(HALF_NAN));
         acc.updateBinary(WriteFixtures.halfFloat(-2.0f));
-        acc.updateBinary(halfCell(HALF_NEGATIVE_NAN));
+        acc.updateBinary(WriteFixtures.halfFloatCell(HALF_NEGATIVE_NAN));
 
         Statistics stats = acc.finishChunk();
 
@@ -292,7 +310,7 @@ class StatisticsAccumulatorFloatingPointTest {
 
     @Test
     void halfFloatZeroBoundsAreRecordedAsNegativeAndPositiveZero() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forColumn(HALF);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(HALF_FLOAT_LEAF);
         acc.updateBinary(WriteFixtures.halfFloat(0.0f));
 
         Statistics stats = acc.finishChunk();
@@ -303,9 +321,9 @@ class StatisticsAccumulatorFloatingPointTest {
 
     @Test
     void halfFloatChunkOfOnlyNaNsHasNoBounds() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forColumn(HALF);
-        acc.updateBinary(halfCell(HALF_NAN));
-        acc.updateBinary(halfCell(HALF_NEGATIVE_NAN));
+        StatisticsAccumulator acc = WriteFixtures.accumulator(HALF_FLOAT_LEAF);
+        acc.updateBinary(WriteFixtures.halfFloatCell(HALF_NAN));
+        acc.updateBinary(WriteFixtures.halfFloatCell(HALF_NEGATIVE_NAN));
 
         Statistics stats = acc.finishChunk();
 
@@ -316,7 +334,7 @@ class StatisticsAccumulatorFloatingPointTest {
 
     @Test
     void pageOfOnlyNaNsHasNoBoundsAndIsNotANullPage() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forColumn(FLOAT);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(FLOAT_LEAF);
         acc.updateFloat(Float.NaN);
         acc.updateNull();
 
@@ -331,9 +349,9 @@ class StatisticsAccumulatorFloatingPointTest {
 
     @Test
     void mergedNumbersBoundTheChunkAndTheNaNCountsAddUp() {
-        StatisticsAccumulator chunk = StatisticsAccumulator.forColumn(FLOAT);
-        StatisticsAccumulator nanPage = StatisticsAccumulator.forColumn(FLOAT);
-        StatisticsAccumulator numberPage = StatisticsAccumulator.forColumn(FLOAT);
+        StatisticsAccumulator chunk = WriteFixtures.accumulator(FLOAT_LEAF);
+        StatisticsAccumulator nanPage = WriteFixtures.accumulator(FLOAT_LEAF);
+        StatisticsAccumulator numberPage = WriteFixtures.accumulator(FLOAT_LEAF);
         nanPage.updateFloat(Float.NaN);
         nanPage.updateFloat(Float.intBitsToFloat(FLOAT_NEGATIVE_NAN));
         numberPage.updateFloat(4.0f);
@@ -344,16 +362,16 @@ class StatisticsAccumulatorFloatingPointTest {
         chunk.merge(numberPage);
         Statistics stats = chunk.finishChunk();
 
-        assertThat(floatBits(stats.minValue())).isEqualTo(Float.floatToRawIntBits(-4.0f));
-        assertThat(floatBits(stats.maxValue())).isEqualTo(Float.floatToRawIntBits(4.0f));
+        assertThat(WriteFixtures.floatBits(stats.minValue())).isEqualTo(Float.floatToRawIntBits(-4.0f));
+        assertThat(WriteFixtures.floatBits(stats.maxValue())).isEqualTo(Float.floatToRawIntBits(4.0f));
         assertThat(stats.nanCount()).hasValue(3L);
     }
 
     @Test
     void mergedPagesOfOnlyNaNsLeaveTheChunkWithoutBounds() {
-        StatisticsAccumulator chunk = StatisticsAccumulator.forColumn(FLOAT);
-        StatisticsAccumulator first = StatisticsAccumulator.forColumn(FLOAT);
-        StatisticsAccumulator second = StatisticsAccumulator.forColumn(FLOAT);
+        StatisticsAccumulator chunk = WriteFixtures.accumulator(FLOAT_LEAF);
+        StatisticsAccumulator first = WriteFixtures.accumulator(FLOAT_LEAF);
+        StatisticsAccumulator second = WriteFixtures.accumulator(FLOAT_LEAF);
         first.updateFloat(Float.NaN);
         second.updateFloat(Float.intBitsToFloat(FLOAT_NEGATIVE_NAN));
 
@@ -368,9 +386,9 @@ class StatisticsAccumulatorFloatingPointTest {
 
     @Test
     void mergedZerosOfBothSignsAreBoundedByBothZeros() {
-        StatisticsAccumulator chunk = StatisticsAccumulator.forColumn(DOUBLE);
-        StatisticsAccumulator first = StatisticsAccumulator.forColumn(DOUBLE);
-        StatisticsAccumulator second = StatisticsAccumulator.forColumn(DOUBLE);
+        StatisticsAccumulator chunk = WriteFixtures.accumulator(DOUBLE_LEAF);
+        StatisticsAccumulator first = WriteFixtures.accumulator(DOUBLE_LEAF);
+        StatisticsAccumulator second = WriteFixtures.accumulator(DOUBLE_LEAF);
         first.updateDouble(0.0);
         second.updateDouble(-0.0);
 
@@ -378,29 +396,16 @@ class StatisticsAccumulatorFloatingPointTest {
         chunk.merge(second);
         Statistics stats = chunk.finishChunk();
 
-        assertThat(doubleBits(stats.minValue())).isEqualTo(DOUBLE_NEGATIVE_ZERO);
-        assertThat(doubleBits(stats.maxValue())).isEqualTo(DOUBLE_POSITIVE_ZERO);
+        assertThat(WriteFixtures.doubleBits(stats.minValue())).isEqualTo(DOUBLE_NEGATIVE_ZERO);
+        assertThat(WriteFixtures.doubleBits(stats.maxValue())).isEqualTo(DOUBLE_POSITIVE_ZERO);
     }
 
     @Test
     void resetClearsTheNaNCount() {
-        StatisticsAccumulator acc = StatisticsAccumulator.forColumn(FLOAT);
+        StatisticsAccumulator acc = WriteFixtures.accumulator(FLOAT_LEAF);
         acc.updateFloat(Float.NaN);
         acc.reset();
 
         assertThat(acc.finishChunk().nanCount()).hasValue(0L);
-    }
-
-    private static int floatBits(MemorySegment bound) {
-        return bound.get(INT32, 0);
-    }
-
-    private static long doubleBits(MemorySegment bound) {
-        return bound.get(INT64, 0);
-    }
-
-    /** The cell of a FLOAT16 column holding the half float with the given bits. */
-    private static MemorySegment halfCell(short bits) {
-        return MemorySegment.ofArray(WriteFixtures.halfFloatBytes(bits));
     }
 }

@@ -18,7 +18,10 @@ package io.tileverse.parquetry.internal.write.conformance;
 import static io.tileverse.parquetry.internal.write.conformance.FloatConformanceFixture.D;
 import static io.tileverse.parquetry.internal.write.conformance.FloatConformanceFixture.F;
 import static io.tileverse.parquetry.internal.write.conformance.FloatConformanceFixture.FLOATING;
+import static io.tileverse.parquetry.internal.write.conformance.FloatConformanceFixture.FLOAT_NEGATIVE_ZERO;
+import static io.tileverse.parquetry.internal.write.conformance.FloatConformanceFixture.FLOAT_POSITIVE_ZERO;
 import static io.tileverse.parquetry.internal.write.conformance.FloatConformanceFixture.GROUPS;
+import static io.tileverse.parquetry.internal.write.conformance.FloatConformanceFixture.ID;
 import static io.tileverse.parquetry.internal.write.conformance.FloatConformanceFixture.MIXED_GROUP;
 import static io.tileverse.parquetry.internal.write.conformance.FloatConformanceFixture.NAN_GROUP;
 import static io.tileverse.parquetry.internal.write.conformance.FloatConformanceFixture.NAN_PAGE_GROUP;
@@ -34,12 +37,11 @@ import static io.tileverse.parquetry.internal.write.conformance.FloatConformance
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.parquet.column.statistics.Statistics;
 import org.apache.parquet.hadoop.metadata.BlockMetaData;
@@ -50,115 +52,166 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
+import io.tileverse.parquetry.data.WriteOptions.FloatColumnOrder;
 import io.tileverse.parquetry.internal.write.conformance.FloatConformanceFixture.Row;
 
 /**
- * The statistics of FLOAT, DOUBLE and FLOAT16 columns follow the rules of the format for the type-defined order as
- * applied by the parquet-java writer: for the same cells both writers record the same bounds, NaN counts and null
- * counts per row group, and the same column index for a chunk without NaN cells. The bounds leave the NaN cells out, a
- * zero bound is {@code -0.0} as a minimum and {@code +0.0} as a maximum, and a chunk of only NaN has no bounds.
+ * The statistics of FLOAT, DOUBLE and FLOAT16 columns follow the rules of the format as applied by the parquet-java
+ * writer, in the type-defined order and in IEEE 754 total order: for the same cells both writers declare the same
+ * column order and record the same bounds, NaN counts, null counts and deprecated bounds per row group.
  *
- * <p>The two writers differ on the column index of a chunk holding NaN cells. parquet-java writes none. parquetry
- * leaves it out only when a page holds nothing but NaN, as required by the format, and otherwise bounds each page by
- * its numbers and counts its NaN cells.
+ * <p>In the type-defined order the bounds leave the NaN cells out, a zero bound is {@code -0.0} as a minimum and
+ * {@code +0.0} as a maximum, and a chunk of only NaN has no bounds. The two writers differ there on the column index of
+ * a chunk holding NaN cells. parquet-java writes none. parquetry leaves it out only when a page holds nothing but NaN,
+ * as required by the format, and otherwise bounds each page by its numbers and counts its NaN cells.
+ * {@link FloatTotalOrderConformanceIT} covers the bounds and the column index of total order.
  */
 @Tag("conformance")
 class FloatStatisticsConformanceIT {
-
-    private static final byte[] FLOAT_NEGATIVE_ZERO = {0x00, 0x00, 0x00, (byte) 0x80};
-    private static final byte[] FLOAT_POSITIVE_ZERO = {0x00, 0x00, 0x00, 0x00};
 
     @TempDir
     static Path tempDir;
 
     private static List<Row> rows;
-    private static Path file;
 
-    /** The files written by parquet-java, one per row group of the fixture. */
-    private static List<Path> references;
+    /** The files written by parquetry, keyed by the order of their float columns. */
+    private static Map<FloatColumnOrder, Path> filesByOrder;
+
+    /**
+     * The files written by parquet-java, one per row group of the fixture, keyed by the order of their float columns.
+     */
+    private static Map<FloatColumnOrder, List<Path>> referencesByOrder;
 
     @BeforeAll
     static void writeFiles() throws IOException {
         rows = FloatConformanceFixture.generateRows();
-        file = FloatConformanceFixture.writeWithParquetry(tempDir.resolve("floats.parquet"), tempDir, rows);
-        references = new ArrayList<>();
-        for (int group = 0; group < GROUPS; group++) {
-            Path reference = tempDir.resolve("reference-" + group + ".parquet");
-            List<Row> groupRows = FloatConformanceFixture.rowsOf(rows, group);
-            references.add(FloatConformanceFixture.writeWithParquetJava(reference, groupRows));
+        filesByOrder = new EnumMap<>(FloatColumnOrder.class);
+        referencesByOrder = new EnumMap<>(FloatColumnOrder.class);
+        for (FloatColumnOrder order : FloatColumnOrder.values()) {
+            Path target = tempDir.resolve("floats-" + order + ".parquet");
+            filesByOrder.put(order, FloatConformanceFixture.writeWithParquetry(target, tempDir, rows, order));
+            String prefix = "reference-" + order;
+            referencesByOrder.put(order, FloatConformanceFixture.writeReferences(tempDir, prefix, rows, order));
         }
     }
 
-    @Test
-    void floatingPointColumnsDeclareTheTypeDefinedOrderToParquetJava() throws IOException {
-        MessageType schema = WriteConformanceSupport.readFooterViaParquetJava(file)
+    /** The parquetry file of the type-defined order. */
+    private static Path typeDefinedFile() {
+        return filesByOrder.get(FloatColumnOrder.TYPE_DEFINED);
+    }
+
+    /** The parquet-java files of the type-defined order, one per row group of the fixture. */
+    private static List<Path> typeDefinedReferences() {
+        return referencesByOrder.get(FloatColumnOrder.TYPE_DEFINED);
+    }
+
+    @ParameterizedTest
+    @EnumSource(FloatColumnOrder.class)
+    void floatingPointColumnsDeclareTheirOrderToParquetJava(FloatColumnOrder order) throws IOException {
+        MessageType schema = WriteConformanceSupport.readFooterViaParquetJava(filesByOrder.get(order))
                 .getFileMetaData()
                 .getSchema();
 
         for (String column : FLOATING) {
             assertThat(schema.getType(column).asPrimitiveType().columnOrder())
                     .as("column order of %s", column)
-                    .isEqualTo(ColumnOrder.typeDefined());
+                    .isEqualTo(FloatConformanceFixture.parquetJavaOrder(order));
         }
+        assertThat(schema.getType(ID).asPrimitiveType().columnOrder())
+                .as("column order of the INT32 column")
+                .isEqualTo(ColumnOrder.typeDefined());
     }
 
-    @Test
-    void chunkStatisticsEqualThoseOfTheParquetJavaWriter() throws IOException {
-        List<BlockMetaData> written = WriteConformanceSupport.rowGroupsViaParquetJava(file);
+    @ParameterizedTest
+    @EnumSource(FloatColumnOrder.class)
+    void chunkStatisticsEqualThoseOfTheParquetJavaWriter(FloatColumnOrder order) throws IOException {
+        List<BlockMetaData> written = WriteConformanceSupport.rowGroupsViaParquetJava(filesByOrder.get(order));
         assertThat(written).hasSize(GROUPS);
 
         for (int group = 0; group < GROUPS; group++) {
-            BlockMetaData reference = soleRowGroupOf(references.get(group));
+            BlockMetaData reference = WriteConformanceSupport.soleRowGroupOf(
+                    referencesByOrder.get(order).get(group));
             for (String column : FLOATING) {
-                Statistics<?> actual = statistics(written.get(group), column);
-                Statistics<?> expected = statistics(reference, column);
+                Statistics<?> actual = StatisticsAssertions.statisticsOf(written.get(group), column);
+                Statistics<?> expected = StatisticsAssertions.statisticsOf(reference, column);
 
-                assertSameChunkStatistics(actual, expected, column + " in row group " + group);
+                StatisticsAssertions.assertSameChunkStatistics(actual, expected, column + " in row group " + group);
             }
         }
     }
 
-    @Test
-    void deprecatedBoundsOfFloatAndDoubleEqualThoseOfTheParquetJavaWriter() {
+    @ParameterizedTest
+    @EnumSource(FloatColumnOrder.class)
+    void boundsHeldByTheFooterEqualThoseOfTheParquetJavaWriter(FloatColumnOrder order) {
+        // parquet-java drops NaN bounds and rewrites zero bounds as it reads type-defined statistics: the two footers
+        // are compared byte for byte, as read by parquetry.
+        Path written = filesByOrder.get(order);
         for (int group = 0; group < GROUPS; group++) {
+            Path reference = referencesByOrder.get(order).get(group);
+            for (String column : FLOATING) {
+                String where = column + " in row group " + group;
+
+                assertThat(WriteConformanceSupport.footerMin(written, group, column))
+                        .as("min_value of %s", where)
+                        .isEqualTo(WriteConformanceSupport.footerMin(reference, 0, column));
+                assertThat(WriteConformanceSupport.footerMax(written, group, column))
+                        .as("max_value of %s", where)
+                        .isEqualTo(WriteConformanceSupport.footerMax(reference, 0, column));
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(FloatColumnOrder.class)
+    void deprecatedBoundsOfFloatAndDoubleEqualThoseOfTheParquetJavaWriter(FloatColumnOrder order) {
+        Path written = filesByOrder.get(order);
+        for (int group = 0; group < GROUPS; group++) {
+            Path reference = referencesByOrder.get(order).get(group);
             for (String column : List.of(F, D)) {
                 String where = column + " in row group " + group;
 
-                assertThat(WriteConformanceSupport.deprecatedMin(file, group, column))
+                assertThat(WriteConformanceSupport.deprecatedMin(written, group, column))
                         .as("deprecated min of %s", where)
-                        .isEqualTo(WriteConformanceSupport.deprecatedMin(references.get(group), 0, column));
-                assertThat(WriteConformanceSupport.deprecatedMax(file, group, column))
+                        .isEqualTo(WriteConformanceSupport.deprecatedMin(reference, 0, column));
+                assertThat(WriteConformanceSupport.deprecatedMax(written, group, column))
                         .as("deprecated max of %s", where)
-                        .isEqualTo(WriteConformanceSupport.deprecatedMax(references.get(group), 0, column));
+                        .isEqualTo(WriteConformanceSupport.deprecatedMax(reference, 0, column));
             }
         }
     }
 
-    @Test
-    void nanCountsMatchTheCells() throws IOException {
-        List<BlockMetaData> written = WriteConformanceSupport.rowGroupsViaParquetJava(file);
+    @ParameterizedTest
+    @EnumSource(FloatColumnOrder.class)
+    void nanCountsMatchTheCells(FloatColumnOrder order) throws IOException {
+        List<BlockMetaData> written = WriteConformanceSupport.rowGroupsViaParquetJava(filesByOrder.get(order));
 
         for (String column : FLOATING) {
-            assertThat(statistics(written.get(NUMBERS_GROUP), column).getNanCount())
+            assertThat(StatisticsAssertions.statisticsOf(written.get(NUMBERS_GROUP), column)
+                            .getNanCount())
                     .as("NaN count of %s in the group of numbers", column)
                     .isZero();
-            assertThat(statistics(written.get(NAN_GROUP), column).getNanCount())
+            assertThat(StatisticsAssertions.statisticsOf(written.get(NAN_GROUP), column)
+                            .getNanCount())
                     .as("NaN count of %s in the group of NaN", column)
                     .isEqualTo(ROWS_PER_GROUP);
         }
         long mixedNaNs = FloatConformanceFixture.rowsOf(rows, MIXED_GROUP).stream()
                 .filter(row -> !row.isNull() && Float.isNaN(row.f()))
                 .count();
-        assertThat(statistics(written.get(MIXED_GROUP), F).getNanCount()).isEqualTo(mixedNaNs);
+        Statistics<?> mixed = StatisticsAssertions.statisticsOf(written.get(MIXED_GROUP), F);
+        assertThat(mixed.getNanCount()).isEqualTo(mixedNaNs);
     }
 
     @Test
     void chunkOfOnlyNaNHasNoBounds() throws IOException {
-        List<BlockMetaData> written = WriteConformanceSupport.rowGroupsViaParquetJava(file);
+        List<BlockMetaData> written = WriteConformanceSupport.rowGroupsViaParquetJava(typeDefinedFile());
 
         for (String column : FLOATING) {
-            assertThat(statistics(written.get(NAN_GROUP), column).hasNonNullValue())
+            assertThat(StatisticsAssertions.statisticsOf(written.get(NAN_GROUP), column)
+                            .hasNonNullValue())
                     .as("bounds of %s in the group of NaN", column)
                     .isFalse();
         }
@@ -166,7 +219,7 @@ class FloatStatisticsConformanceIT {
 
     @Test
     void pageOfZerosIsBoundedByNegativeZeroAndPositiveZero() throws IOException {
-        ColumnIndex index = WriteConformanceSupport.columnIndexViaParquetJava(file, ZEROS_GROUP, F);
+        ColumnIndex index = WriteConformanceSupport.columnIndexViaParquetJava(typeDefinedFile(), ZEROS_GROUP, F);
         List<byte[]> minValues = WriteConformanceSupport.bytesOf(index.getMinValues());
         List<byte[]> maxValues = WriteConformanceSupport.bytesOf(index.getMaxValues());
 
@@ -186,14 +239,15 @@ class FloatStatisticsConformanceIT {
     void columnIndexOfAChunkWithoutNaNEqualsThatOfTheParquetJavaWriter() throws IOException {
         for (int group : List.of(NUMBERS_GROUP, ZEROS_GROUP)) {
             for (String column : FLOATING) {
-                ColumnIndex actual = WriteConformanceSupport.columnIndexViaParquetJava(file, group, column);
-                ColumnIndex expected =
-                        WriteConformanceSupport.columnIndexViaParquetJava(references.get(group), 0, column);
+                ColumnIndex actual =
+                        WriteConformanceSupport.columnIndexViaParquetJava(typeDefinedFile(), group, column);
+                ColumnIndex expected = WriteConformanceSupport.columnIndexViaParquetJava(
+                        typeDefinedReferences().get(group), 0, column);
                 String where = column + " in row group " + group;
 
                 assertThat(actual).as("column index of %s", where).isNotNull();
                 assertThat(expected).as("reference column index of %s", where).isNotNull();
-                assertSameColumnIndex(actual, expected, where);
+                StatisticsAssertions.assertSameColumnIndex(actual, expected, where);
             }
         }
     }
@@ -201,7 +255,8 @@ class FloatStatisticsConformanceIT {
     @Test
     void parquetJavaWritesNoColumnIndexForAChunkHoldingNaN() throws IOException {
         for (int group : List.of(MIXED_GROUP, NAN_PAGE_GROUP, NAN_GROUP)) {
-            assertThat(WriteConformanceSupport.columnIndexViaParquetJava(references.get(group), 0, F))
+            assertThat(WriteConformanceSupport.columnIndexViaParquetJava(
+                            typeDefinedReferences().get(group), 0, F))
                     .as("reference column index of row group %d", group)
                     .isNull();
         }
@@ -210,7 +265,7 @@ class FloatStatisticsConformanceIT {
     @Test
     void chunkWithAPageOfOnlyNaNHasNoColumnIndex() throws IOException {
         for (String column : FLOATING) {
-            assertThat(WriteConformanceSupport.columnIndexViaParquetJava(file, NAN_PAGE_GROUP, column))
+            assertThat(WriteConformanceSupport.columnIndexViaParquetJava(typeDefinedFile(), NAN_PAGE_GROUP, column))
                     .as("column index of %s in the group with a page of NaN", column)
                     .isNull();
         }
@@ -218,7 +273,7 @@ class FloatStatisticsConformanceIT {
 
     @Test
     void pagesMixingNumbersAndNaNAreBoundedByTheirNumbers() throws IOException {
-        ColumnIndex index = WriteConformanceSupport.columnIndexViaParquetJava(file, MIXED_GROUP, F);
+        ColumnIndex index = WriteConformanceSupport.columnIndexViaParquetJava(typeDefinedFile(), MIXED_GROUP, F);
         assertThat(index).as("column index of the mixed group").isNotNull();
         List<Row> mixedGroup = FloatConformanceFixture.rowsOf(rows, MIXED_GROUP);
 
@@ -230,10 +285,10 @@ class FloatStatisticsConformanceIT {
             assertThat(numbers).as("numbers drawn into page %d", page).isNotEmpty();
             assertThat(nans).as("NaN cells drawn into page %d", page).isPositive();
 
-            assertThat(floatOf(index.getMinValues().get(page)))
+            assertThat(WriteConformanceSupport.floatOf(index.getMinValues().get(page)))
                     .as("min of page %d", page)
                     .isEqualTo(Collections.min(numbers));
-            assertThat(floatOf(index.getMaxValues().get(page)))
+            assertThat(WriteConformanceSupport.floatOf(index.getMaxValues().get(page)))
                     .as("max of page %d", page)
                     .isEqualTo(Collections.max(numbers));
             assertThat(index.getNanCounts().get(page))
@@ -244,7 +299,7 @@ class FloatStatisticsConformanceIT {
 
     @Test
     void pageOfNullsIsANullPageOfTheColumnIndex() throws IOException {
-        ColumnIndex index = WriteConformanceSupport.columnIndexViaParquetJava(file, NUMBERS_GROUP, F);
+        ColumnIndex index = WriteConformanceSupport.columnIndexViaParquetJava(typeDefinedFile(), NUMBERS_GROUP, F);
 
         assertThat(index.getNullPages().get(NULL_PAGE_OF_NUMBERS_GROUP)).isTrue();
         assertThat(index.getNanCounts().get(NULL_PAGE_OF_NUMBERS_GROUP)).isZero();
@@ -254,41 +309,5 @@ class FloatStatisticsConformanceIT {
     private static List<Float> presentCellsOfPage(List<Row> groupRows, int page) {
         List<Row> pageRows = groupRows.subList(page * ROWS_PER_PAGE, (page + 1) * ROWS_PER_PAGE);
         return pageRows.stream().filter(row -> !row.isNull()).map(Row::f).toList();
-    }
-
-    private static float floatOf(ByteBuffer bound) {
-        return bound.duplicate().order(ByteOrder.LITTLE_ENDIAN).getFloat();
-    }
-
-    private static void assertSameChunkStatistics(Statistics<?> actual, Statistics<?> expected, String where) {
-        assertThat(actual.hasNonNullValue()).as("bounds of %s", where).isEqualTo(expected.hasNonNullValue());
-        assertThat(actual.getMinBytes()).as("min of %s", where).isEqualTo(expected.getMinBytes());
-        assertThat(actual.getMaxBytes()).as("max of %s", where).isEqualTo(expected.getMaxBytes());
-        assertThat(actual.isNanCountSet()).as("NaN count of %s is set", where).isTrue();
-        assertThat(actual.getNanCount()).as("NaN count of %s", where).isEqualTo(expected.getNanCount());
-        assertThat(actual.getNumNulls()).as("null count of %s", where).isEqualTo(expected.getNumNulls());
-    }
-
-    private static void assertSameColumnIndex(ColumnIndex actual, ColumnIndex expected, String where) {
-        assertThat(actual.getNullPages()).as("null pages of %s", where).isEqualTo(expected.getNullPages());
-        assertThat(WriteConformanceSupport.bytesOf(actual.getMinValues()))
-                .as("page minima of %s", where)
-                .containsExactlyElementsOf(WriteConformanceSupport.bytesOf(expected.getMinValues()));
-        assertThat(WriteConformanceSupport.bytesOf(actual.getMaxValues()))
-                .as("page maxima of %s", where)
-                .containsExactlyElementsOf(WriteConformanceSupport.bytesOf(expected.getMaxValues()));
-        assertThat(actual.getNullCounts()).as("null counts of %s", where).isEqualTo(expected.getNullCounts());
-        assertThat(actual.getNanCounts()).as("NaN counts of %s", where).isEqualTo(expected.getNanCounts());
-        assertThat(actual.getBoundaryOrder()).as("boundary order of %s", where).isEqualTo(expected.getBoundaryOrder());
-    }
-
-    private static BlockMetaData soleRowGroupOf(Path reference) throws IOException {
-        List<BlockMetaData> rowGroups = WriteConformanceSupport.rowGroupsViaParquetJava(reference);
-        assertThat(rowGroups).as("row groups of the reference").hasSize(1);
-        return rowGroups.getFirst();
-    }
-
-    private static Statistics<?> statistics(BlockMetaData rowGroup, String column) {
-        return WriteConformanceSupport.chunkOf(rowGroup, column).getStatistics();
     }
 }

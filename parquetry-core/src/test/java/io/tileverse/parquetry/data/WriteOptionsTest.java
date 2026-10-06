@@ -40,6 +40,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import io.tileverse.parquetry.data.WriteOptions.BloomFilterConfig;
 import io.tileverse.parquetry.data.WriteOptions.EncodingPolicy;
+import io.tileverse.parquetry.data.WriteOptions.FloatColumnOrder;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
 import io.tileverse.parquetry.data.WriteOptions.ParquetVersion;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
@@ -101,6 +102,20 @@ class WriteOptionsTest {
         assertThat(o.bloomFilters()).isEmpty();
         assertThat(o.crs()).isEmpty();
         assertThat(o.keyValueMetadata()).isEmpty();
+    }
+
+    @Test
+    void floatColumnsDefaultToTheTypeDefinedOrder() {
+        assertThat(WriteOptions.defaults().floatColumnOrder()).isEqualTo(FloatColumnOrder.TYPE_DEFINED);
+    }
+
+    @Test
+    void floatColumnOrderPropagatesThroughBuild() {
+        WriteOptions options = WriteOptions.builder()
+                .floatColumnOrder(FloatColumnOrder.IEEE_754_TOTAL_ORDER)
+                .build();
+
+        assertThat(options.floatColumnOrder()).isEqualTo(FloatColumnOrder.IEEE_754_TOTAL_ORDER);
     }
 
     @Test

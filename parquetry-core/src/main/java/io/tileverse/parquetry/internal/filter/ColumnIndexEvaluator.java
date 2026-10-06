@@ -226,7 +226,7 @@ final class ColumnIndexEvaluator {
             if (Boolean.TRUE.equals(idx.nullPages().get(i))) {
                 continue; // all-null page can't satisfy a value comparison
             }
-            Optional<PageSummary> page = pageSummary(stats, i);
+            Optional<PageSummary> page = pageSummary(stats, i, rowGroupRowCount);
             if (page.isEmpty()) {
                 return Optional.empty(); // unsupported type; bail to NotApplied
             }
@@ -238,7 +238,8 @@ final class ColumnIndexEvaluator {
     }
 
     /** The decoded bounds of page {@code i} and its NaN cells; empty when the decoder cannot type a bound. */
-    private static Optional<PageSummary> pageSummary(FilterPipeline.ColumnPageStats stats, int i) {
+    private static Optional<PageSummary> pageSummary(
+            FilterPipeline.ColumnPageStats stats, int i, long rowGroupRowCount) {
         ColumnIndex idx = stats.columnIndex();
         Optional<Value> min = StatisticsValueDecoder.decode(
                 stats.kind(), stats.logicalType(), idx.minValues().get(i));
@@ -247,25 +248,57 @@ final class ColumnIndexEvaluator {
         if (min.isEmpty() || max.isEmpty()) {
             return Optional.empty();
         }
-        NaNCells nans = NaNCells.ofPage(nanCountOfPage(idx, i), min.orElseThrow(), max.orElseThrow());
+        NaNCells counted = countedNaNCells(stats, i, rowGroupRowCount);
+        NaNCells nans = counted.checkedAgainst(min, max);
         return Optional.of(new PageSummary(min.orElseThrow(), max.orElseThrow(), nans));
     }
 
-    /** The NaN count of page {@code i}, usable only when the writer recorded one per page. */
-    private static OptionalLong nanCountOfPage(ColumnIndex idx, int i) {
-        int pageCount = idx.minValues().size();
-        Optional<List<Long>> nanCounts = idx.nanCounts().filter(counts -> counts.size() == pageCount);
-        if (nanCounts.isEmpty()) {
-            return OptionalLong.empty();
+    /**
+     * What the counts of page {@code i} tell about its NaN cells. A column compared by this tier holds one value per
+     * row, and NaN and null counts adding up to the rows of the page leave no number in it. The counts are read for
+     * FLOAT and DOUBLE columns alone, as in the row-group tier.
+     */
+    private static NaNCells countedNaNCells(FilterPipeline.ColumnPageStats stats, int i, long rowGroupRowCount) {
+        if (!NaNCells.comparesAsNumbers(stats.kind())) {
+            return NaNCells.POSSIBLE;
         }
-        return OptionalLong.of(nanCounts.orElseThrow().get(i));
+        ColumnIndex idx = stats.columnIndex();
+        int pageCount = idx.minValues().size();
+        OptionalLong nanCount = countOfPage(idx.nanCounts(), pageCount, i);
+        OptionalLong nullCount = countOfPage(idx.nullCounts(), pageCount, i);
+        OffsetIndex off = stats.offsetIndex();
+        long rows = rowsOfPage(off.pageLocations(), i, rowGroupRowCount);
+        return NaNCells.ofPageCounts(nanCount, nullCount, rows);
     }
 
     /**
-     * Whether a page may hold a number matching a comparison over its bounds. A page with a NaN bound, or with its
-     * minimum above its maximum, has no usable bounds and is kept; see {@link ValueComparison#inverted}.
+     * The count of page {@code i} in a per-page list of the index, usable only when the list has one count per page.
+     */
+    private static OptionalLong countOfPage(Optional<List<Long>> perPageCounts, int pageCount, int i) {
+        Optional<List<Long>> counts = perPageCounts.filter(list -> list.size() == pageCount);
+        if (counts.isEmpty()) {
+            return OptionalLong.empty();
+        }
+        return OptionalLong.of(counts.orElseThrow().get(i));
+    }
+
+    /** The number of rows of page {@code i}: up to the first row of the next page, or to the end of the row group. */
+    private static long rowsOfPage(List<PageLocation> pages, int i, long rowGroupRowCount) {
+        long first = pages.get(i).firstRowIndex();
+        boolean lastPage = i + 1 == pages.size();
+        long end = lastPage ? rowGroupRowCount : pages.get(i + 1).firstRowIndex();
+        return end - first;
+    }
+
+    /**
+     * Whether a page may hold a number matching a comparison over its bounds. A page of only NaN cells holds none. A
+     * page with a NaN bound outside that case, or with its minimum above its maximum, has no usable bounds and is kept;
+     * see {@link ValueComparison#inverted}.
      */
     private static boolean numbersMayMatch(PageSummary page, BoundsMatcher matcher) {
+        if (page.holdsOnlyNaN()) {
+            return false;
+        }
         if (!page.bounded()) {
             return true;
         }
@@ -353,7 +386,7 @@ final class ColumnIndexEvaluator {
 
     /**
      * True if {@code page} may hold a cell equal to {@code v}: a number within its bounds (inclusive), or for a NaN
-     * literal a NaN cell, left out of the bounds and ruled out only by the NaN count.
+     * literal a NaN cell, ruled out only by the NaN count.
      */
     private static boolean mayEqual(Value v, PageSummary page) {
         if (ValueComparison.isNaN(v)) {
@@ -363,10 +396,14 @@ final class ColumnIndexEvaluator {
     }
 
     /**
-     * True if {@code page} may hold a cell different from {@code v}. A page with both bounds equal to the number
+     * True if {@code page} may hold a cell different from {@code v}. A page of only NaN cells holds cells different
+     * from a number literal, and none different from a NaN literal. A page with both bounds equal to the number
      * {@code v} holds no other number, and differs from it only through a NaN cell.
      */
     private static boolean mayDiffer(Value v, PageSummary page) {
+        if (page.holdsOnlyNaN()) {
+            return !ValueComparison.isNaN(v);
+        }
         if (ValueComparison.isNaN(v) || !page.bounded()) {
             return true;
         }
@@ -384,6 +421,11 @@ final class ColumnIndexEvaluator {
 
     /** The decoded bounds of one page and what the index tells about its NaN cells. */
     private record PageSummary(Value min, Value max, NaNCells nans) {
+
+        /** Whether the index tells that the non-null cells of the page are NaN. */
+        boolean holdsOnlyNaN() {
+            return nans == NaNCells.ALL;
+        }
 
         /** Whether the two bounds enclose the numbers of the page: neither is NaN, and they are not inverted. */
         boolean bounded() {

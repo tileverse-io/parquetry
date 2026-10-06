@@ -73,6 +73,7 @@ import lombok.NonNull;
  *     metadata mode at open time
  * @param existingBboxCovering a bbox covering already in the schema, declared in the GeoParquet 1.1 metadata without
  *     deriving columns; empty when none is declared
+ * @param floatColumnOrder order of the statistics of the FLOAT, DOUBLE and FLOAT16 columns
  */
 public record WriteOptions(
         @NonNull ParquetVersion parquetVersion,
@@ -95,7 +96,8 @@ public record WriteOptions(
         @NonNull WriteObserver writeObserver,
         long writeObserverCadenceRows,
         @NonNull Optional<CoveringMode> bboxCovering,
-        @NonNull Optional<ExistingBboxCovering> existingBboxCovering) {
+        @NonNull Optional<ExistingBboxCovering> existingBboxCovering,
+        @NonNull FloatColumnOrder floatColumnOrder) {
 
     private static final String RESERVED_GEO_KEY = "geo";
 
@@ -258,6 +260,27 @@ public record WriteOptions(
             @NonNull String ymax) {}
 
     /**
+     * The order of the min and max statistics of the FLOAT, DOUBLE and FLOAT16 columns, declared per column in the
+     * footer. Both orders record a NaN count. {@code docs/float-statistics.md} lists the readers tested against files
+     * written in each order.
+     *
+     * <ul>
+     *   <li>{@link #TYPE_DEFINED}, the default: the bounds cover the numbers of a chunk or page and leave its NaN cells
+     *       out, a zero bound is written as {@code -0.0} for a minimum and {@code +0.0} for a maximum, and a chunk or
+     *       page of only NaN has no bounds. The readers tested open a file written in this order and prune it like the
+     *       files of other writers.
+     *   <li>{@link #IEEE_754_TOTAL_ORDER}: the order recommended by the format for these types. {@code -0.0} orders
+     *       before {@code +0.0}, and a chunk or page of only NaN is bounded by its smallest and largest NaN. Some of
+     *       the readers tested cannot open a file written in this order, or do not prune its float columns. A FLOAT or
+     *       DOUBLE column annotated {@code UNKNOWN} keeps the type-defined order.
+     * </ul>
+     */
+    public enum FloatColumnOrder {
+        TYPE_DEFINED,
+        IEEE_754_TOTAL_ORDER
+    }
+
+    /**
      * Row group sizing policy.
      *
      * <p>{@link Adaptive} is the default: the writer honours {@link WriteOptions#expectedRowCount()} when set,
@@ -414,6 +437,7 @@ public record WriteOptions(
         private long writeObserverCadenceRows = 100_000L;
         private Optional<CoveringMode> bboxCovering = Optional.empty();
         private Optional<ExistingBboxCovering> existingBboxCovering = Optional.empty();
+        private FloatColumnOrder floatColumnOrder = FloatColumnOrder.TYPE_DEFINED;
 
         private Builder() {}
 
@@ -597,6 +621,12 @@ public record WriteOptions(
             return this;
         }
 
+        /** Sets the order of the statistics of the FLOAT, DOUBLE and FLOAT16 columns. */
+        public Builder floatColumnOrder(@NonNull FloatColumnOrder order) {
+            this.floatColumnOrder = order;
+            return this;
+        }
+
         public WriteOptions build() {
             return new WriteOptions(
                     parquetVersion,
@@ -619,7 +649,8 @@ public record WriteOptions(
                     writeObserver,
                     writeObserverCadenceRows,
                     bboxCovering,
-                    existingBboxCovering);
+                    existingBboxCovering,
+                    floatColumnOrder);
         }
 
         private static int requirePositive(String name, int value) {

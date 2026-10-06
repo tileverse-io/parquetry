@@ -19,6 +19,7 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -101,6 +102,15 @@ final class WriteConformanceSupport {
         return readFooterViaParquetJava(file).getBlocks();
     }
 
+    /** The sole row group of {@code file} as read by parquet-java. */
+    static BlockMetaData soleRowGroupOf(Path file) throws IOException {
+        List<BlockMetaData> rowGroups = rowGroupsViaParquetJava(file);
+        if (rowGroups.size() != 1) {
+            throw new IllegalStateException(file.getFileName() + " has " + rowGroups.size() + " row groups");
+        }
+        return rowGroups.getFirst();
+    }
+
     /** The chunk of {@code column} in {@code rowGroup}. */
     static ColumnChunkMetaData chunkOf(BlockMetaData rowGroup, String column) {
         return rowGroup.getColumns().stream()
@@ -132,6 +142,17 @@ final class WriteConformanceSupport {
     /** The remaining bytes of each buffer of {@code buffers}. */
     static List<byte[]> bytesOf(List<ByteBuffer> buffers) {
         return buffers.stream().map(WriteConformanceSupport::bytesOf).toList();
+    }
+
+    /** The FLOAT in the little-endian bytes of {@code bound}; the buffer keeps its position. */
+    static float floatOf(ByteBuffer bound) {
+        ByteBuffer littleEndian = bound.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+        return littleEndian.getFloat();
+    }
+
+    /** The FLOAT in the little-endian bytes of {@code bound}. */
+    static float floatOf(byte[] bound) {
+        return floatOf(ByteBuffer.wrap(bound));
     }
 
     /** A parquet-java reader of the rows of {@code file} as example groups. */
@@ -187,6 +208,19 @@ final class WriteConformanceSupport {
     /** The {@code max} counterpart of {@link #deprecatedMin}. */
     static byte[] deprecatedMax(Path file, int rowGroup, String column) {
         return wireStatistics(file, rowGroup, column).max().toArray(JAVA_BYTE);
+    }
+
+    /**
+     * The bytes of the {@code min_value} statistics field of {@code column} in a row group of {@code file}, as held by
+     * the footer; empty for a chunk without that field.
+     */
+    static byte[] footerMin(Path file, int rowGroup, String column) {
+        return wireStatistics(file, rowGroup, column).minValue().toArray(JAVA_BYTE);
+    }
+
+    /** The {@code max_value} counterpart of {@link #footerMin}. */
+    static byte[] footerMax(Path file, int rowGroup, String column) {
+        return wireStatistics(file, rowGroup, column).maxValue().toArray(JAVA_BYTE);
     }
 
     private static Statistics wireStatistics(Path file, int rowGroup, String column) {

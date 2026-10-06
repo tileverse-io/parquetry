@@ -51,9 +51,11 @@ import lombok.NonNull;
  * geometry types are kept by {@link GeospatialStatisticsAccumulator}.
  *
  * <p>A FLOAT, DOUBLE or FLOAT16 column counts its NaN cells in {@code nan_count}, and as non-null cells too. Its bounds
- * are its smallest and largest number, and a window holding no number has none. A zero bound is recorded as
- * {@code -0.0} for a minimum and as {@code +0.0} for a maximum, as required by the format: readers disagree on the
- * order of the two zeros, and a bound of the other sign would hide one of them.
+ * are its smallest and largest number. In the type-defined order a window holding no number has no bounds, and a zero
+ * bound is recorded as {@code -0.0} for a minimum and as {@code +0.0} for a maximum, as required by the format: readers
+ * disagree on the order of the two zeros, and a bound of the other sign would hide one of them. In IEEE 754 total order
+ * a zero bound keeps its sign, and a window holding no number is bounded by its smallest and largest NaN, sign and
+ * payload bits included.
  *
  * <p>Distinct counts are intentionally not tracked: the Parquet spec marks {@code distinct_count} as optional and any
  * write-side estimate would have to choose between an HLL approximation or an exact hash set; both are deferred until a
@@ -67,6 +69,7 @@ public final class StatisticsAccumulator {
     private final PrimitiveKind kind;
     private final BoundsOrder order;
     private final boolean tracksMinMax;
+    private final boolean totalOrder;
     private final boolean legacyOrderMatchesModern;
 
     /**
@@ -79,7 +82,9 @@ public final class StatisticsAccumulator {
     /** The INT64 counterpart of {@link #intSignFlip}. */
     private final long longSignFlip;
 
-    /** The order key of {@code -0.0} in a floating-point column; unused by the other columns. */
+    /**
+     * The order key of {@code -0.0} in a floating-point column of the type-defined order; unused by the other columns.
+     */
     private final long negativeZeroKey;
 
     private long nullCount;
@@ -101,19 +106,31 @@ public final class StatisticsAccumulator {
 
     private long nanCount;
 
+    /**
+     * Order keys of the smallest and largest NaN of the window, meaningful once a NaN is counted. In IEEE 754 total
+     * order they bound a window holding no number.
+     */
+    private long nanMinKey;
+
+    private long nanMaxKey;
+
     private StatisticsAccumulator(PrimitiveKind kind, BoundsOrder order) {
         this.kind = kind;
         this.order = order;
         this.tracksMinMax = order.isDefined();
+        this.totalOrder = order.isTotalOrder();
         this.legacyOrderMatchesModern = legacyOrderMatchesModern(order);
         this.intSignFlip = order == BoundsOrder.UNSIGNED_INT32 ? Integer.MIN_VALUE : 0;
         this.longSignFlip = order == BoundsOrder.UNSIGNED_INT64 ? Long.MIN_VALUE : 0L;
         this.negativeZeroKey = negativeZeroKey(order);
     }
 
-    /** Returns a fresh accumulator for the cells of {@code leaf}, with bounds in the leaf's {@link BoundsOrder}. */
-    static StatisticsAccumulator forColumn(@NonNull SchemaNode.Primitive leaf) {
-        return new StatisticsAccumulator(leaf.kind(), BoundsOrder.of(leaf));
+    /**
+     * Returns a fresh accumulator for the cells of {@code leaf}, with bounds in {@code order}, the {@link BoundsOrder}
+     * resolved for the leaf.
+     */
+    static StatisticsAccumulator forColumn(@NonNull SchemaNode.Primitive leaf, @NonNull BoundsOrder order) {
+        return new StatisticsAccumulator(leaf.kind(), order);
     }
 
     private static long negativeZeroKey(BoundsOrder order) {
@@ -126,6 +143,9 @@ public final class StatisticsAccumulator {
                     UNSIGNED_INT32,
                     SIGNED_INT64,
                     UNSIGNED_INT64,
+                    FLOAT_TOTAL_ORDER,
+                    DOUBLE_TOTAL_ORDER,
+                    HALF_FLOAT_TOTAL_ORDER,
                     UNSIGNED_BYTES,
                     SIGNED_BYTES,
                     UNDEFINED -> 0L;
@@ -136,12 +156,19 @@ public final class StatisticsAccumulator {
      * Decides whether the deprecated {@code min}/{@code max} fields may mirror the modern {@code min_value}/
      * {@code max_value} bytes for a column in {@code order}. A legacy reader ignoring {@code column_orders} reads the
      * deprecated fields as signed numbers, and binary values as signed bytes. Mirroring is sound only for the orders
-     * agreeing with that reading, FLOAT and DOUBLE numbers among them.
+     * agreeing with that reading, FLOAT and DOUBLE numbers among them. In IEEE 754 total order the NaN bounds of a
+     * chunk of only NaN are mirrored too, as parquet-java 1.18 does.
      */
     private static boolean legacyOrderMatchesModern(BoundsOrder order) {
         return switch (order) {
-            case BOOLEAN, SIGNED_INT32, SIGNED_INT64, FLOAT, DOUBLE -> true;
-            case UNSIGNED_INT32, UNSIGNED_INT64, HALF_FLOAT, UNSIGNED_BYTES, SIGNED_BYTES, UNDEFINED -> false;
+            case BOOLEAN, SIGNED_INT32, SIGNED_INT64, FLOAT, DOUBLE, FLOAT_TOTAL_ORDER, DOUBLE_TOTAL_ORDER -> true;
+            case UNSIGNED_INT32,
+                    UNSIGNED_INT64,
+                    HALF_FLOAT,
+                    HALF_FLOAT_TOTAL_ORDER,
+                    UNSIGNED_BYTES,
+                    SIGNED_BYTES,
+                    UNDEFINED -> false;
         };
     }
 
@@ -167,10 +194,10 @@ public final class StatisticsAccumulator {
     public void updateFloat(float value) {
         requireValueKind(PrimitiveKind.FLOAT);
         nonNullCount++;
+        int key = TotalOrder.key(Float.floatToRawIntBits(value));
         if (Float.isNaN(value)) {
-            nanCount++;
+            countNaN(key);
         } else if (tracksMinMax) {
-            int key = TotalOrder.key(Float.floatToRawIntBits(value));
             updateKeyMinMax(key);
         }
     }
@@ -179,10 +206,10 @@ public final class StatisticsAccumulator {
     public void updateDouble(double value) {
         requireValueKind(PrimitiveKind.DOUBLE);
         nonNullCount++;
+        long key = TotalOrder.key(Double.doubleToRawLongBits(value));
         if (Double.isNaN(value)) {
-            nanCount++;
+            countNaN(key);
         } else if (tracksMinMax) {
-            long key = TotalOrder.key(Double.doubleToRawLongBits(value));
             updateKeyMinMax(key);
         }
     }
@@ -227,7 +254,7 @@ public final class StatisticsAccumulator {
     public void updateBinary(@NonNull MemorySegment value) {
         requireBinaryKind();
         nonNullCount++;
-        if (order == BoundsOrder.HALF_FLOAT) {
+        if (order.holdsHalfFloats()) {
             updateHalfFloat(value);
         } else if (tracksMinMax) {
             updateBinaryMinMax(value);
@@ -235,11 +262,26 @@ public final class StatisticsAccumulator {
     }
 
     private void updateHalfFloat(MemorySegment cell) {
+        int key = HalfFloats.key(cell);
         if (HalfFloats.isNaN(cell)) {
-            nanCount++;
+            countNaN(key);
         } else {
-            updateKeyMinMax(HalfFloats.key(cell));
+            updateKeyMinMax(key);
         }
+    }
+
+    /** Counts one NaN cell and folds its key into the smallest and largest NaN of the window. */
+    private void countNaN(long key) {
+        boolean firstNaN = nanCount == 0;
+        if (firstNaN) {
+            nanMinKey = key;
+            nanMaxKey = key;
+        } else if (key < nanMinKey) {
+            nanMinKey = key;
+        } else if (key > nanMaxKey) {
+            nanMaxKey = key;
+        }
+        nanCount++;
     }
 
     private void requireBinaryKind() {
@@ -291,7 +333,7 @@ public final class StatisticsAccumulator {
         requireSameColumnType(other);
         nullCount += other.nullCount;
         nonNullCount += other.nonNullCount;
-        nanCount += other.nanCount;
+        mergeNaNs(other);
         if (other.hasMinMax) {
             mergeMinMax(other);
         }
@@ -306,6 +348,20 @@ public final class StatisticsAccumulator {
             throw new ParquetWriteException(
                     "Cannot merge accumulators of different orders: " + this.order + " vs " + other.order);
         }
+    }
+
+    private void mergeNaNs(StatisticsAccumulator other) {
+        if (other.nanCount == 0) {
+            return;
+        }
+        if (nanCount == 0) {
+            nanMinKey = other.nanMinKey;
+            nanMaxKey = other.nanMaxKey;
+        } else {
+            nanMinKey = Math.min(nanMinKey, other.nanMinKey);
+            nanMaxKey = Math.max(nanMaxKey, other.nanMaxKey);
+        }
+        nanCount += other.nanCount;
     }
 
     private void mergeMinMax(StatisticsAccumulator other) {
@@ -386,6 +442,8 @@ public final class StatisticsAccumulator {
         binaryMin = null;
         binaryMax = null;
         nanCount = 0;
+        nanMinKey = 0L;
+        nanMaxKey = 0L;
     }
 
     /** The NaN count of the window, recorded for a floating-point column alone. */
@@ -408,46 +466,69 @@ public final class StatisticsAccumulator {
         return MemorySegment.NULL;
     }
 
-    /** The smallest cell of the window, nothing for a window holding no ordered cell. */
+    /** The lower bound of the window, nothing for a window holding no cell to bound it. */
     private MemorySegment encodedLowerBound() {
+        if (boundedByNaNs()) {
+            return encoded(nanMinKey);
+        }
         if (!hasMinMax) {
             return MemorySegment.NULL;
         }
         return order.comparesBytes() ? binaryMin : encoded(lowerBoundKey());
     }
 
-    /** The largest cell of the window, nothing for a window holding no ordered cell. */
+    /** The upper bound of the window, nothing for a window holding no cell to bound it. */
     private MemorySegment encodedUpperBound() {
+        if (boundedByNaNs()) {
+            return encoded(nanMaxKey);
+        }
         if (!hasMinMax) {
             return MemorySegment.NULL;
         }
         return order.comparesBytes() ? binaryMax : encoded(upperBoundKey());
     }
 
+    /** In total order a window holding NaN cells and no number is bounded by its smallest and largest NaN. */
+    private boolean boundedByNaNs() {
+        return totalOrder && !hasMinMax && nanCount > 0;
+    }
+
     /** Whether the lower bound is held by a cell of the window: not so for a {@code -0.0} written over {@code +0.0}. */
     private boolean lowerBoundIsExact() {
+        if (boundedByNaNs()) {
+            return true;
+        }
         return hasMinMax && lowerBoundKey() == minKey;
     }
 
     /** Whether the upper bound is held by a cell of the window: not so for a {@code +0.0} written over {@code -0.0}. */
     private boolean upperBoundIsExact() {
+        if (boundedByNaNs()) {
+            return true;
+        }
         return hasMinMax && upperBoundKey() == maxKey;
     }
 
     /**
-     * A floating-point minimum of zero is recorded as {@code -0.0}, regardless of the sign of the zeros in the window.
+     * In the type-defined order a floating-point minimum of zero is recorded as {@code -0.0}, regardless of the sign of
+     * the zeros in the window.
      */
     private long lowerBoundKey() {
-        boolean positiveZero = order.isFloatingPoint() && minKey == POSITIVE_ZERO_KEY;
+        boolean positiveZero = rewritesZeroBounds() && minKey == POSITIVE_ZERO_KEY;
         return positiveZero ? negativeZeroKey : minKey;
     }
 
     /**
-     * A floating-point maximum of zero is recorded as {@code +0.0}, regardless of the sign of the zeros in the window.
+     * In the type-defined order a floating-point maximum of zero is recorded as {@code +0.0}, regardless of the sign of
+     * the zeros in the window.
      */
     private long upperBoundKey() {
-        boolean negativeZero = order.isFloatingPoint() && maxKey == negativeZeroKey;
+        boolean negativeZero = rewritesZeroBounds() && maxKey == negativeZeroKey;
         return negativeZero ? POSITIVE_ZERO_KEY : maxKey;
+    }
+
+    private boolean rewritesZeroBounds() {
+        return order.isFloatingPoint() && !totalOrder;
     }
 
     /** The PLAIN bytes of the cell with the given order key. */
@@ -456,9 +537,9 @@ public final class StatisticsAccumulator {
             case BOOLEAN -> readOnlyHeap(new byte[] {(byte) key});
             case SIGNED_INT32, UNSIGNED_INT32 -> encodedInt32((int) key ^ intSignFlip);
             case SIGNED_INT64, UNSIGNED_INT64 -> encodedInt64(key ^ longSignFlip);
-            case FLOAT -> encodedInt32(TotalOrder.bits((int) key));
-            case DOUBLE -> encodedInt64(TotalOrder.bits(key));
-            case HALF_FLOAT -> encodedHalfFloat(HalfFloats.bits((int) key));
+            case FLOAT, FLOAT_TOTAL_ORDER -> encodedInt32(TotalOrder.bits((int) key));
+            case DOUBLE, DOUBLE_TOTAL_ORDER -> encodedInt64(TotalOrder.bits(key));
+            case HALF_FLOAT, HALF_FLOAT_TOTAL_ORDER -> encodedHalfFloat(HalfFloats.bits((int) key));
             case UNSIGNED_BYTES, SIGNED_BYTES, UNDEFINED ->
                 throw new IllegalStateException("a column in " + order + " order has no order keys");
         };

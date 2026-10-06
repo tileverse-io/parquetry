@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
+import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
@@ -29,9 +30,11 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import io.tileverse.parquetry.data.WriteOptions.FloatColumnOrder;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.LogicalType.TimeUnit;
 import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 class BoundsOrderTest {
 
@@ -112,6 +115,105 @@ class BoundsOrderTest {
     void aHalfFloatAnnotationOnAnotherWidthHasNoOrder() {
         assertThat(BoundsOrder.of(WriteFixtures.fixedLeaf(4, FLOAT16))).isEqualTo(BoundsOrder.UNDEFINED);
         assertThat(BoundsOrder.of(WriteFixtures.fixedLeaf(2, FLOAT16))).isEqualTo(BoundsOrder.HALF_FLOAT);
+    }
+
+    static Stream<Arguments> floatingPointColumns() {
+        return Stream.of(
+                Arguments.of(WriteFixtures.leaf(PrimitiveKind.FLOAT, null), BoundsOrder.FLOAT_TOTAL_ORDER),
+                Arguments.of(WriteFixtures.leaf(PrimitiveKind.DOUBLE, null), BoundsOrder.DOUBLE_TOTAL_ORDER),
+                Arguments.of(
+                        WriteFixtures.leaf(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, FLOAT16),
+                        BoundsOrder.HALF_FLOAT_TOTAL_ORDER));
+    }
+
+    @ParameterizedTest(name = "{0} orders as {1}")
+    @MethodSource("floatingPointColumns")
+    void aFloatingPointColumnTakesTotalOrderInAFileDeclaringIt(SchemaNode.Primitive leaf, BoundsOrder expected) {
+        assertThat(BoundsOrder.of(leaf, FloatColumnOrder.IEEE_754_TOTAL_ORDER)).isEqualTo(expected);
+    }
+
+    @ParameterizedTest(name = "{0} does not order as {1}")
+    @MethodSource("floatingPointColumns")
+    void aFloatingPointColumnKeepsItsOrderInAFileDeclaringTheTypeDefinedOrder(
+            SchemaNode.Primitive leaf, BoundsOrder totalOrder) {
+        BoundsOrder order = BoundsOrder.of(leaf, FloatColumnOrder.TYPE_DEFINED);
+
+        assertThat(order).isEqualTo(BoundsOrder.of(leaf)).isNotEqualTo(totalOrder);
+    }
+
+    static Stream<Arguments> columnsOutsideTotalOrder() {
+        return Stream.of(
+                Arguments.of(WriteFixtures.leaf(PrimitiveKind.INT32, null)),
+                Arguments.of(WriteFixtures.leaf(PrimitiveKind.BYTE_ARRAY, new LogicalType.StringType())),
+                Arguments.of(WriteFixtures.leaf(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, DECIMAL)),
+                Arguments.of(WriteFixtures.leaf(PrimitiveKind.FLOAT, new LogicalType.UnknownType())),
+                Arguments.of(WriteFixtures.leaf(PrimitiveKind.DOUBLE, new LogicalType.UnknownType())),
+                Arguments.of(WriteFixtures.fixedLeaf(4, FLOAT16)),
+                Arguments.of(WriteFixtures.leaf(PrimitiveKind.DOUBLE, DECIMAL)));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("columnsOutsideTotalOrder")
+    void totalOrderLeavesTheOtherColumnsInTheirTypeDefinedOrder(SchemaNode.Primitive leaf) {
+        BoundsOrder order = BoundsOrder.of(leaf, FloatColumnOrder.IEEE_754_TOTAL_ORDER);
+
+        assertThat(order).isEqualTo(BoundsOrder.of(leaf));
+        assertThat(order.isTotalOrder()).isFalse();
+    }
+
+    @Test
+    void floatingPointOrdersCountNaNCellsInEitherOrder() {
+        List<BoundsOrder> floatingPoint = List.of(
+                BoundsOrder.FLOAT,
+                BoundsOrder.DOUBLE,
+                BoundsOrder.HALF_FLOAT,
+                BoundsOrder.FLOAT_TOTAL_ORDER,
+                BoundsOrder.DOUBLE_TOTAL_ORDER,
+                BoundsOrder.HALF_FLOAT_TOTAL_ORDER);
+
+        for (BoundsOrder order : BoundsOrder.values()) {
+            assertThat(order.isFloatingPoint())
+                    .as("%s counts NaN cells", order)
+                    .isEqualTo(floatingPoint.contains(order));
+        }
+    }
+
+    @Test
+    void onlyTheTotalOrderConstantsReportTotalOrder() {
+        List<BoundsOrder> totalOrder = List.of(
+                BoundsOrder.FLOAT_TOTAL_ORDER, BoundsOrder.DOUBLE_TOTAL_ORDER, BoundsOrder.HALF_FLOAT_TOTAL_ORDER);
+
+        for (BoundsOrder order : BoundsOrder.values()) {
+            assertThat(order.isTotalOrder()).as("%s is a total order", order).isEqualTo(totalOrder.contains(order));
+        }
+    }
+
+    @Test
+    void totalOrderPutsNaNCellsBeyondTheInfinitiesBySignAndPayload() {
+        MemorySegment negativeNaN = int32(0xFFC00000);
+        MemorySegment nan = int32(0x7FC00000);
+        MemorySegment nanWithPayload = int32(0x7FC00001);
+        MemorySegment halfPositiveInfinity = bytes(0x00, 0x7C);
+        MemorySegment halfNaN = bytes(0x00, 0x7E);
+
+        assertThat(BoundsOrder.FLOAT_TOTAL_ORDER.compare(negativeNaN, float32(Float.NEGATIVE_INFINITY)))
+                .as("a negative NaN before negative infinity")
+                .isNegative();
+        assertThat(BoundsOrder.FLOAT_TOTAL_ORDER.compare(float32(Float.POSITIVE_INFINITY), nan))
+                .as("positive infinity before a positive NaN")
+                .isNegative();
+        assertThat(BoundsOrder.FLOAT_TOTAL_ORDER.compare(nan, nanWithPayload))
+                .as("a positive NaN before one with a larger payload")
+                .isNegative();
+        assertThat(BoundsOrder.HALF_FLOAT_TOTAL_ORDER.compare(halfPositiveInfinity, halfNaN))
+                .as("half-float positive infinity before a positive NaN")
+                .isNegative();
+    }
+
+    @Test
+    void totalOrderPutsNegativeZeroBeforePositiveZero() {
+        assertThat(BoundsOrder.DOUBLE_TOTAL_ORDER.compare(float64(-0.0), float64(0.0)))
+                .isNegative();
     }
 
     @Test

@@ -19,11 +19,12 @@ import java.util.Optional;
 import java.util.OptionalLong;
 
 import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
  * What the statistics of a column chunk or of a page tell about its NaN cells. NaN cells lie outside the min and max of
- * a floating-point column, and a pruning tier decides for them from the recorded NaN count: a count of zero rules them
- * out, and a chunk holds nothing else when its NaN and null counts add up to its values.
+ * a floating-point column holding numbers, and a pruning tier rules on them from the recorded NaN count: a count of
+ * zero rules them out, and a chunk or page holds nothing else when its NaN and null counts add up to its values.
  */
 public enum NaNCells {
 
@@ -37,14 +38,41 @@ public enum NaNCells {
     ALL;
 
     /**
-     * What the column index tells about the NaN cells of one page.
+     * Whether the reader compares the cells of a column of {@code kind} as numbers: FLOAT and DOUBLE. It compares the
+     * cells of a FLOAT16 column as bytes, and a byte literal matches a NaN cell.
+     */
+    static boolean comparesAsNumbers(PrimitiveKind kind) {
+        return kind == PrimitiveKind.FLOAT || kind == PrimitiveKind.DOUBLE;
+    }
+
+    /**
+     * What the NaN and null counts of a page tell about its NaN cells, in a column holding one value per row.
      *
      * @param nanCount the NaN count of the page, empty when the index records none
+     * @param nullCount the null count of the page, empty when the index records none
+     * @param rows the number of rows of the page
      */
-    static NaNCells ofPage(OptionalLong nanCount, Value min, Value max) {
-        boolean zeroCount = nanCount.isPresent() && nanCount.getAsLong() == 0L;
-        NaNCells counted = zeroCount ? ABSENT : POSSIBLE;
-        return counted.checkedAgainst(Optional.of(min), Optional.of(max));
+    static NaNCells ofPageCounts(OptionalLong nanCount, OptionalLong nullCount, long rows) {
+        if (nanCount.isEmpty()) {
+            return POSSIBLE;
+        }
+        long nans = nanCount.getAsLong();
+        if (nans == 0L) {
+            return ABSENT;
+        }
+        boolean onlyNaN = nullCount.isPresent() && makeUpThePage(nans, nullCount.getAsLong(), rows);
+        return onlyNaN ? ALL : POSSIBLE;
+    }
+
+    /**
+     * Whether {@code nans} NaN cells and {@code nulls} null cells fill the {@code rows} rows of a page. Negative counts
+     * describe no page.
+     */
+    private static boolean makeUpThePage(long nans, long nulls, long rows) {
+        if (nans < 0L || nulls < 0L || nans > rows) {
+            return false;
+        }
+        return rows - nans == nulls;
     }
 
     /**

@@ -89,7 +89,7 @@ class NaNStatisticsPruningTest {
         assertThat(plan.get(NUMBERS_ROW_GROUP).outcome()).isEqualTo(RowGroupOutcome.ELIMINATED);
         assertThat(plan.get(MIXED_ROW_GROUP).outcome()).isIn(SCANNED);
         assertThat(plan.get(ONLY_NAN_ROW_GROUP).outcome()).isEqualTo(RowGroupOutcome.MATCHED);
-        assertCount(isNaN, NANS_IN_THE_FILE);
+        ReadFixtures.assertCountWithAndWithoutPruning(file, isNaN, NANS_IN_THE_FILE);
     }
 
     @Test
@@ -101,7 +101,7 @@ class NaNStatisticsPruningTest {
         assertThat(plan.get(NUMBERS_ROW_GROUP).outcome()).isEqualTo(RowGroupOutcome.MATCHED);
         assertThat(plan.get(MIXED_ROW_GROUP).outcome()).isIn(SCANNED);
         assertThat(plan.get(ONLY_NAN_ROW_GROUP).outcome()).isEqualTo(RowGroupOutcome.ELIMINATED);
-        assertCount(positive, NUMBERS_IN_THE_FILE);
+        ReadFixtures.assertCountWithAndWithoutPruning(file, positive, NUMBERS_IN_THE_FILE);
     }
 
     @Test
@@ -113,7 +113,7 @@ class NaNStatisticsPruningTest {
         assertThat(plan.get(NUMBERS_ROW_GROUP).outcome()).isEqualTo(RowGroupOutcome.MATCHED);
         assertThat(plan.get(MIXED_ROW_GROUP).outcome()).isIn(SCANNED);
         assertThat(plan.get(ONLY_NAN_ROW_GROUP).outcome()).isEqualTo(RowGroupOutcome.ELIMINATED);
-        assertCount(isNumber, NUMBERS_IN_THE_FILE);
+        ReadFixtures.assertCountWithAndWithoutPruning(file, isNumber, NUMBERS_IN_THE_FILE);
     }
 
     @Test
@@ -124,24 +124,14 @@ class NaNStatisticsPruningTest {
 
         assertThat(plan.get(ONLY_NAN_ROW_GROUP).outcome()).isEqualTo(RowGroupOutcome.MATCHED);
         long cellsEqualToOne = 1L;
-        assertCount(notOne, NUMBERS_IN_THE_FILE + NANS_IN_THE_FILE - cellsEqualToOne);
+        ReadFixtures.assertCountWithAndWithoutPruning(
+                file, notOne, NUMBERS_IN_THE_FILE + NANS_IN_THE_FILE - cellsEqualToOne);
     }
 
     private List<RowGroupPlan> explain(Predicate predicate) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             ExplainPlan plan = ParquetFileReader.open(source).explain(predicate, Projection.ALL, ReadOptions.DEFAULTS);
             return plan.rowGroups();
-        }
-    }
-
-    private void assertCount(Predicate predicate, long expected) {
-        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetFileReader reader = ParquetFileReader.open(source);
-
-            assertThat(reader.count(predicate, ReadOptions.DEFAULTS))
-                    .as("rows matching %s", predicate)
-                    .isEqualTo(reader.count(predicate, ReadFixtures.METADATA_PRUNING_OFF))
-                    .isEqualTo(expected);
         }
     }
 

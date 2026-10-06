@@ -164,15 +164,10 @@ public final class StatsEvaluator {
      * DOUBLE columns alone: the cells of a FLOAT16 column compare as bytes, and a byte literal matches a NaN cell.
      */
     private static NaNCells nanCells(FilterPipeline.ColumnStats cs, Optional<Value> min, Optional<Value> max) {
-        if (!comparesAsNumbers(cs.kind())) {
+        if (!NaNCells.comparesAsNumbers(cs.kind())) {
             return NaNCells.POSSIBLE;
         }
         return cs.nans().checkedAgainst(min, max);
-    }
-
-    /** Whether {@code kind} is FLOAT or DOUBLE: the cells of such a column compare as numbers, and may be NaN. */
-    private static boolean comparesAsNumbers(PrimitiveKind kind) {
-        return kind == PrimitiveKind.FLOAT || kind == PrimitiveKind.DOUBLE;
     }
 
     private static boolean inverted(Optional<Value> min, Optional<Value> max) {
@@ -483,7 +478,7 @@ public final class StatsEvaluator {
 
     /** A FLOAT or DOUBLE chunk may hold NaN cells outside its min/max, unless its statistics rule them out. */
     private static boolean mayHoldNaN(DecodedRange range) {
-        return comparesAsNumbers(range.kind()) && range.nans() != NaNCells.ABSENT;
+        return NaNCells.comparesAsNumbers(range.kind()) && range.nans() != NaNCells.ABSENT;
     }
 
     /** What is known of the NaN cells of a column; nothing for a column without statistics. */

@@ -150,6 +150,7 @@ Directories are for navigation; published artifact ids stay flat regardless (`io
 - [Native memory and spill](docs/native-memory-and-spill.md) - how parquetry bounds its off-heap fetch/decompression term, and the spill design.
 - [Spatial filtering](docs/spatial-filtering.md) - the bbox predicate family, covering-column and native-bounds pruning, and the exact gate.
 - [Counting](docs/counting.md) - count pushdown.
+- [Float statistics](docs/float-statistics.md) - NaN counts, signed zero bounds, the opt-in IEEE 754 total order and which readers support it.
 
 ## Building
 

@@ -47,6 +47,7 @@ import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.format.SchemaElement;
 import io.tileverse.parquetry.internal.write.BboxCoveringPlan;
+import io.tileverse.parquetry.internal.write.FooterColumnOrders;
 import io.tileverse.parquetry.internal.write.GeoColumnSummary;
 import io.tileverse.parquetry.internal.write.GeoMetadataWriter;
 import io.tileverse.parquetry.internal.write.PageValueLimits;
@@ -564,6 +565,7 @@ public final class ParquetFileWriter implements AutoCloseable {
     private void writeFooter() {
         List<SchemaElement> elements = SchemaElementWriter.flatten(schema);
         List<KeyValue> keyValueMetadata = buildKeyValueMetadata();
+        List<ColumnOrder> columnOrders = FooterColumnOrders.of(schema, options.floatColumnOrder());
         FileMetaData footer = FileMetaData.builder()
                 .version(footerFormatVersion())
                 .schema(elements)
@@ -571,7 +573,7 @@ public final class ParquetFileWriter implements AutoCloseable {
                 .rowGroups(completedRowGroups)
                 .keyValueMetadata(keyValueMetadata)
                 .createdBy(Optional.of(CREATED_BY + " version " + ParquetryVersion.version()))
-                .columnOrders(Optional.of(typeDefinedColumnOrders()))
+                .columnOrders(Optional.of(columnOrders))
                 .build();
 
         long[] placement = writeThriftBlob(buffer -> ParquetFormat.writeFooter(buffer, footer));
@@ -603,21 +605,6 @@ public final class ParquetFileWriter implements AutoCloseable {
             entries.add(new KeyValue(GEO_KEY, geoJson));
         }
         return entries;
-    }
-
-    /**
-     * Declares the type-defined sort order for every leaf column. This is the signal that the footer's
-     * {@code min_value}/{@code max_value} statistics obey each column type's logical ordering (signed for numeric
-     * types, unsigned-lexicographic for binary) rather than the legacy signed-byte comparison. Readers must disregard
-     * the modern statistics fields when it is absent.
-     */
-    private List<ColumnOrder> typeDefinedColumnOrders() {
-        int leafCount = schema.leafColumns().size();
-        List<ColumnOrder> orders = new ArrayList<>(leafCount);
-        for (int i = 0; i < leafCount; i++) {
-            orders.add(new ColumnOrder.TypeDefined());
-        }
-        return orders;
     }
 
     /** Opens a fresh per-row-group writer rooted at {@code baseFileOffset}, fanning appends out on the compute pool. */

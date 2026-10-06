@@ -202,7 +202,8 @@ public final class FeatureRecordBatches {
                 base.writeObserver(),
                 base.writeObserverCadenceRows(),
                 base.bboxCovering(),
-                base.existingBboxCovering());
+                base.existingBboxCovering(),
+                base.floatColumnOrder());
     }
 
     /**
