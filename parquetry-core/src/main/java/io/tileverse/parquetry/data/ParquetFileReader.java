@@ -792,7 +792,7 @@ public final class ParquetFileReader {
      * Bounds for an unfiltered read of {@code geometryColumn}: the tight file-level metadata box when the file records
      * one (zero I/O), otherwise the union of every row group's tight metadata box with a scan of the row groups that
      * expose none. A metadata box wrapping the antimeridian is answered as its planar enclosure, and a file box without
-     * an extent is treated as absent.
+     * an extent is treated as absent. A row group without rows has no box and nothing to scan: it is skipped.
      */
     private Optional<BoundingBox> unfilteredBounds(ColumnPath geometryColumn, ReadOptions options) {
         Optional<BoundingBox> fileBox = spatialBounds.fileBounds(geometryColumn).filter(BoundingBox::hasExtent);
@@ -807,11 +807,12 @@ public final class ParquetFileReader {
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks();
         List<RowGroupSurvivor> boxLess = new ArrayList<>();
         for (int i = 0; i < rowGroupChunks.size(); i++) {
+            RowGroupChunks chunks = rowGroupChunks.get(i);
             Optional<BoundingBox> box = spatialBounds.rowGroupBounds(geometryColumn, i);
             if (box.isPresent()) {
                 accumulator.union(box.orElseThrow());
-            } else {
-                boxLess.add(RowGroupSurvivor.full(rowGroupChunks.get(i)));
+            } else if (chunks.numRows() != 0L) {
+                boxLess.add(RowGroupSurvivor.full(chunks));
             }
         }
         if (!boxLess.isEmpty()) {

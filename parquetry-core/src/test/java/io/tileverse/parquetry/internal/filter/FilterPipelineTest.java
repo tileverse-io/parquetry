@@ -26,13 +26,18 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
+import io.tileverse.parquetry.filter.explain.RowGroupPlan;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -85,17 +90,28 @@ class FilterPipelineTest {
         assertThat(plan.estimatedRowsScanned()).isEqualTo(1000);
     }
 
-    @Test
-    void emptyRowGroupIsNotMatched() {
+    // A row group without rows is skipped before any tier runs, even when its statistics match the predicate.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("statsOfAnEmptyRowGroup")
+    void emptyRowGroupIsEliminated(String scenario, FilterPipeline.ColumnStatsLookup stats) {
         ParquetSchema schema = flatSchema();
-        FilterPipeline.RowGroupInputs rg =
-                inputs(/* rows */ 0, statsOf("year", intStats(10, 20, 0)), noDicts(), noPageIndex());
+        FilterPipeline.RowGroupInputs rg = inputs(/* rows */ 0, stats, noDicts(), noPageIndex());
         Predicate p = col("year").gt(5);
 
         ExplainPlan plan = FilterPipeline.evaluate(schema, Projection.ALL, p, List.of(rg));
 
-        // An empty row group has no rows to match; the all-rows-match short-circuit must not claim MATCHED for it.
-        assertThat(plan.rowGroups().get(0).outcome()).isNotEqualTo(RowGroupOutcome.MATCHED);
+        RowGroupPlan rowGroup = plan.rowGroups().get(0);
+        assertThat(rowGroup.outcome()).isEqualTo(RowGroupOutcome.ELIMINATED);
+        assertThat(rowGroup.tiers()).isEmpty();
+        assertThat(plan.estimatedRowsScanned()).isZero();
+    }
+
+    static Stream<Arguments> statsOfAnEmptyRowGroup() {
+        FilterPipeline.ColumnStatsLookup noStats = path -> Optional.empty();
+        return Stream.of(
+                Arguments.of("bounds above the literal", statsOf("year", intStats(10, 20, 0))),
+                Arguments.of("bounds around the literal", statsOf("year", intStats(0, 20, 0))),
+                Arguments.of("no statistics", noStats));
     }
 
     @Test
