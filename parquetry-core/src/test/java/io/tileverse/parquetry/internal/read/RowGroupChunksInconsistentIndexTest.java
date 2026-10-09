@@ -51,7 +51,8 @@ import io.tileverse.parquetry.schema.SchemaBuilder;
  * A page index not describing the pages of its chunk is left unused, and the chunk reads as one without it. An offset
  * index describes them when its first page starts at the first row of the row group and each later page starts after
  * the previous one, before the last row ends, with the bytes of the pages following one another in the file. A column
- * index does when its null flags and bounds have one entry per page of the offset index.
+ * index does when its null flags and bounds have one entry per page of the offset index, and its null pages have a null
+ * count above zero.
  */
 class RowGroupChunksInconsistentIndexTest {
 
@@ -125,6 +126,33 @@ class RowGroupChunksInconsistentIndexTest {
                 Arguments.of("more entries than pages", 4, 4, 4, false));
     }
 
+    // A page marked as only nulls must count at least one null. Otherwise the column index is ignored.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("nullPagesAndCounts")
+    void nullPagesAgreeWithNullCounts(
+            String scenario, List<Boolean> nullPages, Optional<List<Long>> nullCounts, boolean usable) {
+        ColumnIndex bounds = columnIndex(nullPages, nullCounts);
+        RowGroupChunks chunks = chunks(bounds, offsetIndex(0, 4, 8));
+
+        assertThat(chunks.pageStats(V).isPresent()).as("page statistics in use").isEqualTo(usable);
+        assertThat(chunks.offsetIndex(V)).as("the offset index stays in use").isPresent();
+    }
+
+    static Stream<Arguments> nullPagesAndCounts() {
+        List<Boolean> secondPageOfNulls = List.of(false, true, false);
+        List<Boolean> pagesOfNulls = List.of(true, true, true);
+        return Stream.of(
+                Arguments.of("a null page counting its nulls", secondPageOfNulls, counts(0L, 4L, 0L), true),
+                Arguments.of("a null page without null counts", secondPageOfNulls, Optional.empty(), true),
+                Arguments.of("null counts of another length", secondPageOfNulls, counts(0L, 0L), true),
+                Arguments.of("a null page counting no nulls", secondPageOfNulls, counts(0L, 0L, 0L), false),
+                Arguments.of("null pages with negative counts", pagesOfNulls, counts(-1L, -1L, -1L), false));
+    }
+
+    private static Optional<List<Long>> counts(Long... perPage) {
+        return Optional.of(List.of(perPage));
+    }
+
     private static RowGroupChunks chunks(ColumnIndex columnIndex, OffsetIndex offsetIndex) {
         FileMetaData footer = footer();
         ParquetSchema schema = SchemaBuilder.build(footer.schema());
@@ -177,6 +205,19 @@ class RowGroupChunksInconsistentIndexTest {
                 Collections.nCopies(maximums, int64(9L)),
                 BoundaryOrder.UNORDERED,
                 Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
+    }
+
+    private static ColumnIndex columnIndex(List<Boolean> nullPages, Optional<List<Long>> nullCounts) {
+        int pages = nullPages.size();
+        return new ColumnIndex(
+                nullPages,
+                Collections.nCopies(pages, int64(0L)),
+                Collections.nCopies(pages, int64(9L)),
+                BoundaryOrder.UNORDERED,
+                nullCounts,
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty());
