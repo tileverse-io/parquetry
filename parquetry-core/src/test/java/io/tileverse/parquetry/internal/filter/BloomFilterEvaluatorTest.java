@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
@@ -361,6 +362,16 @@ class BloomFilterEvaluatorTest {
         FilterPipeline.BloomFilterLookup blooms =
                 single("d", PrimitiveKind.INT64, bloomOver(SplitBlockBloomFilter.hashInt64(0L)));
         assertThat(BloomFilterEvaluator.evaluate(Pred.col("d").eq(java.time.LocalDate.of(2020, 1, 1)), blooms))
+                .isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    // A DATE column holds the days of INT32: no cell stores a day one range later, and no hash stands for it.
+    @Test
+    void dateOutOfRangeIsNotApplied() {
+        LocalDate oneRangeAfterDay5 = LocalDate.ofEpochDay((1L << 32) + 5);
+        FilterPipeline.BloomFilterLookup blooms =
+                single("date", PrimitiveKind.INT32, bloomOver(SplitBlockBloomFilter.hashInt32(5)));
+        assertThat(BloomFilterEvaluator.evaluate(Pred.col("date").eq(oneRangeAfterDay5), blooms))
                 .isInstanceOf(PruningDecision.NotApplied.class);
     }
 

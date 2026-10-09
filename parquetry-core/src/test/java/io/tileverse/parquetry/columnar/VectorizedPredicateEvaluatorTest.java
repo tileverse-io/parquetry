@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.columnar;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.BitSet;
 import java.util.List;
@@ -104,14 +105,35 @@ class VectorizedPredicateEvaluatorTest {
         assertThat(rowsMatching(Pred.col("price").ltEq(0.0), batch)).containsExactly(0, 1);
     }
 
+    // Validation keeps an integer literal away from a floating-point column: the pair has no comparison.
     @Test
-    void literalOfAnotherTypeKeepsTheOutcomeOfAnUnknownPair() {
-        // Validation keeps such a literal away from a floating-point column; an unknown pair compares as equal.
+    void doubleColumnRejectsIntLiteral() {
         ParquetRecordBatch batch = BatchFixture.doubleColumn(PRICE, new double[] {1.0, Double.NaN});
         Predicate eqInteger = new Predicate.Eq(PRICE, new Value.IntVal(1));
+
+        assertThatThrownBy(() -> VectorizedPredicateEvaluator.eval(eqInteger, batch))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("IntVal");
+    }
+
+    @Test
+    void floatColumnRejectsIntLiteral() {
+        ParquetRecordBatch batch = BatchFixture.floatColumn(PRICE, new float[] {1.0f, Float.NaN});
         Predicate ltInteger = new Predicate.Lt(PRICE, new Value.IntVal(1));
-        assertThat(rowsMatching(eqInteger, batch)).containsExactly(0, 1);
-        assertThat(rowsMatching(ltInteger, batch)).isEmpty();
+
+        assertThatThrownBy(() -> VectorizedPredicateEvaluator.eval(ltInteger, batch))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("IntVal");
+    }
+
+    @Test
+    void intColumnRejectsStringLiteral() {
+        ParquetRecordBatch batch = BatchFixture.intColumn(ID, new int[] {1, 2, 3}, "111");
+        Predicate eqString = new Predicate.Eq(ID, new Value.StringVal("1"));
+
+        assertThatThrownBy(() -> VectorizedPredicateEvaluator.eval(eqString, batch))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("StringVal");
     }
 
     /** Row values: 1.0, NaN, -0.0, a NaN with another payload, +0.0, +Infinity. */

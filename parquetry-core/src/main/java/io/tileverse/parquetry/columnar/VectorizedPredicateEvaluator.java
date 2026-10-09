@@ -426,13 +426,8 @@ public final class VectorizedPredicateEvaluator {
     }
 
     // The literal is resolved once per column, leaving one primitive IEEE 754 comparison per row. A literal of another
-    // type cannot reach a floating-point column past validation; such a literal keeps the outcome of an unknown pair
-    // and compares as equal.
+    // type cannot reach a floating-point column past validation, and has no comparison with its cells.
     private static void doubleMask(DoubleVector dv, Validity validity, Value v, ComparisonOperator op, BitSet out) {
-        if (!ValueComparison.isFloating(v)) {
-            unknownPairMask(validity, op, out);
-            return;
-        }
         double literal = ValueComparison.floatingValue(v);
         for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
             if (op.holds(dv.getDouble(r), literal)) {
@@ -443,20 +438,12 @@ public final class VectorizedPredicateEvaluator {
 
     // A float cell widens to double exactly, comparing as the double literal does.
     private static void floatMask(FloatVector fv, Validity validity, Value v, ComparisonOperator op, BitSet out) {
-        if (!ValueComparison.isFloating(v)) {
-            unknownPairMask(validity, op, out);
-            return;
-        }
         double literal = ValueComparison.floatingValue(v);
         for (int r = validity.nextSetBit(0); r >= 0; r = validity.nextSetBit(r + 1)) {
             if (op.holds(fv.getFloat(r), literal)) {
                 out.set(r);
             }
         }
-    }
-
-    private static void unknownPairMask(Validity validity, ComparisonOperator op, BitSet out) {
-        sameOutcomeMask(validity, op, 0, out);
     }
 
     /**

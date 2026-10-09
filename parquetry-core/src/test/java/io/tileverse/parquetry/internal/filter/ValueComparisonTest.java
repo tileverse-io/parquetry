@@ -50,6 +50,8 @@ class ValueComparisonTest {
         Value bytes = new Value.BinaryVal(MemorySegment.ofArray(new byte[] {0, 0, 0, 1}));
         return Stream.of(
                 Arguments.of(new Value.LongVal(5L), new Value.TimestampVal(instant, true)),
+                // A date literal is rejected on an INT64 column: it has no order against the bounds of one.
+                Arguments.of(new Value.DateVal(LocalDate.EPOCH), new Value.LongVal(5L)),
                 Arguments.of(new Value.IntVal(5), new Value.TimeVal(LocalTime.NOON)),
                 Arguments.of(bytes, new Value.DecimalVal(BigDecimal.ONE)),
                 Arguments.of(new Value.UuidVal(new UUID(0L, 1L)), new Value.DecimalVal(BigDecimal.ONE)));
@@ -190,6 +192,18 @@ class ValueComparisonTest {
                 .isNegative();
     }
 
+    // A date beyond the days of INT32 lies before or after the cells, never among them.
+    @Test
+    void compareIntAgainstFarDate() {
+        Value oneRangeAfterDay5 = new Value.DateVal(LocalDate.ofEpochDay((1L << 32) + 5));
+        Value year6Million = new Value.DateVal(LocalDate.of(6_000_000, 1, 1));
+        Value year6MillionBc = new Value.DateVal(LocalDate.of(-6_000_000, 1, 1));
+
+        assertThat(ValueComparison.compareInt(5, oneRangeAfterDay5)).isNegative();
+        assertThat(ValueComparison.compareInt(5, year6Million)).isNegative();
+        assertThat(ValueComparison.compareInt(5, year6MillionBc)).isPositive();
+    }
+
     @Test
     void compareIntWidensAgainstLongBound() {
         assertThat(ValueComparison.compareInt(5, new Value.LongVal(3L))).isPositive();
@@ -219,7 +233,7 @@ class ValueComparisonTest {
 
     @ParameterizedTest(name = "compareBoxed({0}, {1}) sign == {2}")
     @MethodSource("boxedCoercionCases")
-    void compareBoxedCoercesAndFallsThrough(Object actual, Value bound, int expectedSign) {
+    void compareBoxedCoerces(Object actual, Value bound, int expectedSign) {
         assertThat(Integer.signum(ValueComparison.compareBoxed(actual, bound))).isEqualTo(expectedSign);
     }
 
@@ -232,16 +246,91 @@ class ValueComparisonTest {
                 Arguments.of(Integer.valueOf(epochDay), new Value.DateVal(date), 0),
                 Arguments.of(Integer.valueOf(epochDay + 1), new Value.DateVal(date), 1),
                 Arguments.of(Integer.valueOf(epochDay - 1), new Value.DateVal(date), -1),
+                // DateVal bound beyond the days of INT32: each cell lies before it, or after it
+                Arguments.of(Integer.valueOf(5), new Value.DateVal(LocalDate.ofEpochDay((1L << 32) + 5)), -1),
+                Arguments.of(Integer.valueOf(5), new Value.DateVal(LocalDate.of(6_000_000, 1, 1)), -1),
+                Arguments.of(Integer.valueOf(5), new Value.DateVal(LocalDate.of(-6_000_000, 1, 1)), 1),
                 // TimestampVal bound vs LocalDateTime record value
                 Arguments.of(ts, new Value.TimestampVal(ts, true), 0),
-                Arguments.of(ts.plusSeconds(1), new Value.TimestampVal(ts, true), 1),
-                // genuine type mismatch falls through to 0
-                Arguments.of(Integer.valueOf(7), new Value.BoolVal(true), 0));
+                Arguments.of(ts.plusSeconds(1), new Value.TimestampVal(ts, true), 1));
+    }
+
+    // A cell has no comparison with a literal of another type; the message names no JDK segment class.
+    @ParameterizedTest(name = "{0} against {1}")
+    @MethodSource("cellsAndLiteralsOfAnotherType")
+    void compareBoxedRejectsOtherTypes(Object cell, Value literal) {
+        assertThatThrownBy(() -> ValueComparison.compareBoxed(cell, literal))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(literal.getClass().getSimpleName())
+                .hasMessageNotContaining("OfByte")
+                .hasMessageNotContaining("SegmentImpl");
+        assertThatThrownBy(() -> ValueComparison.holds(ComparisonOperator.EQ, cell, literal))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    static Stream<Arguments> cellsAndLiteralsOfAnotherType() {
+        LocalDateTime instant = LocalDateTime.of(2020, 1, 2, 3, 4, 5);
+        MemorySegment fourBytes = MemorySegment.ofArray(new byte[] {0, 0, 0, 1});
+        return Stream.of(
+                Arguments.of(Integer.valueOf(7), new Value.BoolVal(true)),
+                Arguments.of(Boolean.TRUE, new Value.IntVal(1)),
+                Arguments.of(Long.valueOf(7L), new Value.TimestampVal(instant, true)),
+                Arguments.of(Long.valueOf(7L), new Value.TimeVal(LocalTime.NOON)),
+                Arguments.of(Long.valueOf(7L), new Value.DecimalVal(BigDecimal.ONE)),
+                Arguments.of("7", new Value.IntVal(7)),
+                Arguments.of(Double.valueOf(7.0), new Value.IntVal(7)),
+                Arguments.of(fourBytes, new Value.TimestampVal(instant, true)),
+                Arguments.of(fourBytes, new Value.DecimalVal(BigDecimal.ONE)));
+    }
+
+    @Test
+    void compareIntRejectsOtherTypes() {
+        Value string = new Value.StringVal("7");
+        Value time = new Value.TimeVal(LocalTime.NOON);
+
+        assertThatThrownBy(() -> ValueComparison.compareInt(7, string))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("StringVal");
+        assertThatThrownBy(() -> ValueComparison.compareInt(7, time)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void compareLongRejectsOtherTypes() {
+        Value date = new Value.DateVal(LocalDate.EPOCH);
+        Value decimal = new Value.DecimalVal(BigDecimal.ONE);
+
+        assertThatThrownBy(() -> ValueComparison.compareLong(7L, date))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("DateVal");
+        assertThatThrownBy(() -> ValueComparison.compareLong(7L, decimal)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void compareBooleanRejectsAnInt() {
+        Value integer = new Value.IntVal(1);
+
+        assertThatThrownBy(() -> ValueComparison.compareBoolean(true, integer))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("IntVal");
+    }
+
+    @Test
+    void compareBinaryRejectsOtherTypes() {
+        MemorySegment fourBytes = MemorySegment.ofArray(new byte[] {0, 0, 0, 1});
+        Value timestamp = new Value.TimestampVal(LocalDateTime.of(2020, 1, 2, 3, 4, 5), true);
+        Value integer = new Value.IntVal(1);
+
+        assertThatThrownBy(() -> ValueComparison.compareBinary(fourBytes, integer))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("IntVal");
+        assertThatThrownBy(() -> ValueComparison.compareBinary(fourBytes, timestamp))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("TimestampVal");
     }
 
     @ParameterizedTest(name = "compareValues({0}, {1}) sign == {2}")
     @MethodSource("valueCoercionCases")
-    void compareValuesCoercesAndFallsThrough(Value query, Value bound, int expectedSign) {
+    void compareValuesCoerces(Value query, Value bound, int expectedSign) {
         assertThat(Integer.signum(ValueComparison.compareValues(query, bound))).isEqualTo(expectedSign);
     }
 
@@ -253,8 +342,20 @@ class ValueComparisonTest {
                 Arguments.of(new Value.DateVal(date), new Value.IntVal(epochDay), 0),
                 Arguments.of(new Value.DateVal(date), new Value.IntVal(epochDay - 1), 1),
                 Arguments.of(new Value.DateVal(date), new Value.IntVal(epochDay + 1), -1),
-                // genuine type mismatch falls through to 0
-                Arguments.of(new Value.IntVal(7), new Value.BoolVal(true), 0));
+                // DateVal query beyond the days of INT32: it lies after each bound, or before it
+                Arguments.of(new Value.DateVal(LocalDate.ofEpochDay((1L << 32) + 5)), new Value.IntVal(5), 1),
+                Arguments.of(new Value.DateVal(LocalDate.of(6_000_000, 1, 1)), new Value.IntVal(5), 1),
+                Arguments.of(new Value.DateVal(LocalDate.of(-6_000_000, 1, 1)), new Value.IntVal(5), -1));
+    }
+
+    // A literal and a bound of types without an order between them fail instead of comparing as equal.
+    @ParameterizedTest(name = "{0} against {1}")
+    @MethodSource("literalsAndBoundsOfAnotherType")
+    void compareValuesRejectsUnordered(Value literal, Value bound) {
+        assertThatThrownBy(() -> ValueComparison.compareValues(literal, bound))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(literal.getClass().getSimpleName())
+                .hasMessageContaining(bound.getClass().getSimpleName());
     }
 
     @Test

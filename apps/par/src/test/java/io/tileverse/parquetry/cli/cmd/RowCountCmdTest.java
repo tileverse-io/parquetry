@@ -20,9 +20,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.nio.file.Path;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.cli.CliExitCode;
 import io.tileverse.parquetry.cli.Par;
@@ -54,6 +58,38 @@ class RowCountCmdTest {
         int code = cmd.execute("row-count", file.toString(), "--filter", "pop > 1000000");
         assertThat(code).isZero();
         assertThat(out.toString().strip()).isEqualTo("3");
+    }
+
+    @ParameterizedTest(name = "{0} counts {1}")
+    @MethodSource("int32FiltersBeyondTheRangeOfTheColumn")
+    void countsWithLiteralBeyondInt32(String filter, String expectedCount, @TempDir Path dir) throws Exception {
+        Path file = dir.resolve("cities.parquet");
+        Fixtures.writeCities(file);
+        StringWriter out = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setOut(new PrintWriter(out));
+
+        int code = cmd.execute("row-count", file.toString(), "--filter", filter);
+
+        assertThat(code).isZero();
+        assertThat(out.toString().strip()).isEqualTo(expectedCount);
+    }
+
+    /** The {@code id} column is an INT32 holding 1 to 4; 4294967297 is 2^32 + 1. */
+    private static Stream<Arguments> int32FiltersBeyondTheRangeOfTheColumn() {
+        return Stream.of(
+                Arguments.of("id = 4294967297", "0"),
+                Arguments.of("id <> 4294967297", "4"),
+                Arguments.of("id < 4294967297", "4"),
+                Arguments.of("id <= 4294967297", "4"),
+                Arguments.of("id > 4294967297", "0"),
+                Arguments.of("id >= 4294967297", "0"),
+                Arguments.of("id > -4294967297", "4"),
+                Arguments.of("id < -4294967297", "0"),
+                Arguments.of("id IN (4294967297, 2)", "1"),
+                Arguments.of("id NOT IN (4294967297)", "4"),
+                Arguments.of("id BETWEEN -4294967297 AND 4294967297", "4"),
+                Arguments.of("id NOT BETWEEN 2 AND 4294967297", "1"));
     }
 
     @Test

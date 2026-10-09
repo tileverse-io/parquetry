@@ -87,8 +87,10 @@ public final class ValueComparison {
 
     /**
      * Compares a boxed record value (Boolean/Integer/Long/Float/Double/String/MemorySegment/LocalDate/LocalDateTime)
-     * against a predicate-side {@link Value}. Returns 0 for unknown type combinations; the surrounding evaluator treats
-     * that as equality, but with NULL filtered upstream the typical path is well-typed.
+     * against a predicate-side {@link Value}.
+     *
+     * @throws IllegalArgumentException when no comparison is defined between the two types. Validation keeps such a
+     *     literal away from the column, and an answer for the pair would select rows by accident.
      */
     // S7475 (bare _ in nested record patterns) is informational only - palantirJavaFormat 2.90 cannot
     // parse the bare-underscore form Sonar suggests; see memory feedback-palantir-unnamed-pattern.
@@ -118,8 +120,8 @@ public final class ValueComparison {
             when actual instanceof String av ->
                 compareBytes(MemorySegment.ofArray(av.getBytes(StandardCharsets.UTF_8)), bv);
             case Value.DateVal(LocalDate bv) when actual instanceof LocalDate av -> av.compareTo(bv);
-            case Value.DateVal(LocalDate bv)
-            when actual instanceof Integer av -> Integer.compare(av, (int) bv.toEpochDay());
+            // The days of the literal stay a long: a date beyond the days of INT32 lies before or after each cell.
+            case Value.DateVal(LocalDate bv) when actual instanceof Integer av -> Long.compare(av, bv.toEpochDay());
             case Value.TimestampVal(LocalDateTime bv, boolean _)
             when actual instanceof LocalDateTime av -> av.compareTo(bv);
             case Value.TimestampVal(LocalDateTime bv, boolean _)
@@ -127,17 +129,23 @@ public final class ValueComparison {
             case Value.DecimalVal(BigDecimal bv) when actual instanceof BigDecimal av -> av.compareTo(bv);
             case Value.TimeVal(LocalTime bv) when actual instanceof LocalTime av -> av.compareTo(bv);
             case Value.UuidVal(UUID bv) when actual instanceof MemorySegment av -> compareSegmentToUuidValue(av, bv);
-            default -> 0;
+            default -> throw noComparison(cellTypeName(actual), bound);
         };
     }
 
     /**
      * Compares the predicate-side value to a decoded bound value (the statistics path: query vs decoded min/max).
-     * Returns negative if {@code query < bound}, zero if equal, positive if {@code query > bound}. Returns 0 for a pair
-     * of types without an order between them; {@link #ordered} tells such a pair apart.
+     * Returns negative if {@code query < bound}, zero if equal, positive if {@code query > bound}.
+     *
+     * @throws IllegalArgumentException for a pair of types without an order between them; {@link #ordered} tells such a
+     *     pair apart
      */
     public static int compareValues(Value query, Value bound) {
-        return order(query, bound).orElse(0);
+        OptionalInt order = order(query, bound);
+        if (order.isEmpty()) {
+            throw noOrder(query, bound);
+        }
+        return order.getAsInt();
     }
 
     /**
@@ -189,7 +197,7 @@ public final class ValueComparison {
             case Value.BinaryVal(MemorySegment qv)
             when bound instanceof Value.BinaryVal(MemorySegment bv) -> OptionalInt.of(compareBytes(qv, bv));
             case Value.DateVal(LocalDate qv)
-            when bound instanceof Value.IntVal(int bv) -> OptionalInt.of(Integer.compare((int) qv.toEpochDay(), bv));
+            when bound instanceof Value.IntVal(int bv) -> OptionalInt.of(Long.compare(qv.toEpochDay(), bv));
             case Value.DateVal(LocalDate qv)
             when bound instanceof Value.DateVal(LocalDate bv) -> OptionalInt.of(qv.compareTo(bv));
             case Value.DecimalVal(BigDecimal qv)
@@ -219,15 +227,15 @@ public final class ValueComparison {
     /**
      * Compares a primitive {@code int} actual value against a predicate-side {@link Value}, without boxing. Used by the
      * vectorized evaluator's typed scan. Agrees with the {@link Value.IntVal} and {@link Value.DateVal} arms of
-     * {@link #compareBoxed}. Returns 0 for unknown bound kinds.
+     * {@link #compareBoxed}, and rejects the same literals.
      */
     public static int compareInt(int actual, Value bound) {
         return switch (bound) {
             case Value.IntVal(int bv) -> Integer.compare(actual, bv);
             // A long-valued predicate reaches an INT32 column under Iceberg's lossless int-to-long promotion.
             case Value.LongVal(long bv) -> Long.compare(actual, bv);
-            case Value.DateVal(LocalDate bv) -> Integer.compare(actual, (int) bv.toEpochDay());
-            default -> 0;
+            case Value.DateVal(LocalDate bv) -> Long.compare(actual, bv.toEpochDay());
+            default -> throw noComparison("int", bound);
         };
     }
 
@@ -237,7 +245,7 @@ public final class ValueComparison {
             case Value.LongVal(long bv) -> Long.compare(actual, bv);
             // An int-valued predicate reaches an INT64 column under Iceberg's lossless int-to-long promotion.
             case Value.IntVal(int bv) -> Long.compare(actual, bv);
-            default -> 0;
+            default -> throw noComparison("long", bound);
         };
     }
 
@@ -245,13 +253,16 @@ public final class ValueComparison {
      * Compares a primitive {@code boolean} against a {@link Value} without boxing; agrees with {@link #compareBoxed}.
      */
     public static int compareBoolean(boolean actual, Value bound) {
-        return bound instanceof Value.BoolVal(boolean bv) ? Boolean.compare(actual, bv) : 0;
+        if (bound instanceof Value.BoolVal(boolean bv)) {
+            return Boolean.compare(actual, bv);
+        }
+        throw noComparison("boolean", bound);
     }
 
     /**
      * Compares a binary {@link MemorySegment} actual value against a predicate-side {@link Value}, mirroring the
      * {@link Value.BinaryVal}, {@link Value.StringVal}, {@link Value.UuidVal} and INT96 {@link Value.TimestampVal} arms
-     * of {@link #compareBoxed}. Returns 0 for unknown bound kinds.
+     * of {@link #compareBoxed}, and rejects the same literals.
      */
     @SuppressWarnings("java:S7475") // palantirJavaFormat 2.90 cannot parse bare _ in nested record patterns
     public static int compareBinary(MemorySegment actual, Value bound) {
@@ -262,8 +273,31 @@ public final class ValueComparison {
             case Value.UuidVal(UUID bv) -> compareSegmentToUuidValue(actual, bv);
             case Value.TimestampVal(LocalDateTime bv, boolean _)
             when isInt96Cell(actual) -> Int96Timestamps.compare(actual, bv);
-            default -> 0;
+            default -> throw noComparison("binary", bound);
         };
+    }
+
+    /** The type of a boxed cell as a failure names it; the classes implementing a segment are not part of it. */
+    private static String cellTypeName(Object cell) {
+        if (cell instanceof MemorySegment) {
+            return "binary";
+        }
+        return cell.getClass().getSimpleName();
+    }
+
+    /**
+     * The rejection of a literal without a comparison with the cells of a column. Built apart from the comparisons,
+     * keeping the message construction out of the per-cell methods.
+     */
+    private static IllegalArgumentException noComparison(String cellType, Value literal) {
+        return new IllegalArgumentException("no comparison is defined between a cell of type " + cellType
+                + " and a literal of type " + literal.getClass().getSimpleName());
+    }
+
+    private static IllegalArgumentException noOrder(Value query, Value bound) {
+        return new IllegalArgumentException("no order is defined between a value of type "
+                + query.getClass().getSimpleName() + " and a bound of type "
+                + bound.getClass().getSimpleName());
     }
 
     /**

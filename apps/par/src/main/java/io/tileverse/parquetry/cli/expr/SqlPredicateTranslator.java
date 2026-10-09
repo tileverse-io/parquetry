@@ -139,7 +139,7 @@ final class SqlPredicateTranslator {
     private Value value(PrimitiveKind kind, boolean uuid, Expression element) {
         return switch (kind) {
             case BOOLEAN -> new Value.BoolVal(Literals.asBool(element));
-            case INT32 -> new Value.IntVal((int) Literals.asLong(element));
+            case INT32 -> int32Literal(element);
             case INT64 -> new Value.LongVal(Literals.asLong(element));
             case FLOAT -> new Value.FloatVal((float) Literals.asDouble(element));
             case DOUBLE -> new Value.DoubleVal(Literals.asDouble(element));
@@ -164,7 +164,7 @@ final class SqlPredicateTranslator {
     private Predicate eq(Pred.ColumnRef ref, PrimitiveKind kind, boolean uuid, Expression value) {
         return switch (kind) {
             case BOOLEAN -> ref.eq(Literals.asBool(value));
-            case INT32 -> ref.eq((int) Literals.asLong(value));
+            case INT32 -> new Predicate.Eq(ref.path(), int32Literal(value));
             case INT64 -> ref.eq(Literals.asLong(value));
             case FLOAT -> ref.eq((float) Literals.asDouble(value));
             case DOUBLE -> ref.eq(Literals.asDouble(value));
@@ -176,7 +176,7 @@ final class SqlPredicateTranslator {
     private Predicate notEq(Pred.ColumnRef ref, PrimitiveKind kind, boolean uuid, Expression value) {
         return switch (kind) {
             case BOOLEAN -> Pred.not(ref.eq(Literals.asBool(value)));
-            case INT32 -> ref.notEq((int) Literals.asLong(value));
+            case INT32 -> new Predicate.NotEq(ref.path(), int32Literal(value));
             case INT64 -> ref.notEq(Literals.asLong(value));
             // Pred.ColumnRef has no float overload for ordering/notEq; compare FLOAT as double.
             case FLOAT, DOUBLE -> ref.notEq(Literals.asDouble(value));
@@ -213,12 +213,30 @@ final class SqlPredicateTranslator {
      * reaches the {@code FIXED_LEN_BYTE_ARRAY} default arm and is rejected like any other binary column.
      */
     private Predicate ordered(OrderedComparison comparison, Pred.ColumnRef ref, PrimitiveKind kind, Expression value) {
+        Value literal = orderedLiteral(kind, value);
+        return comparison.against(ref.path(), literal);
+    }
+
+    /** The literal of an ordered comparison with a column of {@code kind}; a FLOAT column compares as double. */
+    private Value orderedLiteral(PrimitiveKind kind, Expression value) {
         return switch (kind) {
-            case INT32 -> comparison.against(ref, (int) Literals.asLong(value));
-            case INT64 -> comparison.against(ref, Literals.asLong(value));
-            case FLOAT, DOUBLE -> comparison.against(ref, Literals.asDouble(value));
+            case INT32 -> int32Literal(value);
+            case INT64 -> new Value.LongVal(Literals.asLong(value));
+            case FLOAT, DOUBLE -> new Value.DoubleVal(Literals.asDouble(value));
             default -> throw operatorNotSupported(kind);
         };
+    }
+
+    /**
+     * The integer literal of an INT32 column: an int when it fits, a long otherwise. A literal beyond the range of the
+     * column narrowed to an int would be another number; the engine compares a long with INT32 cells exactly.
+     */
+    private static Value int32Literal(Expression literal) {
+        long value = Literals.asLong(literal);
+        if (value == (int) value) {
+            return new Value.IntVal((int) value);
+        }
+        return new Value.LongVal(value);
     }
 
     private Column requireColumnOnLeft(Expression left) {
@@ -294,80 +312,35 @@ final class SqlPredicateTranslator {
     }
 
     /**
-     * The four ordered comparisons over numeric columns. Each constant knows how to build the matching predicate for
-     * the INT32, INT64, and FLOAT/DOUBLE coercions, keeping the per-kind dispatch in {@link #ordered} free of operator
-     * branching.
+     * The four ordered comparisons over numeric columns. Each constant builds its predicate from a column and a
+     * literal, keeping the per-kind coercion in {@link #orderedLiteral} free of operator branching.
      */
     private enum OrderedComparison {
         LT {
             @Override
-            Predicate against(Pred.ColumnRef ref, int v) {
-                return ref.lt(v);
-            }
-
-            @Override
-            Predicate against(Pred.ColumnRef ref, long v) {
-                return ref.lt(v);
-            }
-
-            @Override
-            Predicate against(Pred.ColumnRef ref, double v) {
-                return ref.lt(v);
+            Predicate against(ColumnPath column, Value literal) {
+                return new Predicate.Lt(column, literal);
             }
         },
         LT_EQ {
             @Override
-            Predicate against(Pred.ColumnRef ref, int v) {
-                return ref.ltEq(v);
-            }
-
-            @Override
-            Predicate against(Pred.ColumnRef ref, long v) {
-                return ref.ltEq(v);
-            }
-
-            @Override
-            Predicate against(Pred.ColumnRef ref, double v) {
-                return ref.ltEq(v);
+            Predicate against(ColumnPath column, Value literal) {
+                return new Predicate.LtEq(column, literal);
             }
         },
         GT {
             @Override
-            Predicate against(Pred.ColumnRef ref, int v) {
-                return ref.gt(v);
-            }
-
-            @Override
-            Predicate against(Pred.ColumnRef ref, long v) {
-                return ref.gt(v);
-            }
-
-            @Override
-            Predicate against(Pred.ColumnRef ref, double v) {
-                return ref.gt(v);
+            Predicate against(ColumnPath column, Value literal) {
+                return new Predicate.Gt(column, literal);
             }
         },
         GT_EQ {
             @Override
-            Predicate against(Pred.ColumnRef ref, int v) {
-                return ref.gtEq(v);
-            }
-
-            @Override
-            Predicate against(Pred.ColumnRef ref, long v) {
-                return ref.gtEq(v);
-            }
-
-            @Override
-            Predicate against(Pred.ColumnRef ref, double v) {
-                return ref.gtEq(v);
+            Predicate against(ColumnPath column, Value literal) {
+                return new Predicate.GtEq(column, literal);
             }
         };
 
-        abstract Predicate against(Pred.ColumnRef ref, int v);
-
-        abstract Predicate against(Pred.ColumnRef ref, long v);
-
-        abstract Predicate against(Pred.ColumnRef ref, double v);
+        abstract Predicate against(ColumnPath column, Value literal);
     }
 }
