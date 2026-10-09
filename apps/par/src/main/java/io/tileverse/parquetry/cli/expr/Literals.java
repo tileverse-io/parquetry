@@ -15,6 +15,8 @@
  */
 package io.tileverse.parquetry.cli.expr;
 
+import java.math.BigInteger;
+
 import net.sf.jsqlparser.expression.BooleanValue;
 import net.sf.jsqlparser.expression.DoubleValue;
 import net.sf.jsqlparser.expression.Expression;
@@ -22,22 +24,43 @@ import net.sf.jsqlparser.expression.LongValue;
 import net.sf.jsqlparser.expression.SignedExpression;
 import net.sf.jsqlparser.expression.StringValue;
 
-/** Coerces jsqlparser literal nodes into the Java values parquetry predicates expect. */
+/**
+ * Coerces jsqlparser literal nodes into the Java values expected by parquetry predicates. A literal in parentheses is
+ * read as the literal.
+ */
 final class Literals {
 
     private Literals() {}
 
+    /**
+     * The integer written by {@code value}.
+     *
+     * @throws FilterParseException when it is no integer literal, or lies beyond the range of INT64
+     */
     static long asLong(Expression value) {
-        return switch (value) {
-            case LongValue longValue -> longValue.getValue();
-            case SignedExpression signed -> signedLong(signed);
+        BigInteger integer = asInteger(value);
+        boolean fitsInt64 = integer.bitLength() < Long.SIZE;
+        if (!fitsInt64) {
+            throw new FilterParseException("integer literal beyond the range of INT64: " + value);
+        }
+        return integer.longValue();
+    }
+
+    /**
+     * The integer written by {@code value}, of any magnitude. The smallest INT64 is written as a sign over a magnitude
+     * beyond INT64.
+     */
+    private static BigInteger asInteger(Expression value) {
+        return switch (Parentheses.strip(value)) {
+            case LongValue longValue -> longValue.getBigIntegerValue();
+            case SignedExpression signed -> signedInteger(signed);
             default -> throw new FilterParseException("expected an integer literal, got: " + value);
         };
     }
 
     static double asDouble(Expression value) {
-        return switch (value) {
-            case LongValue longValue -> longValue.getValue();
+        return switch (Parentheses.strip(value)) {
+            case LongValue longValue -> longValue.getBigIntegerValue().doubleValue();
             case DoubleValue doubleValue -> doubleValue.getValue();
             case SignedExpression signed -> signedDouble(signed);
             default -> throw new FilterParseException("expected a numeric literal, got: " + value);
@@ -45,25 +68,26 @@ final class Literals {
     }
 
     static String asString(Expression value) {
-        if (value instanceof StringValue stringValue) {
+        if (Parentheses.strip(value) instanceof StringValue stringValue) {
             return stringValue.getValue();
         }
         throw new FilterParseException("expected a quoted string literal, got: " + value);
     }
 
     static boolean asBool(Expression value) {
-        if (value instanceof BooleanValue booleanValue) {
+        Expression literal = Parentheses.strip(value);
+        if (literal instanceof BooleanValue booleanValue) {
             return booleanValue.getValue();
         }
-        if (value instanceof StringValue stringValue) {
+        if (literal instanceof StringValue stringValue) {
             return parseBooleanText(stringValue.getValue(), value);
         }
         throw new FilterParseException("expected true or false, got: " + value);
     }
 
-    private static long signedLong(SignedExpression signed) {
-        long magnitude = asLong(signed.getExpression());
-        return isNegative(signed) ? -magnitude : magnitude;
+    private static BigInteger signedInteger(SignedExpression signed) {
+        BigInteger magnitude = asInteger(signed.getExpression());
+        return isNegative(signed) ? magnitude.negate() : magnitude;
     }
 
     private static double signedDouble(SignedExpression signed) {

@@ -50,10 +50,13 @@ class QuotedColumnReferenceTest {
     private static final ColumnPath OUTER_C = ColumnPath.of("outer", "c");
     private static final ColumnPath TAG_SELECT = ColumnPath.of("tags", "list", "element", "select");
     private static final ColumnPath THE_GEOM = ColumnPath.of("the geom");
+    private static final ColumnPath A_QUOTE_B = ColumnPath.of("a\"b");
+    private static final ColumnPath SAY_HI = ColumnPath.of("say \"hi\"");
+    private static final ColumnPath QUOTED_STRUCT_C = ColumnPath.of("q\"s", "c");
     private static final ParquetSchema SCHEMA = schema();
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("filtersWithQuotedIdentifiers")
+    @MethodSource({"filtersWithQuotedIdentifiers", "filtersWithAQuoteInsideAnIdentifier"})
     void quotedIdentifierNamesTheColumnWithoutItsQuotes(String filter, Predicate expected) {
         Predicate parsed = parse(filter);
 
@@ -70,6 +73,24 @@ class QuotedColumnReferenceTest {
                 Arguments.of("\"outer\".c = 1", new Predicate.Eq(OUTER_C, new Value.IntVal(1))),
                 Arguments.of("\"outer\".\"c\" = 1", new Predicate.Eq(OUTER_C, new Value.IntVal(1))),
                 Arguments.of("tags.\"select\" = 'x'", new Predicate.Quantified(MatchAction.ANY, tagIsX)));
+    }
+
+    /** A doubled quote inside a quoted identifier stands for one quote of the name. */
+    static Stream<Arguments> filtersWithAQuoteInsideAnIdentifier() {
+        return Stream.of(
+                Arguments.of("\"a\"\"b\" = 2", new Predicate.Eq(A_QUOTE_B, new Value.IntVal(2))),
+                Arguments.of("\"a\"\"b\" IS NULL", new Predicate.IsNull(A_QUOTE_B)),
+                Arguments.of("\"say \"\"hi\"\"\" > 1", new Predicate.Gt(SAY_HI, new Value.IntVal(1))),
+                Arguments.of("\"q\"\"s\".c = 1", new Predicate.Eq(QUOTED_STRUCT_C, new Value.IntVal(1))),
+                Arguments.of("\"q\"\"s\".\"c\" = 1", new Predicate.Eq(QUOTED_STRUCT_C, new Value.IntVal(1))));
+    }
+
+    // An unknown column is reported by its name: the doubled quote reads as one.
+    @Test
+    void reportsUnknownColumnByName() {
+        assertThatThrownBy(() -> parse("\"no\"\"pe\" = 1"))
+                .isInstanceOf(FilterParseException.class)
+                .hasMessageContaining("no such column: no\"pe");
     }
 
     @Test
@@ -104,7 +125,8 @@ class QuotedColumnReferenceTest {
     void filterReferenceTellsHowToNameSuchAColumn() {
         assertThat(FilterSyntax.reference())
                 .contains("A column named as a SQL keyword, or with a space, goes in double quotes")
-                .contains("\"from\" > 1");
+                .contains("\"from\" > 1")
+                .contains("A double quote inside the name is written twice: \"a\"\"b\" = 4");
     }
 
     private static Predicate parse(String filter) {
@@ -113,7 +135,9 @@ class QuotedColumnReferenceTest {
 
     /**
      * Columns: {@code from} and {@code my column} integers, an {@code outer} struct with an integer {@code c}, a
-     * {@code tags} list of structs with a string {@code select}, and a {@code the geom} binary column.
+     * {@code tags} list of structs with a string {@code select}, a {@code the geom} binary column, and three names
+     * holding a double quote: the integers {@code a"b} and {@code say "hi"}, and a {@code q"s} struct with an integer
+     * {@code c}.
      */
     private static ParquetSchema schema() {
         SchemaNode from = primitive("from", PrimitiveKind.INT32, Optional.empty());
@@ -125,7 +149,10 @@ class QuotedColumnReferenceTest {
         SchemaNode list = group("list", Repetition.REPEATED, element, Optional.empty());
         SchemaNode tags = group("tags", Repetition.OPTIONAL, list, Optional.of(new LogicalType.ListType()));
         SchemaNode theGeom = primitive("the geom", PrimitiveKind.BYTE_ARRAY, Optional.empty());
-        List<SchemaNode> columns = List.of(from, myColumn, outer, tags, theGeom);
+        SchemaNode aQuoteB = primitive("a\"b", PrimitiveKind.INT32, Optional.empty());
+        SchemaNode sayHi = primitive("say \"hi\"", PrimitiveKind.INT32, Optional.empty());
+        SchemaNode quotedStruct = group("q\"s", Repetition.OPTIONAL, c, Optional.empty());
+        List<SchemaNode> columns = List.of(from, myColumn, outer, tags, theGeom, aQuoteB, sayHi, quotedStruct);
         return new ParquetSchema(new SchemaNode.Group("schema", Repetition.REQUIRED, columns, Optional.empty(), -1));
     }
 

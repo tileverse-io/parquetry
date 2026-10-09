@@ -72,14 +72,14 @@ final class SqlPredicateTranslator {
             case InExpression in -> in(in);
             case Between between -> between(between);
             case Function fn -> spatial.translate(fn);
-            default -> throw unsupported(describe(expression));
+            default -> throw unsupported(expression.toString());
         };
     }
 
     /** The condition grouped by parentheses; a parenthesized list of several expressions is not a condition. */
     private Expression groupedCondition(ParenthesedExpressionList<?> parenthesized) {
         if (parenthesized.size() != 1) {
-            throw unsupported(describe(parenthesized));
+            throw unsupported(parenthesized.toString());
         }
         return parenthesized.getFirst();
     }
@@ -99,7 +99,7 @@ final class SqlPredicateTranslator {
                     case GreaterThanEquals _ -> gtEq(ref, kind, value);
                     case MinorThan _ -> lt(ref, kind, value);
                     case MinorThanEquals _ -> ltEq(ref, kind, value);
-                    default -> throw unsupported(describe(comparison));
+                    default -> throw unsupported(comparison.toString());
                 };
         return quantifyIfRepeated(resolved, leaf);
     }
@@ -124,7 +124,7 @@ final class SqlPredicateTranslator {
     private List<Value> inValues(InExpression in, PrimitiveKind kind, boolean uuid) {
         Expression rightSide = in.getRightExpression();
         if (!(rightSide instanceof ExpressionList<?> elements)) {
-            throw new FilterParseException("expected a parenthesized value list after IN, got: " + describe(rightSide));
+            throw new FilterParseException("expected a parenthesized value list after IN, got: " + rightSide);
         }
         if (elements.isEmpty()) {
             throw new FilterParseException("IN requires at least one value");
@@ -240,13 +240,14 @@ final class SqlPredicateTranslator {
     }
 
     private Column requireColumnOnLeft(Expression left) {
-        if (left instanceof Column column) {
+        Expression operand = Parentheses.strip(left);
+        if (operand instanceof Column column) {
             return column;
         }
-        if (left instanceof Function function) {
+        if (operand instanceof Function function) {
             throw unsupported(function.getName());
         }
-        throw new FilterParseException("expected a column on the left of the comparison, got: " + describe(left));
+        throw new FilterParseException("expected a column on the left of the comparison, got: " + left);
     }
 
     /**
@@ -305,10 +306,6 @@ final class SqlPredicateTranslator {
 
     private FilterParseException operatorNotSupported(PrimitiveKind kind) {
         return new FilterParseException("operator not supported for column kind " + kind);
-    }
-
-    private String describe(Expression expression) {
-        return expression.getClass().getSimpleName() + ": " + expression;
     }
 
     /**
