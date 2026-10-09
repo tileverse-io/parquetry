@@ -33,37 +33,60 @@ import tools.jackson.databind.ValueDeserializer;
  * {@link BoundingBox}'s flat-double order ({@code xmin, xmax, ymin, ymax, ...}) so consumers see one bbox shape
  * regardless of source.
  *
- * <p>Arrays of any other length surface as {@code null} (which {@code GeoColumn}'s canonical constructor maps to
- * {@link java.util.Optional#empty()}) - malformed bbox data is dropped silently rather than failing the whole
- * {@code "geo"} JSON parse.
+ * <p>A bbox of another shape reads as {@code null}, mapped to an empty {@link java.util.Optional} by the canonical
+ * constructor of {@code GeoColumn}: an array of another length, a non-numeric bound, and a box
+ * {@linkplain BoundingBox#provesNothing() proving nothing}, such as the NaN bounds written for a column without
+ * coordinates. Malformed bbox data is dropped rather than failing the whole {@code "geo"} JSON parse.
  */
 final class BboxDeserializer extends ValueDeserializer<BoundingBox> {
 
     @Override
     public BoundingBox deserialize(JsonParser parser, DeserializationContext context) throws JacksonException {
         JsonNode node = parser.readValueAsTree();
-        if (node == null || !node.isArray()) {
+        if (node == null || !isArrayOfNumbers(node)) {
             return null;
         }
-        return switch (node.size()) {
+        BoundingBox box = cornerPairs(node);
+        if (box == null || box.provesNothing()) {
+            return null;
+        }
+        return box;
+    }
+
+    /** A bound written as text, as {@code null} or as a nested value is no number, and makes no box. */
+    private static boolean isArrayOfNumbers(JsonNode node) {
+        if (!node.isArray()) {
+            return false;
+        }
+        for (JsonNode bound : node) {
+            if (!bound.isNumber()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** The box of a corner-pair array of 4 or 6 numbers, {@code null} for another length. */
+    private static BoundingBox cornerPairs(JsonNode bounds) {
+        return switch (bounds.size()) {
             case 4 ->
                 new BoundingBox(
-                        node.get(0).asDouble(),
-                        node.get(2).asDouble(),
-                        node.get(1).asDouble(),
-                        node.get(3).asDouble(),
+                        bounds.get(0).asDouble(),
+                        bounds.get(2).asDouble(),
+                        bounds.get(1).asDouble(),
+                        bounds.get(3).asDouble(),
                         OptionalDouble.empty(),
                         OptionalDouble.empty(),
                         OptionalDouble.empty(),
                         OptionalDouble.empty());
             case 6 ->
                 new BoundingBox(
-                        node.get(0).asDouble(),
-                        node.get(3).asDouble(),
-                        node.get(1).asDouble(),
-                        node.get(4).asDouble(),
-                        OptionalDouble.of(node.get(2).asDouble()),
-                        OptionalDouble.of(node.get(5).asDouble()),
+                        bounds.get(0).asDouble(),
+                        bounds.get(3).asDouble(),
+                        bounds.get(1).asDouble(),
+                        bounds.get(4).asDouble(),
+                        OptionalDouble.of(bounds.get(2).asDouble()),
+                        OptionalDouble.of(bounds.get(5).asDouble()),
                         OptionalDouble.empty(),
                         OptionalDouble.empty());
             default -> null;

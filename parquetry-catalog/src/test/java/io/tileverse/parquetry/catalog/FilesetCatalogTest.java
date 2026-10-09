@@ -22,6 +22,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.URI;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -47,6 +49,7 @@ import io.tileverse.parquetry.dataset.DatasetCapabilities;
 import io.tileverse.parquetry.dataset.GeoParquetDataset;
 import io.tileverse.parquetry.dataset.ParquetDataset;
 import io.tileverse.parquetry.dataset.ParquetSource;
+import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.format.ParquetFormatException;
@@ -461,6 +464,54 @@ class FilesetCatalogTest {
             assertThat(ds).isInstanceOf(GeoParquetDataset.class);
             assertThat(((GeoParquetDataset) ds).geoMetadata()).isEmpty();
         }
+    }
+
+    // A NaN bbox in the geo metadata of a file does not set its schema apart from the other files.
+    @Test
+    void fileWithNaNBboxJoinsDataset(@TempDir Path dir) throws Exception {
+        writePoints(dir.resolve("bounded.parquet"), geoMetadata("[0.0, 0.0, 1.0, 1.0]"), 2);
+        // The JSON encoder of Python writes NaN without quotes for the bbox of a column without coordinates.
+        writePoints(dir.resolve("unbounded.parquet"), geoMetadata("[NaN, NaN, NaN, NaN]"), 2);
+
+        try (FilesetCatalog catalog = FilesetCatalog.open(
+                FileSource.directory(dir, "*.parquet"),
+                CatalogOptions.builder().datasetName("places").build())) {
+            ParquetDataset ds = catalog.dataset("places");
+
+            assertThat(((GeoParquetDataset) ds).geoMetadata()).isPresent();
+            assertThat(ds.count(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS)).isEqualTo(4);
+            Predicate aroundThePoints = Pred.col("geometry").bboxIntersects(Bbox.of2d(0.0, 0.0, 1.0, 1.0));
+            assertThat(ds.count(aroundThePoints, ReadOptions.DEFAULTS)).isEqualTo(4);
+        }
+    }
+
+    private static Map<String, String> geoMetadata(String bbox) {
+        String geo = """
+                {"version": "1.0.0", "primary_column": "geometry",
+                 "columns": {"geometry": {"encoding": "WKB", "geometry_types": ["Point"], "bbox": %s}}}
+                """.formatted(bbox);
+        return Map.of("geo", geo);
+    }
+
+    /** Writes {@code rowCount} rows holding the point (0.5, 0.5) in a WKB {@code geometry} column. */
+    private static void writePoints(Path out, Map<String, String> metadata, int rowCount) throws IOException {
+        Schema schema = new Schema.Parser().parse("""
+                        {"type":"record","name":"Row","fields":[
+                          {"name":"geometry","type":"bytes"}
+                        ]}""");
+        try (ParquetWriter<GenericData.Record> writer = parquetWriter(out, schema, metadata)) {
+            for (int i = 0; i < rowCount; i++) {
+                GenericData.Record row = new GenericData.Record(schema);
+                row.put("geometry", wkbPoint(0.5, 0.5));
+                writer.write(row);
+            }
+        }
+    }
+
+    private static ByteBuffer wkbPoint(double x, double y) {
+        ByteBuffer wkb = ByteBuffer.allocate(21).order(ByteOrder.LITTLE_ENDIAN);
+        wkb.put((byte) 1).putInt(1).putDouble(x).putDouble(y);
+        return wkb.flip();
     }
 
     private static void writeRows(Path out, Schema schema, Map<String, String> extraMetadata, int rowCount)

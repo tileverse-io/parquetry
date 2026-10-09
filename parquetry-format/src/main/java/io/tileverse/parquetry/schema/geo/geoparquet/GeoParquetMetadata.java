@@ -24,6 +24,7 @@ import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.ProjJsonModule;
 
+import tools.jackson.core.json.JsonReadFeature;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -118,9 +119,11 @@ public sealed interface GeoParquetMetadata
 
     /**
      * Default mapper used by {@link #parse(String)}. Both {@link ProjJsonModule} and {@link GeoParquetModule} are
-     * wired.
+     * wired. It also reads {@code NaN} and {@code Infinity}, tokens absent from the JSON grammar and written by the
+     * JSON encoder of Python for a bbox without coordinates.
      */
     JsonMapper DEFAULT_MAPPER = JsonMapper.builder()
+            .enable(JsonReadFeature.ALLOW_NON_NUMERIC_NUMBERS)
             .addModule(new ProjJsonModule())
             .addModule(new GeoParquetModule())
             .build();

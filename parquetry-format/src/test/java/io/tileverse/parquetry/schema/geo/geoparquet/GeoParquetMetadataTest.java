@@ -18,7 +18,12 @@ package io.tileverse.parquetry.schema.geo.geoparquet;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.stream.Stream;
+
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -64,6 +69,106 @@ class GeoParquetMetadataTest {
         assertThat(bbox.xmax()).isEqualTo(180.0);
         assertThat(bbox.ymax()).isEqualTo(90.0);
         assertThat(col.covering()).as("GeoParquet 1.0 has no covering").isEmpty();
+    }
+
+    // A bbox proving nothing about its geometries reads as absent, and the rest of the metadata is kept.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("bboxesReadAsNoBbox")
+    void bboxProvingNothingIsDropped(String name, String bbox) {
+        String json = """
+                {
+                  "version": "1.0.0",
+                  "primary_column": "geometry",
+                  "columns": {
+                    "geometry": {
+                      "encoding": "WKB",
+                      "geometry_types": ["Point"],
+                      "bbox": %s
+                    }
+                  }
+                }
+                """.formatted(bbox);
+
+        GeoParquetMetadata meta = GeoParquetMetadata.parse(json);
+
+        GeoColumn col = meta.columns().get("geometry");
+        assertThat(col.geometryTypes()).containsExactly("Point");
+        assertThat(col.encoding()).contains("WKB");
+        assertThat(col.bbox()).isEmpty();
+    }
+
+    /** The JSON encoder of Python writes a NaN bound as {@code NaN}, without quotes. */
+    static Stream<Arguments> bboxesReadAsNoBbox() {
+        return Stream.of(
+                Arguments.of("NaN literals", "[NaN, NaN, NaN, NaN]"),
+                Arguments.of("one NaN literal", "[-180.0, -90.0, NaN, 90.0]"),
+                Arguments.of("NaN literals with Z", "[NaN, NaN, NaN, NaN, NaN, NaN]"),
+                Arguments.of("NaN strings", "[\"NaN\", \"NaN\", \"NaN\", \"NaN\"]"),
+                Arguments.of("one NaN string", "[-180.0, -90.0, \"NaN\", 90.0]"),
+                Arguments.of("an infinite bound", "[-Infinity, -90.0, 180.0, 90.0]"),
+                Arguments.of("nulls", "[null, null, null, null]"),
+                Arguments.of("text", "[\"west\", \"south\", \"east\", \"north\"]"),
+                Arguments.of("nested arrays", "[[0, 0], [1, 1], [2, 2], [3, 3]]"),
+                Arguments.of("inverted Y bounds", "[0.0, 10.0, 5.0, -10.0]"),
+                Arguments.of("three numbers", "[0.0, 1.0, 2.0]"),
+                Arguments.of("an object", "{\"xmin\": 0}"));
+    }
+
+    // Infinite bounds in inverted order are the envelope of no geometry, and stay a bbox.
+    @Test
+    void emptyEnvelopeReadsAsABbox() {
+        String json = """
+                {
+                  "version": "1.0.0",
+                  "primary_column": "geometry",
+                  "columns": {"geometry": {"encoding": "WKB", "bbox": [Infinity, Infinity, -Infinity, -Infinity]}}
+                }
+                """;
+
+        BoundingBox bbox = bboxOfGeometry(json);
+
+        assertThat(bbox.xmin()).isEqualTo(Double.POSITIVE_INFINITY);
+        assertThat(bbox.xmax()).isEqualTo(Double.NEGATIVE_INFINITY);
+        assertThat(bbox.provesNothing()).isFalse();
+    }
+
+    // A box with xmin above xmax crosses the antimeridian and is kept.
+    @Test
+    void wrappingBboxReadsAsABbox() {
+        String json = """
+                {
+                  "version": "1.0.0",
+                  "primary_column": "geometry",
+                  "columns": {"geometry": {"encoding": "WKB", "bbox": [170.0, -10.0, -170.0, 10.0]}}
+                }
+                """;
+
+        BoundingBox bbox = bboxOfGeometry(json);
+
+        assertThat(bbox.xmin()).isEqualTo(170.0);
+        assertThat(bbox.xmax()).isEqualTo(-170.0);
+        assertThat(bbox.wrapsAntimeridian()).isTrue();
+    }
+
+    @Test
+    void aBboxOfIntegersReadsAsABbox() {
+        String json = """
+                {
+                  "version": "1.0.0",
+                  "primary_column": "geometry",
+                  "columns": {"geometry": {"encoding": "WKB", "bbox": [-180, -90, 180, 90]}}
+                }
+                """;
+
+        BoundingBox bbox = bboxOfGeometry(json);
+
+        assertThat(bbox.xmin()).isEqualTo(-180.0);
+        assertThat(bbox.ymax()).isEqualTo(90.0);
+    }
+
+    private static BoundingBox bboxOfGeometry(String geoJson) {
+        GeoColumn column = GeoParquetMetadata.parse(geoJson).columns().get("geometry");
+        return column.bbox().orElseThrow();
     }
 
     @Test
