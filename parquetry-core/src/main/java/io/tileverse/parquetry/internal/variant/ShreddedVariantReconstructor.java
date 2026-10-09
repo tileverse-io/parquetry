@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.variant.ShreddedVariant;
 import io.tileverse.parquetry.variant.Variant;
 import io.tileverse.parquetry.variant.VariantMetadata;
@@ -112,7 +112,7 @@ public final class ShreddedVariantReconstructor {
         boolean hasValue = value != null;
         boolean hasTyped = reader.hasTypedScalar();
         if (hasValue && hasTyped) {
-            throw new ParquetFormatException("Invalid variant, conflicting value and typed_value");
+            throw new MalformedFileException("Invalid variant, conflicting value and typed_value");
         }
         if (hasTyped) {
             return VariantScalarValues.encode(scalar, reader.typedScalar());
@@ -130,7 +130,7 @@ public final class ShreddedVariantReconstructor {
             return value != null ? value : NULL_VALUE;
         }
         if (value != null) {
-            throw new ParquetFormatException("Invalid variant, conflicting value and typed_value");
+            throw new MalformedFileException("Invalid variant, conflicting value and typed_value");
         }
         VariantEncoder encoder = new VariantEncoder().startArray();
         for (NodeReader elementReader : elements) {
@@ -171,7 +171,7 @@ public final class ShreddedVariantReconstructor {
             MemorySegment value, ShreddedVariant.ShreddedObject object, Map<String, MemorySegment> shreddedFields) {
         Variant unshredded = Variant.of(value, metadata);
         if (unshredded.type() != Variant.Type.OBJECT) {
-            throw new ParquetFormatException("Invalid variant, non-object value with shredded fields");
+            throw new MalformedFileException("Invalid variant, non-object value with shredded fields");
         }
         return encodeObject(mergeUnshreddedObjectFields(unshredded, object, shreddedFields));
     }
@@ -198,7 +198,7 @@ public final class ShreddedVariantReconstructor {
      */
     private void rejectResidualFieldOnShreddedName(ShreddedVariant.ShreddedObject object, String name) {
         if (object.fields().containsKey(name)) {
-            throw new ParquetFormatException("Invalid variant, conflicting value and typed_value for field: " + name);
+            throw new MalformedFileException("Invalid variant, conflicting value and typed_value for field: " + name);
         }
     }
 
@@ -262,7 +262,7 @@ public final class ShreddedVariantReconstructor {
 
     private void onObjectFieldConflict(String fieldName) {
         if (leniency == Leniency.STRICT) {
-            throw new ParquetFormatException(
+            throw new MalformedFileException(
                     "Invalid variant, conflicting value and typed_value for field: " + fieldName);
         }
     }

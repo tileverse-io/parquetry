@@ -87,6 +87,34 @@ class CodecTest {
                 Arguments.of("lzo", Codec.lzo()));
     }
 
+    /** Codecs compressing a payload for a test to decompress it. */
+    static Stream<Arguments> compressingCodecs() {
+        return Stream.of(
+                Arguments.of("snappy", Codec.snappy()),
+                Arguments.of("zstd", Codec.zstd()),
+                Arguments.of("lz4Raw", Codec.lz4Raw()),
+                Arguments.of("lzo", Codec.lzo()),
+                Arguments.of("gzip", Codec.gzip()),
+                Arguments.of("deflate", Codec.deflate()));
+    }
+
+    /**
+     * The codecs decompressing page bytes, the decompress-only ones included. Hadoop-framed LZ4 is left out: it reads
+     * garbage as a stream without blocks.
+     */
+    static Stream<Arguments> decompressingCodecs() {
+        return Stream.of(
+                Arguments.of("snappy", Codec.snappy()),
+                Arguments.of("zstd", Codec.zstd()),
+                Arguments.of("lz4Raw", Codec.lz4Raw()),
+                Arguments.of("lzo", Codec.lzo()),
+                Arguments.of("gzip", Codec.gzip()),
+                Arguments.of("deflate", Codec.deflate()),
+                Arguments.of("brotli", Codec.brotli()),
+                Arguments.of("bzip2", Codec.bzip2()),
+                Arguments.of("xz", Codec.xz()));
+    }
+
     @Nested
     class SealedTypes {
 
@@ -403,21 +431,58 @@ class CodecTest {
             }
         }
 
-        @Test
-        void deflateRejectsTooSmallOutput() throws Exception {
-            byte[] payload = COMPRESSIBLE_PAYLOAD;
-            Codec deflate = Codec.deflate();
-            try (Arena arena = Arena.ofConfined()) {
-                MemorySegment src = arena.allocate(payload.length);
-                MemorySegment.copy(payload, 0, src, ValueLayout.JAVA_BYTE, 0, payload.length);
-                MemorySegment compressed = arena.allocate(deflate.maxCompressedLength(payload.length));
-                int compressedLen = deflate.compress(src, compressed);
-                MemorySegment compressedSlice = compressed.asSlice(0, compressedLen);
+        /**
+         * A page reader sizes the output by the page header and hands corrupt bytes to the codec as they come. The
+         * failure must reach it as {@link IOException} too, never as the engine library's own runtime exception.
+         */
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("io.tileverse.parquetry.compression.CodecTest#decompressingCodecs")
+        void corruptInputToSizedOutput(String name, Codec codec) {
+            byte[] garbage = new byte[64];
+            Arrays.fill(garbage, (byte) 0xFF);
+            MemorySegment src = MemorySegment.ofArray(garbage);
+            MemorySegment output = MemorySegment.ofArray(new byte[1024]);
 
-                MemorySegment tiny = arena.allocate(payload.length / 2);
-                assertThatThrownBy(() -> deflate.decompress(compressedSlice, tiny))
-                        .isInstanceOf(IOException.class);
+            assertThatThrownBy(() -> codec.decompress(src, output)).isInstanceOf(IOException.class);
+        }
+
+        // An output smaller than the decompressed bytes fails with IOException for each codec.
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("io.tileverse.parquetry.compression.CodecTest#compressingCodecs")
+        void rejectsTooSmallOutput(String name, Codec codec) throws Exception {
+            byte[] payload = COMPRESSIBLE_PAYLOAD;
+            MemorySegment src = MemorySegment.ofArray(payload);
+            MemorySegment compressed = MemorySegment.ofArray(new byte[(int) codec.maxCompressedLength(payload.length)]);
+            int compressedLength = codec.compress(src, compressed);
+            MemorySegment block = compressed.asSlice(0, compressedLength);
+            MemorySegment tiny = MemorySegment.ofArray(new byte[payload.length / 2]);
+
+            assertThatThrownBy(() -> codec.decompress(block, tiny)).isInstanceOf(IOException.class);
+        }
+
+        // A frame announcing 1024 bytes in one block of 32, then a block of garbage: the block fails with IOException.
+        @Test
+        void lz4HadoopRejectsCorruptBlock() {
+            ByteBuffer frame = ByteBuffer.allocate(40);
+            frame.putInt(1024).putInt(32);
+            while (frame.hasRemaining()) {
+                frame.put((byte) 0xFF);
             }
+            MemorySegment src = MemorySegment.ofArray(frame.array());
+            MemorySegment output = MemorySegment.ofArray(new byte[1024]);
+
+            assertThatThrownBy(() -> Codec.lz4Hadoop().decompress(src, output)).isInstanceOf(IOException.class);
+        }
+
+        // The uncompressed codec checks its output against the size of its input.
+        @Test
+        void uncompressedRejectsSmallOutput() {
+            MemorySegment src = MemorySegment.ofArray(new byte[10]);
+            MemorySegment tiny = MemorySegment.ofArray(new byte[4]);
+
+            assertThatThrownBy(() -> Codec.uncompressed().decompress(src, tiny))
+                    .isInstanceOf(IOException.class)
+                    .hasMessageContaining("need 10 bytes, have 4");
         }
 
         @ParameterizedTest(name = "readOnlySource/{0}")

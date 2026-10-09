@@ -35,12 +35,12 @@ import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.EncodingStats;
 import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.PhysicalType;
-import io.tileverse.parquetry.format.UnsupportedFeatureException;
+import io.tileverse.parquetry.format.UnknownCodeException;
 
 /**
  * Wire-level coverage for encoding codes unknown to parquetry, as written by a newer Parquet writer. The footer's
- * encodings list and encoding stats are informational and skip such codes; a page header naming one is unsupported,
- * because its page cannot be decoded.
+ * encodings list and encoding stats are informational and skip such codes; a page header naming one fails on the
+ * unknown code, because its page cannot be decoded.
  */
 class UnknownEncodingCodeTest {
 
@@ -80,11 +80,14 @@ class UnknownEncodingCodeTest {
                 Arguments.of("DictionaryPageHeader.encoding", dictionaryPageWire(UNKNOWN)));
     }
 
+    // An encoding code unknown to the reader fails the page header, naming the code and its field.
     @ParameterizedTest(name = "{0}")
     @MethodSource("pageHeadersNamingAnUnknownEncoding")
-    void pageHeaderNamingAnUnknownEncodingIsUnsupported(String field, byte[] wire) {
-        assertThatThrownBy(() -> ParquetFormatDeserializer.readPageHeader(new ByteArrayInputStream(wire)))
-                .isInstanceOf(UnsupportedFeatureException.class)
+    void pageHeaderWithUnknownEncoding(String field, byte[] wire) {
+        ByteArrayInputStream pageHeader = new ByteArrayInputStream(wire);
+
+        assertThatThrownBy(() -> ParquetFormatDeserializer.readPageHeader(pageHeader))
+                .isInstanceOf(UnknownCodeException.class)
                 .hasMessageContaining("wire code " + UNKNOWN)
                 .hasMessageContaining(field);
     }

@@ -150,6 +150,8 @@ public sealed interface Codec
     /**
      * Decompresses the contents of {@code src} into {@code output}. The {@code output} segment must be at least as
      * large as the expected uncompressed payload. Returns the number of bytes written.
+     *
+     * @throws IOException for corrupt input, or an output too small for the decompressed bytes
      */
     int decompress(MemorySegment src, MemorySegment output) throws IOException;
 
@@ -187,10 +189,8 @@ public sealed interface Codec
         static final Uncompressed INSTANCE = new Uncompressed();
 
         @Override
-        public int decompress(MemorySegment src, MemorySegment output) {
-            long size = src.byteSize();
-            MemorySegment.copy(src, 0L, output, 0L, size);
-            return (int) size;
+        public int decompress(MemorySegment src, MemorySegment output) throws IOException {
+            return copy(src, output);
         }
 
         @Override
@@ -200,6 +200,15 @@ public sealed interface Codec
 
         @Override
         public int compress(MemorySegment src, MemorySegment output) throws IOException {
+            return copy(src, output);
+        }
+
+        @Override
+        public long maxCompressedLength(long uncompressedLength) {
+            return uncompressedLength;
+        }
+
+        private static int copy(MemorySegment src, MemorySegment output) throws IOException {
             long size = src.byteSize();
             if (size > output.byteSize()) {
                 throw new IOException(
@@ -207,11 +216,6 @@ public sealed interface Codec
             }
             MemorySegment.copy(src, 0L, output, 0L, size);
             return (int) size;
-        }
-
-        @Override
-        public long maxCompressedLength(long uncompressedLength) {
-            return uncompressedLength;
         }
     }
 
@@ -226,8 +230,9 @@ public sealed interface Codec
         private static final int MAX_LENGTH_VARINT_BYTES = 5;
 
         @Override
-        public int decompress(MemorySegment src, MemorySegment output) {
-            return CompressionSupport.decompressReadingFrom(src, output, SnappyDecompressor.create()::decompress);
+        public int decompress(MemorySegment src, MemorySegment output) throws IOException {
+            return CompressionSupport.decompressReadingFrom(
+                    "SNAPPY", src, output, SnappyDecompressor.create()::decompress);
         }
 
         @Override
@@ -415,8 +420,9 @@ public sealed interface Codec
         static final Lz4Raw INSTANCE = new Lz4Raw();
 
         @Override
-        public int decompress(MemorySegment src, MemorySegment output) {
-            return CompressionSupport.decompressReadingFrom(src, output, Lz4Decompressor.create()::decompress);
+        public int decompress(MemorySegment src, MemorySegment output) throws IOException {
+            return CompressionSupport.decompressReadingFrom(
+                    "LZ4_RAW", src, output, Lz4Decompressor.create()::decompress);
         }
 
         @Override
@@ -459,6 +465,9 @@ public sealed interface Codec
             InputStream wrapped = new ByteArrayInputStream(in);
             try (HadoopInputStream hadoop = new Lz4HadoopStreams().createInputStream(wrapped)) {
                 return CompressionSupport.streamToSegment(hadoop, output);
+            } catch (MalformedInputException | IllegalArgumentException | IndexOutOfBoundsException e) {
+                // The engine backends differ in how they report corrupt input; normalize to IOException.
+                throw new IOException("Corrupt Hadoop-framed LZ4 stream", e);
             }
         }
 
@@ -468,7 +477,8 @@ public sealed interface Codec
             InputStream wrapped = new ByteArrayInputStream(in);
             try (HadoopInputStream hadoop = new Lz4HadoopStreams().createInputStream(wrapped)) {
                 return MemorySegment.ofArray(hadoop.readAllBytes()).asReadOnly();
-            } catch (MalformedInputException e) {
+            } catch (MalformedInputException | IllegalArgumentException | IndexOutOfBoundsException e) {
+                // The engine backends differ in how they report corrupt input; normalize to IOException.
                 throw new IOException("Corrupt Hadoop-framed LZ4 stream", e);
             }
         }
@@ -505,8 +515,8 @@ public sealed interface Codec
         }
 
         @Override
-        public int decompress(MemorySegment src, MemorySegment output) {
-            return CompressionSupport.decompressReadingFrom(src, output, ZstdDecompressor.create()::decompress);
+        public int decompress(MemorySegment src, MemorySegment output) throws IOException {
+            return CompressionSupport.decompressReadingFrom("ZSTD", src, output, ZstdDecompressor.create()::decompress);
         }
 
         @Override
@@ -614,8 +624,8 @@ public sealed interface Codec
         static final Lzo INSTANCE = new Lzo();
 
         @Override
-        public int decompress(MemorySegment src, MemorySegment output) {
-            return CompressionSupport.decompressReadingFrom(src, output, new LzoDecompressor()::decompress);
+        public int decompress(MemorySegment src, MemorySegment output) throws IOException {
+            return CompressionSupport.decompressReadingFrom("LZO", src, output, new LzoDecompressor()::decompress);
         }
 
         @Override

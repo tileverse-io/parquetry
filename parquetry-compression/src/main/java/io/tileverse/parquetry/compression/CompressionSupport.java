@@ -22,6 +22,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.foreign.MemorySegment;
 
+import io.airlift.compress.v3.MalformedInputException;
+
 /** Package-private helpers shared by {@link Codec} record implementations. */
 final class CompressionSupport {
 
@@ -71,8 +73,24 @@ final class CompressionSupport {
      * codec and platform (the Windows runner hits the fallback for snappy and zstd; macOS hits it for lzo). Only on
      * that refusal, and only for a read-only source, is the source copied once to a writable heap segment and the
      * decode retried. Writable sources and the optimized path never copy.
+     *
+     * @throws IOException for corrupt input, or an output too small for the decoded bytes. The engine backends report
+     *     both with runtime exceptions of their own.
      */
-    static int decompressReadingFrom(MemorySegment src, MemorySegment output, SegmentDecompressor decompressor) {
+    static int decompressReadingFrom(
+            String codecName, MemorySegment src, MemorySegment output, SegmentDecompressor decompressor)
+            throws IOException {
+        try {
+            return decompressToleratingAReadOnlySource(src, output, decompressor);
+        } catch (MalformedInputException | IllegalArgumentException | IndexOutOfBoundsException failure) {
+            throw new IOException(
+                    codecName + " decompress failed for input of " + src.byteSize() + " bytes: " + failure.getMessage(),
+                    failure);
+        }
+    }
+
+    private static int decompressToleratingAReadOnlySource(
+            MemorySegment src, MemorySegment output, SegmentDecompressor decompressor) {
         try {
             return decompressor.decompress(src, output);
         } catch (IllegalArgumentException refusal) {

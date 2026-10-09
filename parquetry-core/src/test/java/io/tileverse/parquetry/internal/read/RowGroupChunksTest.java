@@ -414,7 +414,7 @@ class RowGroupChunksTest {
             if (length > 0) {
                 return BloomFilterReader.read(source, offset, length);
             }
-            return BloomFilterReader.readWithoutLength(source, offset);
+            return BloomFilterReader.readWithoutLength(source, offset, source.size());
         }
 
         int offsetIndexReadCount() {

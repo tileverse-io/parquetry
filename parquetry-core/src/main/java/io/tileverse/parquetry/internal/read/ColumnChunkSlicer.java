@@ -67,8 +67,7 @@ final class ColumnChunkSlicer {
             List<DataPageRun> runs,
             ChunkMeta meta,
             ColumnPath path,
-            ParquetSchema fileSchema)
-            throws IOException {
+            ParquetSchema fileSchema) {
         if (runs.isEmpty()) {
             throw new IllegalStateException("No data-page bytes were fetched for column " + path.dot()
                     + "; every fetched chunk holds at least one run of pages");
@@ -137,11 +136,11 @@ final class ColumnChunkSlicer {
      * the data pages reference.
      */
     private static Optional<Dictionary<?>> decodeDictionaryPrefix(
-            MemorySegment prefix, ChunkMeta meta, ColumnPath path, ParquetSchema fileSchema) throws IOException {
+            MemorySegment prefix, ChunkMeta meta, ColumnPath path, ParquetSchema fileSchema) {
         MemorySegmentInputStream stream = new MemorySegmentInputStream(prefix, 0L, prefix.byteSize());
         PageHeader header = readPageHeader(stream, path);
         if (header.type() != PageType.DICTIONARY_PAGE) {
-            throw new MalformedFileException("Column " + path.dot()
+            throw new MalformedFileException(named(path)
                     + " was fetched with a dictionary prefix but the prefix begins with a page of type "
                     + header.type());
         }
@@ -164,7 +163,7 @@ final class ColumnChunkSlicer {
      * resulting {@link Dictionary} holds heap-resident Java values referenced from the {@link FetchedColumnChunk}.
      */
     private static DictionaryAndOffset maybeDecodeDictionary(
-            MemorySegment chunkSegment, ChunkMeta meta, ColumnPath path, ParquetSchema fileSchema) throws IOException {
+            MemorySegment chunkSegment, ChunkMeta meta, ColumnPath path, ParquetSchema fileSchema) {
         if (chunkSegment.byteSize() == 0) {
             return NO_DICTIONARY;
         }
@@ -172,7 +171,7 @@ final class ColumnChunkSlicer {
         PageHeader header = readPageHeader(stream, path);
         if (header.type() != PageType.DICTIONARY_PAGE) {
             if (meta.dictionaryPageOffset().isPresent()) {
-                throw new MalformedFileException("Column " + path.dot()
+                throw new MalformedFileException(named(path)
                         + " declares dictionaryPageOffset but its first page is not a dictionary page (type="
                         + header.type() + ")");
             }
@@ -191,18 +190,17 @@ final class ColumnChunkSlicer {
             PageHeader header,
             ChunkMeta meta,
             ColumnPath path,
-            ParquetSchema fileSchema)
-            throws IOException {
+            ParquetSchema fileSchema) {
         DictionaryPageHeader dictHeader = header.dictionaryPageHeader()
                 .orElseThrow(() -> new MalformedFileException(
-                        "Column " + path.dot() + " dictionary page is missing its dictionary page header"));
+                        named(path) + " dictionary page is missing its dictionary page header"));
         if (headerEnd <= 0) {
-            throw new MalformedFileException("Column " + path.dot() + " dictionary page advanced zero bytes");
+            throw new MalformedFileException(named(path) + " dictionary page advanced zero bytes");
         }
         requireNonNegativePageSizes(header, path);
         int compressedSize = header.compressedPageSize();
         if (chunkSegment.byteSize() - headerEnd < compressedSize) {
-            throw new MalformedFileException("Column " + path.dot() + " dictionary page compressed payload ("
+            throw new MalformedFileException(named(path) + " dictionary page compressed payload ("
                     + compressedSize + ") overruns the chunk buffer (remaining="
                     + (chunkSegment.byteSize() - headerEnd) + ")");
         }
@@ -216,7 +214,7 @@ final class ColumnChunkSlicer {
 
     private static void requireNonNegativePageSizes(PageHeader header, ColumnPath path) {
         if (header.compressedPageSize() < 0 || header.uncompressedPageSize() < 0) {
-            throw new MalformedFileException("Column " + path.dot() + " dictionary page declares negative sizes:"
+            throw new MalformedFileException(named(path) + " dictionary page declares negative sizes:"
                     + " compressed=" + header.compressedPageSize() + ", uncompressed="
                     + header.uncompressedPageSize());
         }
@@ -233,8 +231,7 @@ final class ColumnChunkSlicer {
             ParquetSchema fileSchema,
             DictionaryPageHeader dictHeader,
             MemorySegment compressedPayload,
-            int uncompressedSize)
-            throws IOException {
+            int uncompressedSize) {
         Compression codec = Compression.forWireCodec(meta.codec());
         PrimitiveKind kind = primitiveKindOf(meta.type());
         OptionalInt typeLength = typeLengthFor(kind, path, fileSchema);
@@ -243,8 +240,17 @@ final class ColumnChunkSlicer {
             codec.decompress(compressedPayload, dst);
             return DictionaryDecoder.read(dst, kind, dictHeader.numValues(), typeLength);
         } catch (ParquetFormatException e) {
-            throw e.withContext("Column " + path.dot() + " dictionary page: " + e.getMessage());
+            throw e.withContext(named(path) + " dictionary page: " + e.getMessage());
+        } catch (IOException e) {
+            // The bytes were fetched already: a codec failing on them means a corrupt page.
+            throw new MalformedFileException(
+                    named(path) + " dictionary page cannot be decompressed: " + e.getMessage(), e);
         }
+    }
+
+    /** The name of a column in a failure message. */
+    private static String named(ColumnPath path) {
+        return "Column " + path.dot();
     }
 
     private static PrimitiveKind primitiveKindOf(PhysicalType type) {
@@ -271,10 +277,10 @@ final class ColumnChunkSlicer {
         }
         SchemaNode node = fileSchema
                 .find(path)
-                .orElseThrow(() -> new MalformedFileException(
-                        "Column " + path.dot() + " is dictionary-encoded but absent from the schema"));
+                .orElseThrow(() ->
+                        new MalformedFileException(named(path) + " is dictionary-encoded but absent from the schema"));
         if (!(node instanceof SchemaNode.Primitive primitive)) {
-            throw new MalformedFileException("Column " + path.dot() + " is not a primitive leaf in the schema");
+            throw new MalformedFileException(named(path) + " is not a primitive leaf in the schema");
         }
         return primitive.typeLength();
     }

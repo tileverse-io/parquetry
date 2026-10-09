@@ -36,5 +36,3 @@ old_list_structure.parquet                 # FOLLOW-UP: list-of-lists a=[[1,2],[
 
 # BYTE_STREAM_SPLIT on FIXED_LEN_BYTE_ARRAY is a Parquet 2.x extension not in the current decoder table; future codec/encoding pass
 byte_stream_split_extended.gzip.parquet    # BYTE_STREAM_SPLIT + FIXED_LEN_BYTE_ARRAY
-# FOLLOW-UP parquetry bugs found by the corpus, to be triaged and fixed before un-excluding
-datapage_v2_empty_datapage.snappy.parquet  # FOLLOW-UP: Snappy MalformedInputException on V2 empty data page

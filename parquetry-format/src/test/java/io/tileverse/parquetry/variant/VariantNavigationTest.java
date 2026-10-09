@@ -28,7 +28,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.UnknownCodeException;
+import io.tileverse.parquetry.format.UnsupportedFeatureException;
 
 /**
  * Checked navigation over hand-built Variant value buffers. The malformed layouts follow the {@code bad_data/variants}
@@ -134,12 +137,19 @@ class VariantNavigationTest {
                 malformed("truncated double", EMPTY_METADATA, bytes(0x1C, 0x01), "DOUBLE payload needs 9"),
                 malformed("truncated timestamp", EMPTY_METADATA, bytes(0x30, 0x01), "TIMESTAMP_TZ payload needs 9"),
                 malformed("truncated decimal16", EMPTY_METADATA, bytes(0x28, 0x02, 0x01), "DECIMAL16 payload needs 18"),
-                malformed("truncated uuid", EMPTY_METADATA, bytes(0x50, 0x01, 0x02), "UUID payload needs 17"),
-                malformed(
-                        "unknown primitive type",
-                        EMPTY_METADATA,
-                        bytes(0x03, 0x03, 0x00, 0x02, 0x03, 0x05, 0x0C, 0x0A, 0xFC, 0x0C, 0x14),
-                        "primitive type id 63"));
+                malformed("truncated uuid", EMPTY_METADATA, bytes(0x50, 0x01, 0x02), "UUID payload needs 17"));
+    }
+
+    // A primitive type id unknown to the reader fails as an unknown code when the walk reaches it.
+    @Test
+    void rejectsUnknownPrimitiveType() {
+        // array of three entries: INT8 10, an unknown primitive (id 63), INT8 20
+        Variant array =
+                variant(EMPTY_METADATA, bytes(0x03, 0x03, 0x00, 0x02, 0x03, 0x05, 0x0C, 0x0A, 0xFC, 0x0C, 0x14));
+
+        assertThatThrownBy(() -> walk(array))
+                .isInstanceOf(UnknownCodeException.class)
+                .hasMessageContaining("primitive type id 63");
     }
 
     private static Arguments malformed(String description, byte[] metadata, byte[] value, String messageFragment) {
@@ -153,14 +163,14 @@ class VariantNavigationTest {
 
         assertThatThrownBy(() -> walk(variant))
                 .as(description)
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining(messageFragment);
     }
 
     @Test
     void rejectsAnEmptyValue() {
         assertThatThrownBy(() -> variant(EMPTY_METADATA, new byte[0]))
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining("Variant value is empty");
     }
 
@@ -172,7 +182,7 @@ class VariantNavigationTest {
 
         assertThat(outer.numElements()).as("outer element count").isEqualTo(1);
         Variant inner = outer.getElement(0);
-        assertThatThrownBy(inner::numElements).as("inner element count").isInstanceOf(ParquetFormatException.class);
+        assertThatThrownBy(inner::numElements).as("inner element count").isInstanceOf(MalformedFileException.class);
     }
 
     @Test
@@ -184,7 +194,7 @@ class VariantNavigationTest {
         assertThat(array.getElement(0).getByte()).as("first entry").isEqualTo((byte) 10);
         assertThat(array.getElement(2).getByte()).as("third entry").isEqualTo((byte) 20);
         Variant unknown = array.getElement(1);
-        assertThatThrownBy(unknown::type).as("unknown entry").isInstanceOf(ParquetFormatException.class);
+        assertThatThrownBy(unknown::type).as("unknown entry").isInstanceOf(UnknownCodeException.class);
     }
 
     @Test
@@ -195,7 +205,7 @@ class VariantNavigationTest {
 
         Variant entry = array.getElement(0);
         assertThatThrownBy(entry::getInt)
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining("INT32 payload needs 5 bytes but the value has 2");
     }
 
@@ -208,7 +218,7 @@ class VariantNavigationTest {
         }
         Variant deepest = cursor;
         assertThatThrownBy(() -> deepest.getElement(0))
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(UnsupportedFeatureException.class)
                 .hasMessageContaining("nesting depth exceeds the maximum of 500");
     }
 
@@ -221,7 +231,7 @@ class VariantNavigationTest {
 
         Variant detached = cursor.detach();
         assertThatThrownBy(() -> detached.getElement(0))
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(UnsupportedFeatureException.class)
                 .hasMessageContaining("nesting depth");
     }
 

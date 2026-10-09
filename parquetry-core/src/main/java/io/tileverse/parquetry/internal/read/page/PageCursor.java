@@ -103,7 +103,7 @@ public final class PageCursor {
      * exhausted. Non-data pages are skipped. When a {@link PageSelection} is present, data pages whose row span does
      * not overlap the surviving rows are advanced past without decompressing or decoding.
      */
-    public DecodedPage nextDataPage(LevelMaxima maxLevels, Compression codec, Arena pageArena) throws IOException {
+    public DecodedPage nextDataPage(LevelMaxima maxLevels, Compression codec, Arena pageArena) {
         PendingDataPage pending = peekNextDataPage(maxLevels);
         if (pending == null) {
             return null;
@@ -153,8 +153,8 @@ public final class PageCursor {
      * this method because one more method layer would push the decompressors' memory reads past the JIT's inlining
      * depth.
      */
-    public DecodedPage decodePending(PendingDataPage pending, LevelMaxima maxLevels, Compression codec, Arena pageArena)
-            throws IOException {
+    public DecodedPage decodePending(
+            PendingDataPage pending, LevelMaxima maxLevels, Compression codec, Arena pageArena) {
         resolvePending(pending);
         currentPageMayContinueRow = rowMayContinueIntoNextPage && pending.ordinal() == currentPageOrdinal + 1;
         currentPageOrdinal = pending.ordinal();
@@ -168,9 +168,22 @@ public final class PageCursor {
         } catch (ParquetFormatException e) {
             throw e.withContext(
                     "Column " + columnPath.dot() + " data page " + pending.ordinal() + ": " + e.getMessage());
+        } catch (IOException e) {
+            throw rejectedByItsCodec(pending, e);
         }
         rowMayContinueIntoNextPage = currentPageMayContinueRow || page.valueCount() > 0;
         return page;
+    }
+
+    /**
+     * The malformed-file failure of a page rejected by its codec. The bytes of the page were fetched with its chunk,
+     * and no I/O takes place while decoding them: a codec failing on them means a corrupt page.
+     */
+    private MalformedFileException rejectedByItsCodec(PendingDataPage pending, IOException failure) {
+        return new MalformedFileException(
+                "Column " + columnPath.dot() + " data page " + pending.ordinal() + " cannot be decompressed: "
+                        + failure.getMessage(),
+                failure);
     }
 
     /**

@@ -175,7 +175,8 @@ class ShreddedVariantReadConformanceIT {
     void rejectsEveryErrorAndInvalidCase(String parquetFile, Map<String, Object> testCase) {
         assertThatThrownBy(() -> readEveryRowThroughBatches(parquetFile))
                 .as("%s must reject the full read", parquetFile)
-                .isInstanceOf(ParquetFormatException.class);
+                .isInstanceOf(ParquetFormatException.class)
+                .isNotExactlyInstanceOf(ParquetFormatException.class);
     }
 
     @ParameterizedTest(name = "{0}")
@@ -183,7 +184,8 @@ class ShreddedVariantReadConformanceIT {
     void rejectsEveryErrorAndInvalidCaseThroughStreamingRead(String parquetFile, Map<String, Object> testCase) {
         assertThatThrownBy(() -> streamEveryRow(parquetFile))
                 .as("%s must reject the streaming read", parquetFile)
-                .isInstanceOf(ParquetFormatException.class);
+                .isInstanceOf(ParquetFormatException.class)
+                .isNotExactlyInstanceOf(ParquetFormatException.class);
     }
 
     private void readBatchesAndAssertRows(String parquetFile, List<String> expectedRowFiles) {

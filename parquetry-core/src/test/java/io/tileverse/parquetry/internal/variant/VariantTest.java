@@ -25,7 +25,7 @@ import java.math.BigDecimal;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.UnknownCodeException;
 import io.tileverse.parquetry.variant.Variant;
 import io.tileverse.parquetry.variant.VariantMetadata;
 
@@ -107,7 +107,7 @@ class VariantTest {
             Variant variant = Variant.of(MemorySegment.ofArray(bad).asReadOnly(), null);
             assertThatThrownBy(variant::type)
                     .as("unknown primitive id rejected")
-                    .isInstanceOf(ParquetFormatException.class);
+                    .isInstanceOf(UnknownCodeException.class);
         }
     }
 

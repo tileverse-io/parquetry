@@ -29,8 +29,10 @@ import io.tileverse.parquetry.format.ConvertedType;
 import io.tileverse.parquetry.format.EdgeInterpolationAlgorithm;
 import io.tileverse.parquetry.format.FieldRepetitionType;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.SchemaElement;
+import io.tileverse.parquetry.format.UnsupportedFeatureException;
 import io.tileverse.parquetry.schema.geo.ParquetCrs;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
@@ -57,6 +59,13 @@ public final class SchemaBuilder {
     private static final Logger LOG = LoggerFactory.getLogger(SchemaBuilder.class);
     private static final String GEO_KEY = "geo";
 
+    /**
+     * The deepest nesting of groups read from a footer. The schema is built, and its columns are read, by recursion: a
+     * file nested deeper is refused before a corrupt footer nesting tens of thousands of groups can overflow the stack.
+     * A file nested to the limit reads on a thread with a stack of 512 KB.
+     */
+    private static final int DEEPEST_NESTING = 500;
+
     private SchemaBuilder() {}
 
     /**
@@ -65,13 +74,16 @@ public final class SchemaBuilder {
      * @param elements the flat list from {@link io.tileverse.parquetry.format.FileMetaData#schema()}
      * @return the reconstructed schema tree
      * @throws IllegalArgumentException if {@code elements} is empty or the root is not a group
+     * @throws UnsupportedFeatureException if the groups nest beyond {@value #DEEPEST_NESTING} levels
+     * @throws MalformedFileException if a group declares children beyond the elements of the schema
      */
     public static ParquetSchema build(List<SchemaElement> elements) {
         if (elements.isEmpty()) {
             throw new IllegalArgumentException("ParquetSchema elements list is empty");
         }
         Cursor cursor = new Cursor(elements, 0);
-        SchemaNode rootField = consumeNext(cursor);
+        int groupsAboveTheRoot = 0;
+        SchemaNode rootField = consumeNext(cursor, groupsAboveTheRoot);
         if (!(rootField instanceof SchemaNode.Group rootGroup)) {
             throw new IllegalArgumentException("ParquetSchema root must be a group, got: "
                     + rootField.getClass().getSimpleName());
@@ -217,8 +229,10 @@ public final class SchemaBuilder {
      *
      * <p>After this method returns, {@code cursor.position} points to the element immediately after the subtree rooted
      * at the consumed element.
+     *
+     * @param depth the groups above the element, the root group among them
      */
-    private static SchemaNode consumeNext(Cursor cursor) {
+    private static SchemaNode consumeNext(Cursor cursor, int depth) {
         SchemaElement element = cursor.elements.get(cursor.position);
         cursor.position++;
 
@@ -226,19 +240,49 @@ public final class SchemaBuilder {
         int fieldId = element.fieldId().orElse(-1);
 
         if (element.numChildren().isPresent()) {
-            return consumeGroup(cursor, element, repetition, fieldId);
+            return consumeGroup(cursor, element, repetition, fieldId, depth);
         }
         return consumePrimitive(element, repetition, fieldId);
     }
 
     private static SchemaNode.Group consumeGroup(
-            Cursor cursor, SchemaElement element, Repetition repetition, int fieldId) {
+            Cursor cursor, SchemaElement element, Repetition repetition, int fieldId, int depth) {
+        requireNestingWithinTheLimit(depth);
         int childCount = element.numChildren().getAsInt();
+        requireChildrenWithinTheSchema(cursor, element, childCount);
         List<SchemaNode> children = new ArrayList<>(childCount);
         for (int i = 0; i < childCount; i++) {
-            children.add(consumeNext(cursor));
+            requireAnElementLeft(cursor, element, childCount);
+            children.add(consumeNext(cursor, depth + 1));
         }
         return new SchemaNode.Group(element.name(), repetition, children, effectiveLogicalType(element), fieldId);
+    }
+
+    /** Refuses a group with more than {@value #DEEPEST_NESTING} groups above it. */
+    private static void requireNestingWithinTheLimit(int depth) {
+        if (depth > DEEPEST_NESTING) {
+            throw new UnsupportedFeatureException(
+                    "the schema nests more than " + DEEPEST_NESTING + " groups, the limit of this reader");
+        }
+    }
+
+    /** Rejects a child count beyond the elements left, before a list of that size is allocated. */
+    private static void requireChildrenWithinTheSchema(Cursor cursor, SchemaElement group, int childCount) {
+        if (childCount < 0 || childCount > cursor.elementsLeft()) {
+            throw childrenBeyondTheSchema(group, childCount);
+        }
+    }
+
+    /** The groups among the earlier children of {@code group} may have taken the elements counted for the next one. */
+    private static void requireAnElementLeft(Cursor cursor, SchemaElement group, int childCount) {
+        if (cursor.elementsLeft() == 0) {
+            throw childrenBeyondTheSchema(group, childCount);
+        }
+    }
+
+    private static MalformedFileException childrenBeyondTheSchema(SchemaElement group, int childCount) {
+        return new MalformedFileException(
+                "group '" + group.name() + "' declares " + childCount + " children, beyond the elements of the schema");
     }
 
     private static SchemaNode.Primitive consumePrimitive(SchemaElement element, Repetition repetition, int fieldId) {
@@ -336,6 +380,10 @@ public final class SchemaBuilder {
         Cursor(List<SchemaElement> elements, int position) {
             this.elements = elements;
             this.position = position;
+        }
+
+        int elementsLeft() {
+            return elements.size() - position;
         }
     }
 }

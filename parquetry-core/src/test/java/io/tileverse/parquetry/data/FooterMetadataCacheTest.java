@@ -470,7 +470,8 @@ class FooterMetadataCacheTest {
                 metadata.geoMetadata(),
                 metadata.spatialBounds(),
                 keyValueMetadata,
-                metadata.rowGroups());
+                metadata.rowGroups(),
+                metadata.columnChunkBytes());
     }
 
     /** The same entry with a bounds source that holds no box, which isolates what the boxes themselves cost. */
@@ -482,7 +483,8 @@ class FooterMetadataCacheTest {
                 metadata.geoMetadata(),
                 EmptyBoundsSource.INSTANCE,
                 metadata.keyValueMetadata(),
-                metadata.rowGroups());
+                metadata.rowGroups(),
+                metadata.columnChunkBytes());
     }
 
     private static ParquetFileReader openWithKey(ByteRangeSource source) {

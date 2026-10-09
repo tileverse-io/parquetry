@@ -31,11 +31,11 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 /**
  * Everything derived from a file's footer by a {@link ParquetFileReader}, in the immutable forms kept by the reader:
  * the packed planning footer, the parquetry schema, the leaf index addressing that schema's columns, the parsed
- * GeoParquet metadata, the spatial bounds of each geometry column, the collapsed key/value metadata, and the public
- * row-group view.
+ * GeoParquet metadata, the spatial bounds of each geometry column, the collapsed key/value metadata, the public
+ * row-group view, and the bytes taken by the column chunks.
  *
- * <p>All seven forms depend on nothing but the footer bytes, which makes the whole record shareable between every
- * reader opened over one file - the unit held by {@link FooterMetadataCache}.
+ * <p>These forms depend on nothing but the footer bytes: the readers opened over one file share one record, the unit
+ * held by {@link FooterMetadataCache}.
  *
  * @param compactFooter the planning form of the footer, packed into one blob
  * @param fileSchema the file schema, with GeoParquet 1.x logical-type annotations folded in
@@ -45,6 +45,8 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
  *     row-group extents
  * @param keyValueMetadata the file's key/value metadata, collapsed to the last value per key
  * @param rowGroups the public row-group view, in file order
+ * @param columnChunkBytes the compressed bytes of the column chunks, as the footer declares them; the page indexes and
+ *     the bloom filters lie in the rest of the file
  */
 record FooterMetadata(
         CompactFooter compactFooter,
@@ -53,7 +55,8 @@ record FooterMetadata(
         Optional<GeoParquetMetadata> geoMetadata,
         SpatialBoundsSource spatialBounds,
         Map<String, String> keyValueMetadata,
-        List<RowGroupSummary> rowGroups) {
+        List<RowGroupSummary> rowGroups,
+        long columnChunkBytes) {
 
     /**
      * Reads {@code source}'s footer and derives every retained form from it. This is the only scope where the decoded
@@ -68,7 +71,15 @@ record FooterMetadata(
         LeafIndex leafIndex = LeafIndex.of(fileSchema);
         CompactFooter compactFooter = CompactFooter.encode(footer, leafIndex);
         SpatialBoundsSource spatialBounds = SpatialBoundsSource.of(compactFooter, leafIndex, fileSchema, geoMetadata);
+        long columnChunkBytes = FooterModel.columnChunkBytes(footer);
         return new FooterMetadata(
-                compactFooter, fileSchema, leafIndex, geoMetadata, spatialBounds, kvMetadata, rowGroups);
+                compactFooter,
+                fileSchema,
+                leafIndex,
+                geoMetadata,
+                spatialBounds,
+                kvMetadata,
+                rowGroups,
+                columnChunkBytes);
     }
 }

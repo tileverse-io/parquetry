@@ -19,7 +19,9 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.charset.StandardCharsets;
 
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.UnsupportedFeatureException;
 import io.tileverse.parquetry.io.Segments;
 
 /**
@@ -59,7 +61,7 @@ public final class VariantMetadata {
 
     private int readHeader() {
         if (segment.byteSize() < HEADER_BYTES) {
-            throw new ParquetFormatException("Variant metadata is empty");
+            throw new MalformedFileException("Variant metadata is empty");
         }
         return readByte(0);
     }
@@ -67,7 +69,7 @@ public final class VariantMetadata {
     private static void requireSupportedVersion(int header) {
         int version = header & 0x0F;
         if (version != SUPPORTED_VERSION) {
-            throw new ParquetFormatException("Unsupported Variant metadata version " + version);
+            throw new UnsupportedFeatureException("Unsupported Variant metadata version " + version);
         }
     }
 
@@ -79,13 +81,13 @@ public final class VariantMetadata {
     private int readDictionarySize() {
         long bufferSize = segment.byteSize();
         if (offsetTableStart > bufferSize) {
-            throw new ParquetFormatException("Variant metadata of " + bufferSize + " bytes is too short for its "
+            throw new MalformedFileException("Variant metadata of " + bufferSize + " bytes is too short for its "
                     + offsetSize + "-byte dictionary size");
         }
         long declaredSize = readUnsigned(HEADER_BYTES, offsetSize);
         long offsetTableEnd = offsetTableStart + (declaredSize + 1) * offsetSize;
         if (offsetTableEnd > bufferSize || declaredSize > Integer.MAX_VALUE) {
-            throw new ParquetFormatException("Variant metadata declares " + declaredSize + " keys, more than its "
+            throw new MalformedFileException("Variant metadata declares " + declaredSize + " keys, more than its "
                     + bufferSize + "-byte buffer can hold");
         }
         return (int) declaredSize;
@@ -94,7 +96,7 @@ public final class VariantMetadata {
     private void requireKeyBytesEndWithinBuffer() {
         long lastOffset = readOffset(dictionarySize);
         if (lastOffset > keyBytesLength) {
-            throw new ParquetFormatException("Variant metadata key bytes end at offset " + lastOffset + " but only "
+            throw new MalformedFileException("Variant metadata key bytes end at offset " + lastOffset + " but only "
                     + keyBytesLength + " key bytes follow the offset table");
         }
     }
@@ -135,7 +137,7 @@ public final class VariantMetadata {
 
     private void requireKeyWithinKeyBytes(int id, long start, long end) {
         if (start > end || end > keyBytesLength) {
-            throw new ParquetFormatException("Variant metadata key " + id + " has offsets [" + start + ", " + end
+            throw new MalformedFileException("Variant metadata key " + id + " has offsets [" + start + ", " + end
                     + "), invalid for " + keyBytesLength + " key bytes");
         }
     }

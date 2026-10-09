@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.columnar.ShreddedVariantVector.ScalarInput;
 import io.tileverse.parquetry.columnar.ShreddedVariantVector.VariantInput;
-import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.UnsupportedFeatureException;
 import io.tileverse.parquetry.internal.variant.VariantEncoder;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -47,7 +47,7 @@ class ShreddedVariantCompactionTest {
 
         int[] keptIndices = {0};
         assertThatThrownBy(() -> Compaction.compact(vector, keptIndices))
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(UnsupportedFeatureException.class)
                 .hasMessageContaining("list or map");
     }
 

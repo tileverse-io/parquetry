@@ -22,6 +22,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import io.tileverse.parquetry.format.ColumnChunk;
+import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.KeyValue;
 import io.tileverse.parquetry.format.RowGroup;
@@ -31,8 +33,8 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
  * Derives the cached, immutable views {@link ParquetFileReader} keeps off the footer it read once: the parquetry
- * {@link ParquetSchema}, the parsed GeoParquet metadata, the collapsed key/value metadata, and the public row-group
- * view.
+ * {@link ParquetSchema}, the parsed GeoParquet metadata, the collapsed key/value metadata, the public row-group view,
+ * and the bytes taken by the column chunks.
  */
 final class FooterModel {
 
@@ -63,6 +65,21 @@ final class FooterModel {
         } catch (RuntimeException _) {
             return Optional.empty();
         }
+    }
+
+    /**
+     * The compressed bytes of the column chunks of the file, as its footer declares them. The sizes of a corrupt footer
+     * sum to anything: the readers bound the sum by the size of the file.
+     */
+    static long columnChunkBytes(FileMetaData footer) {
+        long total = 0L;
+        for (RowGroup rowGroup : footer.rowGroups()) {
+            for (ColumnChunk chunk : rowGroup.columns()) {
+                Optional<ColumnMetaData> metaData = chunk.metaData();
+                total += metaData.map(ColumnMetaData::totalCompressedSize).orElse(0L);
+            }
+        }
+        return total;
     }
 
     static Map<String, String> collapseKeyValueMetadata(List<KeyValue> entries) {

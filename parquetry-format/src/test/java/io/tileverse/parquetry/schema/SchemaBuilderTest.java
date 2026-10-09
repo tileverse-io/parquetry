@@ -16,17 +16,31 @@
 package io.tileverse.parquetry.schema;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
+import io.tileverse.parquetry.format.FieldRepetitionType;
 import io.tileverse.parquetry.format.FileMetaData;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.format.PhysicalType;
+import io.tileverse.parquetry.format.SchemaElement;
+import io.tileverse.parquetry.format.UnsupportedFeatureException;
 import io.tileverse.parquetry.io.ByteRangeSource;
 
 class SchemaBuilderTest {
+
+    private static final int DEEPEST_NESTING = 500;
 
     @Test
     void buildsFromEmptyIntColumn(@TempDir Path tmp) throws Exception {
@@ -76,9 +90,89 @@ class SchemaBuilderTest {
         assertThat(schema.leafColumns()).hasSize(2);
     }
 
+    @Test
+    void buildsGroupsNestedToTheLimit() {
+        ParquetSchema schema = SchemaBuilder.build(leafUnderNestedGroups(DEEPEST_NESTING));
+
+        assertThat(schema.leafColumns()).hasSize(1);
+        assertThat(schema.leafColumns().get(0).numParts()).isEqualTo(DEEPEST_NESTING + 1);
+    }
+
+    // Groups nested deeper than the limit of the reader are unsupported, not malformed.
+    @ParameterizedTest(name = "{0} groups")
+    @ValueSource(ints = {DEEPEST_NESTING + 1, 20_000})
+    void rejectsNestingBeyondTheLimit(int groups) {
+        List<SchemaElement> elements = leafUnderNestedGroups(groups);
+
+        assertThatThrownBy(() -> SchemaBuilder.build(elements))
+                .isInstanceOf(UnsupportedFeatureException.class)
+                .hasMessageContaining("nests more than " + DEEPEST_NESTING + " groups");
+    }
+
+    // A group declaring more children than the elements left in the schema is malformed.
+    @ParameterizedTest(name = "{0} children")
+    @ValueSource(ints = {2, 1_000_000, Integer.MAX_VALUE, -1})
+    void rejectsChildrenBeyondTheSchema(int declaredChildren) {
+        List<SchemaElement> elements = List.of(group("schema", 1), group("points", declaredChildren), leaf("x"));
+
+        assertThatThrownBy(() -> SchemaBuilder.build(elements))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("points")
+                .hasMessageContaining(String.valueOf(declaredChildren));
+    }
+
+    // The root declares two children and holds one: the last element is the child of the inner group.
+    @Test
+    void rejectsRootShortOfAChild() {
+        List<SchemaElement> elements = List.of(group("schema", 2), group("g", 1), leaf("x"));
+
+        assertThatThrownBy(() -> SchemaBuilder.build(elements))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("schema");
+    }
+
     private static FileMetaData readFooter(Path file) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             return ParquetFormat.readFooter(source);
         }
+    }
+
+    /** A root group, then {@code groups} groups nested one inside the other, then one INT32 leaf. */
+    private static List<SchemaElement> leafUnderNestedGroups(int groups) {
+        List<SchemaElement> elements = new ArrayList<>(groups + 2);
+        elements.add(group("schema", 1));
+        for (int level = 0; level < groups; level++) {
+            elements.add(group("g", 1));
+        }
+        elements.add(leaf("x"));
+        return elements;
+    }
+
+    private static SchemaElement group(String name, int children) {
+        return new SchemaElement(
+                Optional.empty(),
+                OptionalInt.empty(),
+                Optional.of(FieldRepetitionType.OPTIONAL),
+                name,
+                OptionalInt.of(children),
+                Optional.empty(),
+                OptionalInt.empty(),
+                OptionalInt.empty(),
+                Optional.empty(),
+                OptionalInt.empty());
+    }
+
+    private static SchemaElement leaf(String name) {
+        return new SchemaElement(
+                Optional.of(PhysicalType.INT32),
+                OptionalInt.empty(),
+                Optional.of(FieldRepetitionType.OPTIONAL),
+                name,
+                OptionalInt.empty(),
+                Optional.empty(),
+                OptionalInt.empty(),
+                OptionalInt.empty(),
+                Optional.empty(),
+                OptionalInt.empty());
     }
 }

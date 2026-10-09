@@ -20,7 +20,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.MalformedFileException;
+import io.tileverse.parquetry.format.UnsupportedFeatureException;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.variant.ShreddedVariant;
 
@@ -41,7 +42,7 @@ class ShreddedVariantTest {
         SchemaNode.Group unsignedInt32 = VariantSchemas.scalarUnsignedInt32Group();
 
         assertThatThrownBy(() -> ShreddedVariant.classify(unsignedInt32))
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(UnsupportedFeatureException.class)
                 .hasMessageContaining("Unsupported shredded value type");
     }
 
@@ -60,7 +61,7 @@ class ShreddedVariantTest {
         SchemaNode.Group fixedLen4 = VariantSchemas.fixedLen4Group();
 
         assertThatThrownBy(() -> ShreddedVariant.classify(fixedLen4))
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(UnsupportedFeatureException.class)
                 .hasMessageContaining("Unsupported shredded value type");
     }
 
@@ -83,7 +84,7 @@ class ShreddedVariantTest {
         SchemaNode.Group objectWithPrimitiveField = VariantSchemas.objectWithPrimitiveFieldGroup();
 
         assertThatThrownBy(() -> ShreddedVariant.classify(objectWithPrimitiveField))
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining("must be a value/typed_value group");
     }
 
@@ -92,7 +93,7 @@ class ShreddedVariantTest {
         SchemaNode.Group fieldWithNeither = VariantSchemas.objectFieldWithNeitherValueNorTypedValueGroup();
 
         assertThatThrownBy(() -> ShreddedVariant.classify(fieldWithNeither))
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining("neither a value nor a typed_value");
     }
 

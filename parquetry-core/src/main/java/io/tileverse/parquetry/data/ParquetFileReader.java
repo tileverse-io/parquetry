@@ -127,6 +127,7 @@ public final class ParquetFileReader {
     private final LeafIndex leafIndex;
     private final Map<String, String> keyValueMetadata;
     private final List<RowGroupSummary> rowGroupView;
+    private final long columnChunkBytes;
     private final Optional<GeoParquetMetadata> geoMetadata;
     private final SpatialBoundsSource spatialBounds;
     private final ParquetRuntime runtime;
@@ -148,6 +149,7 @@ public final class ParquetFileReader {
         this.leafIndex = footerMetadata.leafIndex();
         this.keyValueMetadata = footerMetadata.keyValueMetadata();
         this.rowGroupView = footerMetadata.rowGroups();
+        this.columnChunkBytes = footerMetadata.columnChunkBytes();
         this.geoMetadata = footerMetadata.geoMetadata();
         this.spatialBounds = footerMetadata.spatialBounds();
         this.runtime = runtime;
@@ -1240,7 +1242,7 @@ public final class ParquetFileReader {
      * to a no-op.
      */
     private IndexSectionLoader indexSectionLoader(FetchAccumulator accumulator) {
-        return new FooterIndexSectionLoader(source, accumulator);
+        return new FooterIndexSectionLoader(source, accumulator, columnChunkBytes);
     }
 
     /**

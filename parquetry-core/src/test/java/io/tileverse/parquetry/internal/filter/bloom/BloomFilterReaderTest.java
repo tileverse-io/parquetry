@@ -64,7 +64,7 @@ class BloomFilterReaderTest {
         byte[] padded = padWith(chunk, 200);
         Path file = writeBytes(tmp.resolve("bloom-unknown.bin"), padded);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            SplitBlockBloomFilter bloom = BloomFilterReader.readWithoutLength(source, 0L);
+            SplitBlockBloomFilter bloom = BloomFilterReader.readWithoutLength(source, 0L, source.size());
             assertThat(bloom.mightContainInt(123)).isTrue();
             assertThat(bloom.mightContainInt(7)).isFalse();
         }
@@ -77,7 +77,7 @@ class BloomFilterReaderTest {
         // Tail with no padding: simulate "exactly bloom chunk at end of file"; readWithoutLength must still cope.
         Path file = writeBytes(tmp.resolve("bloom-eof.bin"), chunk);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            SplitBlockBloomFilter bloom = BloomFilterReader.readWithoutLength(source, 0L);
+            SplitBlockBloomFilter bloom = BloomFilterReader.readWithoutLength(source, 0L, source.size());
             assertThat(bloom.mightContainInt(1)).isTrue();
         }
     }
@@ -111,10 +111,25 @@ class BloomFilterReaderTest {
         // The header declares a bitset of 2 GB, and the file holds that header alone.
         byte[] header = synthesizeHeader(Integer.MAX_VALUE - 31);
         Path file = writeBytes(tmp.resolve("bloom-header.bin"), header);
+        long noLimit = Long.MAX_VALUE;
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            assertThatThrownBy(() -> BloomFilterReader.readWithoutLength(source, 0L))
+            assertThatThrownBy(() -> BloomFilterReader.readWithoutLength(source, 0L, noLimit))
                     .isInstanceOf(MalformedFileException.class)
                     .hasMessageContaining("reaches outside the file");
+        }
+    }
+
+    // The header declares a bitset of 320 bytes, held by the file after it, above the limit of 100.
+    @Test
+    void rejectsBitsetAboveTheLimit(@TempDir Path tmp) throws IOException {
+        byte[] padded = padWith(synthesizeHeader(320), 400);
+        Path file = writeBytes(tmp.resolve("bloom-long.bin"), padded);
+        long bitsetBytesLimit = 100L;
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            assertThatThrownBy(() -> BloomFilterReader.readWithoutLength(source, 0L, bitsetBytesLimit))
+                    .isInstanceOf(MalformedFileException.class)
+                    .hasMessageContaining("320 bytes")
+                    .hasMessageContaining("100 bytes");
         }
     }
 
