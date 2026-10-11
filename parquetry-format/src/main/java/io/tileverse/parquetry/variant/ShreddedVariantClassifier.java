@@ -43,7 +43,8 @@ import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.LogicalType.Decimal;
 import io.tileverse.parquetry.format.LogicalType.IntType;
 import io.tileverse.parquetry.format.LogicalType.TimeUnit;
-import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.MalformedFileException;
+import io.tileverse.parquetry.format.UnsupportedFeatureException;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
@@ -61,7 +62,7 @@ final class ShreddedVariantClassifier {
     static ShreddedVariant classify(SchemaNode.Group variantGroup) {
         SchemaNode typedValue = childNamed(variantGroup, TYPED_VALUE)
                 .orElseThrow(() ->
-                        new ParquetFormatException("Variant group has no typed_value child: " + variantGroup.name()));
+                        new MalformedFileException("Variant group has no typed_value child: " + variantGroup.name()));
         return classifyTypedValue(typedValue);
     }
 
@@ -97,7 +98,7 @@ final class ShreddedVariantClassifier {
         return switch (child) {
             case SchemaNode.Group group -> group;
             case SchemaNode.Primitive primitive ->
-                throw new ParquetFormatException(
+                throw new MalformedFileException(
                         "Shredded Variant object field must be a value/typed_value group, found primitive: "
                                 + primitive.name());
         };
@@ -110,7 +111,7 @@ final class ShreddedVariantClassifier {
      */
     private static void requireRequiredFieldGroup(SchemaNode.Group group) {
         if (group.repetition() != Repetition.REQUIRED) {
-            throw new ParquetFormatException("Shredded Variant object field must be a required group: " + group.name());
+            throw new MalformedFileException("Shredded Variant object field must be a required group: " + group.name());
         }
     }
 
@@ -120,7 +121,7 @@ final class ShreddedVariantClassifier {
                 .map(ShreddedVariantClassifier::classifyTypedValue)
                 .orElse(null);
         if (value == null && typedValue == null) {
-            throw new ParquetFormatException(
+            throw new MalformedFileException(
                     "Shredded Variant field has neither a value nor a typed_value child: " + node.name());
         }
         return new Field(value, typedValue);
@@ -132,7 +133,7 @@ final class ShreddedVariantClassifier {
             case null -> null;
             case SchemaNode.Primitive primitive -> primitive;
             case SchemaNode.Group group ->
-                throw new ParquetFormatException(
+                throw new MalformedFileException(
                         "Shredded Variant value child must be a primitive leaf, found group: " + group.name());
         };
     }
@@ -154,7 +155,7 @@ final class ShreddedVariantClassifier {
             case SchemaNode.Group wrapper ->
                 (SchemaNode.Group) wrapper.children().get(0);
             case SchemaNode.Primitive element ->
-                throw new ParquetFormatException(
+                throw new MalformedFileException(
                         "Shredded Variant array element must be a value/typed_value group, found primitive: "
                                 + element.name());
         };
@@ -252,8 +253,8 @@ final class ShreddedVariantClassifier {
         };
     }
 
-    private static ParquetFormatException unsupported(SchemaNode.Primitive primitive) {
-        return new ParquetFormatException("Unsupported shredded value type: " + describe(primitive));
+    private static UnsupportedFeatureException unsupported(SchemaNode.Primitive primitive) {
+        return new UnsupportedFeatureException("Unsupported shredded value type: " + describe(primitive));
     }
 
     private static String describe(SchemaNode.Primitive primitive) {

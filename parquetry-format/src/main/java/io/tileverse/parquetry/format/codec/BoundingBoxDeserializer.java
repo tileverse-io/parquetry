@@ -19,7 +19,7 @@ import java.io.IOException;
 import java.util.OptionalDouble;
 
 import io.tileverse.parquetry.format.BoundingBox;
-import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.MalformedFileException;
 
 /**
  * Deserializer for the Thrift {@code BoundingBox} struct.
@@ -82,7 +82,7 @@ final class BoundingBoxDeserializer {
 
     private static double require(Double value, String fieldName) {
         if (value == null) {
-            throw new ParquetFormatException("BoundingBox is missing required field '" + fieldName + "'");
+            throw new MalformedFileException("BoundingBox is missing required field '" + fieldName + "'");
         }
         return value;
     }

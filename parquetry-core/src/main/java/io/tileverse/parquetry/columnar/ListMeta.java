@@ -22,7 +22,7 @@ import java.util.Set;
 import java.util.function.ToIntFunction;
 
 import io.tileverse.parquetry.format.LogicalType;
-import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.UnsupportedFeatureException;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.LevelMaxima;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -248,7 +248,7 @@ public record ListMeta(
     private static void rejectShredded(SchemaNode.Group group) {
         for (SchemaNode child : group.children()) {
             if (child.name().equals("typed_value")) {
-                throw new ParquetFormatException(
+                throw new UnsupportedFeatureException(
                         "reading a shredded Variant nested under a list or map is not supported");
             }
         }

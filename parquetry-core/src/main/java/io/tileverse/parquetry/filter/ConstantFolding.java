@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.filter;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +26,7 @@ import io.tileverse.parquetry.internal.filter.ComparisonOperator;
 import io.tileverse.parquetry.internal.filter.PredicateNormalizer;
 import io.tileverse.parquetry.internal.filter.ValueComparison;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.ParquetSchemaException;
 
 /**
  * Replaces predicate leaves on synthesized (constant) columns with their truth value for one file, then simplifies the
@@ -43,6 +45,8 @@ public final class ConstantFolding {
      * @param constants synthesized column path -&gt; its constant value for this file
      * @param nulls synthesized columns whose value is null for this file, such as a column added to an Iceberg table
      *     after the file was written
+     * @throws ParquetSchemaException when a literal has no order against the constant of its column, such as a string
+     *     against a number
      */
     public static Predicate fold(Predicate predicate, Map<ColumnPath, Value> constants, Set<ColumnPath> nulls) {
         return foldNormalized(PredicateNormalizer.normalize(predicate), constants, nulls);
@@ -82,25 +86,48 @@ public final class ConstantFolding {
             return leaf;
         }
         Value bound = boundOf(leaf);
-        return holdsWidening(op, constant, bound) ? Predicate.ALWAYS_TRUE : Predicate.ALWAYS_FALSE;
+        return holdsWidening(op, col, constant, bound) ? Predicate.ALWAYS_TRUE : Predicate.ALWAYS_FALSE;
     }
 
     /**
-     * Whether {@code op} holds between a synthetic column's constant and a predicate literal, widening across numeric
-     * subtypes not bridged by {@link ValueComparison#compareValues}. A constant inferred as {@code LONG} compared
-     * against an {@code INT} literal (or the reverse) would otherwise fall to the {@code default -> 0} arm and
-     * mis-fold. When both sides are numeric they compare as a common widened type: {@code double} under the IEEE 754
-     * rules of the record level if either side is floating, else {@code long}. Non-numeric pairs
-     * (String/Date/Bool/Uuid/...) defer to {@code compareValues}.
+     * Whether {@code op} holds between the constant of the synthesized column {@code col} and a predicate literal. Two
+     * numbers compare as a common widened type: {@code double} under the IEEE 754 rules of the record level if either
+     * side is floating, else {@code long}. The other pairs follow {@link #compareOrdered}.
      */
-    private static boolean holdsWidening(ComparisonOperator op, Value constant, Value bound) {
+    private static boolean holdsWidening(ComparisonOperator op, ColumnPath col, Value constant, Value bound) {
         if (isNumeric(constant) && isNumeric(bound)) {
             if (isFloating(constant) || isFloating(bound)) {
                 return op.holds(asDouble(constant), asDouble(bound));
             }
             return op.holds(Long.compare(asLong(constant), asLong(bound)));
         }
-        return op.holds(ValueComparison.compareValues(constant, bound));
+        return op.holds(compareOrdered(col, constant, bound));
+    }
+
+    /**
+     * The sign of {@code constant - literal}, ordered from either side as a scan orders a stored cell against the
+     * literal: epoch days against a date, bytes against a string.
+     *
+     * @throws ParquetSchemaException when the two types have no order between them. A constant has no stored form to
+     *     compare with a literal of its physical type, such as a timestamp against an integer.
+     */
+    private static int compareOrdered(ColumnPath col, Value constant, Value literal) {
+        if (constant instanceof Value.DateVal(LocalDate day) && literal instanceof Value.LongVal(long days)) {
+            // An integer literal beyond INT32 reaches a DATE column as a long, and a scan compares it with the days.
+            return Long.compare(day.toEpochDay(), days);
+        }
+        if (ValueComparison.ordered(constant, literal)) {
+            return ValueComparison.compareValues(constant, literal);
+        }
+        if (ValueComparison.ordered(literal, constant)) {
+            return -Integer.signum(ValueComparison.compareValues(literal, constant));
+        }
+        throw new ParquetSchemaException("Value of type " + typeName(literal) + " is not comparable with column "
+                + col.dot() + ", a constant of type " + typeName(constant));
+    }
+
+    private static String typeName(Value value) {
+        return value.getClass().getSimpleName();
     }
 
     private static boolean isNumeric(Value value) {
@@ -152,12 +179,13 @@ public final class ConstantFolding {
         if (constant == null) {
             return in;
         }
+        // Each value is compared before answering: a value without an order against the constant is rejected wherever
+        // it stands in the list.
+        boolean listed = false;
         for (Value candidate : in.values()) {
-            if (holdsWidening(ComparisonOperator.EQ, constant, candidate)) {
-                return Predicate.ALWAYS_TRUE;
-            }
+            listed |= holdsWidening(ComparisonOperator.EQ, in.col(), constant, candidate);
         }
-        return Predicate.ALWAYS_FALSE;
+        return listed ? Predicate.ALWAYS_TRUE : Predicate.ALWAYS_FALSE;
     }
 
     private static Predicate foldIsNull(

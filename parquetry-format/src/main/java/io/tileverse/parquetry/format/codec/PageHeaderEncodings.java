@@ -19,7 +19,7 @@ import java.io.IOException;
 import java.util.Optional;
 
 import io.tileverse.parquetry.format.Encoding;
-import io.tileverse.parquetry.format.UnsupportedFeatureException;
+import io.tileverse.parquetry.format.UnknownCodeException;
 
 /**
  * Reads the encoding fields of page headers. A page header names the encodings needed to decode its page: an encoding
@@ -35,12 +35,12 @@ final class PageHeaderEncodings {
      * Reads one encoding field.
      *
      * @param field the Thrift field being read, named in the failure message
-     * @throws UnsupportedFeatureException when parquetry does not know the encoding's wire code
+     * @throws UnknownCodeException when parquetry does not know the encoding's wire code
      */
     static Encoding read(CompactProtocolReader r, String field) throws IOException {
         int code = r.readI32();
         Optional<Encoding> encoding = Encoding.fromCode(code);
-        return encoding.orElseThrow(() -> new UnsupportedFeatureException(
-                "Unsupported encoding: wire code " + code + " is unknown to parquetry", UNKNOWN_OFFSET, field));
+        return encoding.orElseThrow(() -> new UnknownCodeException(
+                "Unknown Encoding wire code " + code + " in a page header", UNKNOWN_OFFSET, field));
     }
 }

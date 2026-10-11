@@ -25,9 +25,11 @@ import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.BitSet;
+import java.util.OptionalInt;
 import java.util.UUID;
 
 import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.internal.filter.TemporalValues;
 import io.tileverse.parquetry.schema.UuidConverter;
 
 /**
@@ -40,7 +42,11 @@ public final class ConstantVectors {
 
     private ConstantVectors() {}
 
-    /** A length-{@code rowCount} vector with {@code value} in every row. */
+    /**
+     * A length-{@code rowCount} vector with {@code value} in every row.
+     *
+     * @throws IllegalArgumentException for a date beyond the days of INT32, the range of a DATE column
+     */
     public static ColumnVector of(Value value, int rowCount) {
         Validity validity = Validity.allValid(rowCount);
         return switch (value) {
@@ -49,8 +55,7 @@ public final class ConstantVectors {
             case Value.DoubleVal(double v) -> DoubleVector.materialized(filled(v, rowCount), validity);
             case Value.FloatVal(float v) -> FloatVector.materialized(filledFloat(v, rowCount), validity);
             case Value.BoolVal(boolean v) -> BooleanVector.materialized(filled(v, rowCount), validity);
-            case Value.DateVal(LocalDate date) ->
-                IntVector.materialized(filled((int) date.toEpochDay(), rowCount), validity);
+            case Value.DateVal(LocalDate date) -> IntVector.materialized(filled(epochDay(date), rowCount), validity);
             case Value.StringVal(String text) -> binary(text.getBytes(StandardCharsets.UTF_8), rowCount, validity);
             case Value.UuidVal(UUID uuid) -> fixed(UuidConverter.toBytes(uuid), rowCount, validity);
             case Value.DecimalVal(BigDecimal decimal) ->
@@ -133,6 +138,19 @@ public final class ConstantVectors {
         MemorySegment[] rows = new MemorySegment[rowCount];
         Arrays.fill(rows, value);
         return FixedLenBinaryVector.materialized(rows, bytes.length, validity);
+    }
+
+    /**
+     * The days since the epoch stored by a DATE column.
+     *
+     * @throws IllegalArgumentException when {@code date} lies beyond the days of INT32
+     */
+    private static int epochDay(LocalDate date) {
+        OptionalInt stored = TemporalValues.toEpochDayIfInRange(date);
+        if (stored.isEmpty()) {
+            throw new IllegalArgumentException("a DATE column holds the days of INT32, " + date + " lies beyond them");
+        }
+        return stored.getAsInt();
     }
 
     /** Microseconds since the epoch, exact before 1970 because the sub-second part is added, never subtracted. */

@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.columnar;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -63,6 +64,15 @@ class ConstantVectorsTest {
         assertThat(vector).isInstanceOf(IntVector.class);
         int epochDay = (int) LocalDate.parse("2024-01-15").toEpochDay();
         assertThat(VectorArrays.toArray(((IntVector) vector))).containsExactly(epochDay, epochDay);
+    }
+
+    @Test
+    void rejectsDateBeyondInt32Days() {
+        Value oneRangeAfterDay5 = new Value.DateVal(LocalDate.ofEpochDay((1L << 32) + 5));
+
+        assertThatThrownBy(() -> ConstantVectors.of(oneRangeAfterDay5, 2))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("DATE");
     }
 
     @Test

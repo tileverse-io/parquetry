@@ -41,6 +41,7 @@ import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.PhysicalType;
+import io.tileverse.parquetry.format.UnknownCodeException;
 import io.tileverse.parquetry.format.UnsupportedFeatureException;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -48,8 +49,8 @@ import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
  * A file whose column chunk names an encoding unknown to parquetry, in its footer and in its data page header, still
- * opens: the footer's encoding references are informational. Decoding that page fails with
- * {@link UnsupportedFeatureException} naming the encoding and the column, while the other columns stay readable.
+ * opens: the footer's encoding references are informational. Decoding that page fails with {@link UnknownCodeException}
+ * naming the encoding and the column, while the other columns stay readable.
  */
 class UnknownEncodingReadTest {
 
@@ -99,7 +100,7 @@ class UnknownEncodingReadTest {
         Path file = writeFile(version, UNKNOWN_ENCODING, PhysicalType.DOUBLE);
 
         assertThatThrownBy(() -> readAllRows(file))
-                .isInstanceOf(UnsupportedFeatureException.class)
+                .isInstanceOf(UnknownCodeException.class)
                 .hasMessageContaining("wire code " + UNKNOWN_ENCODING)
                 .hasMessageContaining("column " + UNDECODABLE.dot());
     }
@@ -110,7 +111,7 @@ class UnknownEncodingReadTest {
         Path file = writeFile(version, UNKNOWN_ENCODING, PhysicalType.DOUBLE);
 
         assertThatThrownBy(() -> readAllBatches(file))
-                .isInstanceOf(UnsupportedFeatureException.class)
+                .isInstanceOf(UnknownCodeException.class)
                 .hasMessageContaining("wire code " + UNKNOWN_ENCODING)
                 .hasMessageContaining("column " + UNDECODABLE.dot());
     }

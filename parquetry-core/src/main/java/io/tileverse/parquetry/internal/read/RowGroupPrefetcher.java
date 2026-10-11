@@ -156,7 +156,7 @@ public final class RowGroupPrefetcher implements AutoCloseable {
         highestSubmitted = Math.max(highestSubmitted, index);
     }
 
-    private RowGroupFetch fetchInline(int index) throws IOException {
+    private RowGroupFetch fetchInline(int index) {
         RowGroupSurvivor survivor = survivors.get(index);
         FetchPlan plan = fetcher.planFor(survivor, plans.fetchMask(index));
         return fetcher.fetch(survivor, plan, BudgetReservation.NONE, wantsTimings);

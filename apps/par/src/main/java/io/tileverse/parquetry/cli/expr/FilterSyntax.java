@@ -62,7 +62,8 @@ public final class FilterSyntax {
                 "  - ST_Envelope is accepted as a synonym of ST_Extent, and is the form that also works in PostGIS,"
                         + " where ST_Extent aggregates over rows.",
                 "  - A column named as a SQL keyword, or with a space, goes in double quotes:"
-                        + " \"from\" > 1, \"my column\" = 2, \"outer\".code = 3.",
+                        + " \"from\" > 1, \"my column\" = 2, \"outer\".code = 3."
+                        + " A double quote inside the name is written twice: \"a\"\"b\" = 4.",
                 "",
                 "Examples:",
                 "  par cat data.parquet --filter \"pop > 1000000"

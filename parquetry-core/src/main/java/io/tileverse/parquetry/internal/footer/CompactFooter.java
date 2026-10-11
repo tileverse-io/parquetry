@@ -205,12 +205,12 @@ public final class CompactFooter {
      * names; the failure below identifies the column by ordinal, and a caller holding the {@link LeafIndex} can name
      * it.
      *
-     * @throws ParquetFormatException when the row group has no chunk for that leaf
+     * @throws MalformedFileException when the row group has no chunk for that leaf
      * @throws IndexOutOfBoundsException when either coordinate falls outside the encoded footer
      */
     public ChunkMeta chunk(int rowGroup, int leaf) {
         return chunkIfPresent(rowGroup, leaf)
-                .orElseThrow(() -> new ParquetFormatException(
+                .orElseThrow(() -> new MalformedFileException(
                         "Row group " + rowGroup + " does not contain the column at leaf ordinal " + leaf));
     }
 

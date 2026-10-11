@@ -19,9 +19,11 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.UUID;
 
@@ -221,9 +223,10 @@ final class BloomFilterEvaluator {
      * <p>Timestamp and time values require the column's logical type to determine the storage unit (MILLIS / MICROS /
      * NANOS). Without a matching logical type the hash cannot be computed correctly; those cases return empty and
      * degrade to NotApplied at the call site - which is always safe. A timestamp beyond the instants of INT64 in that
-     * unit has no stored integer to hash and returns empty as well. Decimal values have no defined bloom-filter hash
-     * and also reach the empty default. Returns empty when the column kind / value combination has no defined bloom
-     * hash (e.g. an INT96 column or a type mismatch); the caller degrades those to NotApplied.
+     * unit has no stored integer to hash and returns empty as well, as does a date beyond the days of INT32. Decimal
+     * values have no defined bloom-filter hash and also reach the empty default. Returns empty when the column kind /
+     * value combination has no defined bloom hash (e.g. an INT96 column or a type mismatch); the caller degrades those
+     * to NotApplied.
      */
     @SuppressWarnings("java:S7475") // palantirJavaFormat 2.90 cannot parse bare _ in nested record patterns
     private static OptionalLong hashFor(Value v, PrimitiveKind kind, Optional<LogicalType> logicalType) {
@@ -246,8 +249,7 @@ final class BloomFilterEvaluator {
             case Value.UuidVal(UUID qv)
             when kind == PrimitiveKind.FIXED_LEN_BYTE_ARRAY ->
                 OptionalLong.of(hashSegment(UuidConverter.toReadOnlySegment(qv)));
-            case Value.DateVal(java.time.LocalDate qv)
-            when kind == PrimitiveKind.INT32 -> OptionalLong.of(SplitBlockBloomFilter.hashInt32((int) qv.toEpochDay()));
+            case Value.DateVal(LocalDate qv) when kind == PrimitiveKind.INT32 -> hashOfDate(qv);
             case Value.TimestampVal(LocalDateTime qv, boolean _)
             when kind == PrimitiveKind.INT64
                     && logicalType.orElse(null)
@@ -259,6 +261,15 @@ final class BloomFilterEvaluator {
                 OptionalLong.of(SplitBlockBloomFilter.hashInt64(TemporalValues.toTimeUnit(qv, unit)));
             default -> OptionalLong.empty();
         };
+    }
+
+    /** The hash of the days stored for {@code date}; empty beyond the days of INT32. */
+    private static OptionalLong hashOfDate(LocalDate date) {
+        OptionalInt stored = TemporalValues.toEpochDayIfInRange(date);
+        if (stored.isEmpty()) {
+            return OptionalLong.empty();
+        }
+        return OptionalLong.of(SplitBlockBloomFilter.hashInt32(stored.getAsInt()));
     }
 
     /** The hash of the integer stored for {@code timestamp}; empty beyond the instants of INT64 in {@code unit}. */

@@ -26,7 +26,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.MalformedFileException;
+import io.tileverse.parquetry.format.UnsupportedFeatureException;
 
 class VariantMetadataTest {
 
@@ -57,7 +58,6 @@ class VariantMetadataTest {
     static Stream<Arguments> malformedBuffers() {
         return Stream.of(
                 malformed("empty buffer", new byte[0], "is empty"),
-                malformed("version 2 header", bytes(0x02, 0x00, 0x00), "version 2"),
                 malformed("dictionary size cut short", bytes(0xC1, 0xFF), "too short"),
                 malformed(
                         "dictionary size above the signed int range",
@@ -76,8 +76,18 @@ class VariantMetadataTest {
     void rejectsMalformedStructureOnConstruction(String description, byte[] bytes, String messageFragment) {
         assertThatThrownBy(() -> metadata(bytes))
                 .as(description)
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining(messageFragment);
+    }
+
+    // A metadata header of version 2 is an unsupported feature, not a malformed value.
+    @Test
+    void rejectsUnsupportedVersion() {
+        byte[] versionTwoHeader = bytes(0x02, 0x00, 0x00);
+
+        assertThatThrownBy(() -> metadata(versionTwoHeader))
+                .isInstanceOf(UnsupportedFeatureException.class)
+                .hasMessageContaining("version 2");
     }
 
     @Test
@@ -89,7 +99,7 @@ class VariantMetadataTest {
         assertThat(metadata.key(0)).as("well-formed key").isEqualTo("ABCDE");
         assertThatThrownBy(() -> metadata.key(1))
                 .as("key with decreasing offsets")
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining("key 1 has offsets [5, 3)");
     }
 
@@ -101,7 +111,7 @@ class VariantMetadataTest {
 
         assertThatThrownBy(() -> metadata.key(0))
                 .as("key ending past the key bytes")
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining("invalid for 2 key bytes");
     }
 

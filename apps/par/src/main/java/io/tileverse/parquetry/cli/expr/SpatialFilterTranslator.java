@@ -126,7 +126,7 @@ final class SpatialFilterTranslator {
     }
 
     private Operand classify(Expression expression) {
-        return switch (expression) {
+        return switch (Parentheses.strip(expression)) {
             case Column column -> new BareColumn(requireGeometryColumn(column));
             case Function function -> functionOperand(function);
             default ->
@@ -147,7 +147,7 @@ final class SpatialFilterTranslator {
     /** Resolves one extent call. Nested extent calls fold away: the bounding rectangle of a rectangle is itself. */
     private Operand extentOperand(Function extent) {
         List<Expression> single = requireArity(parameters(extent), 1, extent.getName());
-        Expression inner = single.get(0);
+        Expression inner = Parentheses.strip(single.get(0));
         return switch (inner) {
             case Column column -> new ExtentColumn(requireGeometryColumn(column, extent.getName()), extent.getName());
             case Function nested when isExtentFunction(nested.getName()) -> extentOperand(nested);

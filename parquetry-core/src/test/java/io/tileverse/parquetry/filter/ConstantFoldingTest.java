@@ -16,7 +16,14 @@
 package io.tileverse.parquetry.filter;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.lang.foreign.MemorySegment;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -25,11 +32,13 @@ import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.internal.filter.PredicateNormalizer;
 import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.ParquetSchemaException;
 
 class ConstantFoldingTest {
 
@@ -161,6 +170,116 @@ class ConstantFoldingTest {
 
         assertThat(ConstantFolding.fold(new Predicate.Eq(VALUE, new Value.DoubleVal(-0.0)), zero, Set.of()))
                 .isEqualTo(Predicate.ALWAYS_TRUE);
+    }
+
+    // A literal of a type without an order against the constant fails the fold instead of folding as equal.
+    @ParameterizedTest(name = "{0} against {1}")
+    @MethodSource("pairsWithoutAnOrder")
+    void rejectsLiteralWithoutAnOrder(Value constant, Value literal) {
+        Map<ColumnPath, Value> constants = Map.of(VALUE, constant);
+        Set<ColumnPath> noNulls = Set.of();
+
+        for (Predicate comparison : comparisonsOfValueWith(literal)) {
+            assertThatThrownBy(() -> ConstantFolding.fold(comparison, constants, noNulls))
+                    .as("%s", comparison)
+                    .isInstanceOf(ParquetSchemaException.class)
+                    .hasMessageContaining("value")
+                    .hasMessageContaining(literal.getClass().getSimpleName())
+                    .hasMessageContaining(constant.getClass().getSimpleName());
+        }
+    }
+
+    /** A constant of a logical type against a literal of its physical type, and pairs of unrelated types. */
+    static Stream<Arguments> pairsWithoutAnOrder() {
+        LocalDateTime instant = LocalDateTime.of(2024, 1, 1, 0, 0);
+        return Stream.of(
+                Arguments.of(new Value.TimestampVal(instant, true), new Value.LongVal(1_704_067_200_000_000L)),
+                Arguments.of(new Value.TimeVal(LocalTime.NOON), new Value.LongVal(43_200_000_000L)),
+                Arguments.of(new Value.DecimalVal(new BigDecimal("1.50")), new Value.IntVal(150)),
+                Arguments.of(
+                        new Value.DecimalVal(new BigDecimal("1.50")),
+                        new Value.BinaryVal(MemorySegment.ofArray(new byte[] {0, 1}))),
+                Arguments.of(new Value.StringVal("2024"), new Value.IntVal(2024)),
+                Arguments.of(new Value.LongVal(2024L), new Value.StringVal("2024")),
+                Arguments.of(new Value.LongVal(19723L), new Value.DateVal(LocalDate.of(2024, 1, 1))),
+                Arguments.of(new Value.BoolVal(true), new Value.IntVal(1)),
+                Arguments.of(new Value.DateVal(LocalDate.EPOCH), new Value.StringVal("1970-01-01")));
+    }
+
+    // An int constant folds against a date literal, and a bytes constant against a string, as a scan compares them.
+    @ParameterizedTest(name = "{0} against {1}")
+    @MethodSource("pairsOrderedFromTheLiteral")
+    void foldsPairOrderedFromLiteral(Value constant, Value equalLiteral, Value greaterLiteral) {
+        Map<ColumnPath, Value> constants = Map.of(VALUE, constant);
+
+        assertThat(ConstantFolding.fold(new Predicate.Eq(VALUE, equalLiteral), constants, Set.of()))
+                .isEqualTo(Predicate.ALWAYS_TRUE);
+        assertThat(ConstantFolding.fold(new Predicate.Eq(VALUE, greaterLiteral), constants, Set.of()))
+                .isEqualTo(Predicate.ALWAYS_FALSE);
+        assertThat(ConstantFolding.fold(new Predicate.Lt(VALUE, greaterLiteral), constants, Set.of()))
+                .isEqualTo(Predicate.ALWAYS_TRUE);
+        assertThat(ConstantFolding.fold(new Predicate.Gt(VALUE, greaterLiteral), constants, Set.of()))
+                .isEqualTo(Predicate.ALWAYS_FALSE);
+        assertThat(ConstantFolding.fold(
+                        new Predicate.In(VALUE, List.of(greaterLiteral, equalLiteral)), constants, Set.of()))
+                .isEqualTo(Predicate.ALWAYS_TRUE);
+    }
+
+    /** Pairs compared by a scan of a stored column: epoch days against a date, bytes against a string. */
+    static Stream<Arguments> pairsOrderedFromTheLiteral() {
+        return Stream.of(
+                Arguments.of(
+                        new Value.IntVal(1),
+                        new Value.DateVal(LocalDate.ofEpochDay(1)),
+                        new Value.DateVal(LocalDate.ofEpochDay(2))),
+                Arguments.of(new Value.BinaryVal(bytes("a")), new Value.StringVal("a"), new Value.StringVal("b")));
+    }
+
+    // A date constant compares with an integer literal as its epoch days, as the scan of a DATE column does.
+    @Test
+    void dateConstantVsLongLiteral() {
+        LocalDate day = LocalDate.of(2024, 1, 1);
+        Map<ColumnPath, Value> constants = Map.of(VALUE, new Value.DateVal(day));
+        Value sameDay = new Value.LongVal(day.toEpochDay());
+        Value beyondInt32 = new Value.LongVal((1L << 32) + 1);
+
+        assertThat(ConstantFolding.fold(new Predicate.Eq(VALUE, sameDay), constants, Set.of()))
+                .isEqualTo(Predicate.ALWAYS_TRUE);
+        assertThat(ConstantFolding.fold(new Predicate.Lt(VALUE, beyondInt32), constants, Set.of()))
+                .isEqualTo(Predicate.ALWAYS_TRUE);
+        assertThat(ConstantFolding.fold(new Predicate.Eq(VALUE, beyondInt32), constants, Set.of()))
+                .isEqualTo(Predicate.ALWAYS_FALSE);
+    }
+
+    // An IN list holding a value without an order is rejected wherever its matching value sits.
+    @Test
+    void inListIgnoresValueOrder() {
+        Map<ColumnPath, Value> constants = Map.of(VALUE, new Value.LongVal(2024L));
+        Value matching = new Value.IntVal(2024);
+        Value withoutAnOrder = new Value.StringVal("2024");
+        Set<ColumnPath> noNulls = Set.of();
+        Predicate matchingFirst = new Predicate.In(VALUE, List.of(matching, withoutAnOrder));
+        Predicate matchingLast = new Predicate.In(VALUE, List.of(withoutAnOrder, matching));
+
+        assertThatThrownBy(() -> ConstantFolding.fold(matchingFirst, constants, noNulls))
+                .isInstanceOf(ParquetSchemaException.class);
+        assertThatThrownBy(() -> ConstantFolding.fold(matchingLast, constants, noNulls))
+                .isInstanceOf(ParquetSchemaException.class);
+    }
+
+    private static List<Predicate> comparisonsOfValueWith(Value literal) {
+        return List.of(
+                new Predicate.Eq(VALUE, literal),
+                new Predicate.NotEq(VALUE, literal),
+                new Predicate.Lt(VALUE, literal),
+                new Predicate.LtEq(VALUE, literal),
+                new Predicate.Gt(VALUE, literal),
+                new Predicate.GtEq(VALUE, literal),
+                new Predicate.In(VALUE, List.of(literal)));
+    }
+
+    private static MemorySegment bytes(String text) {
+        return MemorySegment.ofArray(text.getBytes(StandardCharsets.UTF_8));
     }
 
     @ParameterizedTest(name = "{0}")

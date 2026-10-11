@@ -29,7 +29,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.UnknownCodeException;
+import io.tileverse.parquetry.format.UnsupportedFeatureException;
 import io.tileverse.parquetry.io.Segments;
 import io.tileverse.parquetry.schema.UuidConverter;
 
@@ -107,13 +110,14 @@ public final class Variant {
 
     private static void requireDepthWithinLimit(int depth) {
         if (depth > MAX_DEPTH) {
-            throw new ParquetFormatException("Variant nesting depth exceeds the maximum of " + MAX_DEPTH + " levels");
+            throw new UnsupportedFeatureException(
+                    "Variant nesting depth exceeds the maximum of " + MAX_DEPTH + " levels");
         }
     }
 
     private static void requireHeaderByte(MemorySegment value) {
         if (value.byteSize() == 0) {
-            throw new ParquetFormatException("Variant value is empty");
+            throw new MalformedFileException("Variant value is empty");
         }
     }
 
@@ -170,7 +174,7 @@ public final class Variant {
             case 18 -> Type.TIMESTAMP_NANOS_TZ;
             case 19 -> Type.TIMESTAMP_NANOS_NTZ;
             case 20 -> Type.UUID;
-            default -> throw new ParquetFormatException("Unknown variant primitive type id " + id);
+            default -> throw new UnknownCodeException("Unknown variant primitive type id " + id);
         };
     }
 
@@ -451,7 +455,7 @@ public final class Variant {
 
     private static int indexableCount(long count, Type type) {
         if (count > Integer.MAX_VALUE) {
-            throw new ParquetFormatException(
+            throw new MalformedFileException(
                     "Variant " + type + " declares " + count + " entries, more than a view can index");
         }
         return (int) count;
@@ -472,7 +476,7 @@ public final class Variant {
         int offsetSize = layout.offsetSize();
         long offset = readUnsigned(layout.offsetTableStart() + (long) position * offsetSize, offsetSize);
         if (offset >= layout.dataSize()) {
-            throw new ParquetFormatException("Variant " + layout.type() + " entry " + position + " starts at offset "
+            throw new MalformedFileException("Variant " + layout.type() + " entry " + position + " starts at offset "
                     + offset + ", outside its " + layout.dataSize() + "-byte data region");
         }
         return offset;
@@ -482,7 +486,7 @@ public final class Variant {
         long id = readUnsigned(layout.idTableStart() + (long) position * layout.idSize(), layout.idSize());
         int dictionarySize = metadata.dictionarySize();
         if (id >= dictionarySize) {
-            throw new ParquetFormatException("Variant OBJECT field " + position + " has key id " + id
+            throw new MalformedFileException("Variant OBJECT field " + position + " has key id " + id
                     + ", out of range for a dictionary of " + dictionarySize + " keys");
         }
         return (int) id;
@@ -568,7 +572,7 @@ public final class Variant {
     private void requireAvailable(long end, Type type, String part) {
         long available = value.byteSize();
         if (end > available) {
-            throw new ParquetFormatException(
+            throw new MalformedFileException(
                     "Variant " + type + " " + part + " needs " + end + " bytes but the value has " + available);
         }
     }

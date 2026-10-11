@@ -88,7 +88,9 @@ public final class StatisticsValueDecoder {
      * to compare the column's cells. A writer orders the bounds by the annotation, and a bound compared in another
      * order lets a pruning tier drop matching rows: a half float or a wide timestamp read as unsigned bytes, a binary
      * decimal read as unsigned bytes, a full-width unsigned integer read as a signed one. An annotation not defined for
-     * the physical type, or one with an order left undefined by the format, takes its statistics out of pruning too.
+     * the physical type, or one with an order left undefined by the format, takes its statistics out of pruning too. An
+     * annotation unknown to this reader does the same: the annotation of a later version of the format reads as
+     * UNKNOWN, and may order its values unlike their physical type.
      */
     private static boolean orderedAsCompared(PrimitiveKind kind, Optional<LogicalType> logicalType) {
         if (logicalType.isEmpty()) {
@@ -106,7 +108,8 @@ public final class StatisticsValueDecoder {
             case LogicalType.Time _ -> kind == PrimitiveKind.INT32 || kind == PrimitiveKind.INT64;
             case LogicalType.Timestamp _ -> kind == PrimitiveKind.INT64;
             case LogicalType.IntType intType -> integerOrderedAsCompared(kind, intType);
-            case LogicalType.UnknownType _ -> true;
+            // The annotation of a later version of the format reads as UNKNOWN, with an order unknown here.
+            case LogicalType.UnknownType _ -> false;
             // A half float is ordered by the value it represents; the format defines no order for the others.
             case LogicalType.Float16Type _,
                     LogicalType.Geometry _,

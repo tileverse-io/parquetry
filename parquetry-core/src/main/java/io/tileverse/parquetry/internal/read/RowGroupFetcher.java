@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.internal.read;
 
-import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -186,8 +185,7 @@ public final class RowGroupFetcher {
      * twice. A mandatory fetch arrives with {@link BudgetReservation#NONE} and routes the buffer through the
      * {@link FetchBufferAllocator} valve, which reserves RAM when the budget has room and maps a spill file otherwise.
      */
-    public RowGroupFetch fetch(RowGroupSurvivor survivor, FetchPlan plan, BudgetReservation reservation)
-            throws IOException {
+    public RowGroupFetch fetch(RowGroupSurvivor survivor, FetchPlan plan, BudgetReservation reservation) {
         return fetch(survivor, plan, reservation, false);
     }
 
@@ -197,8 +195,7 @@ public final class RowGroupFetcher {
      * off, no clock is read and the fetch reports zero.
      */
     public RowGroupFetch fetch(
-            RowGroupSurvivor survivor, FetchPlan plan, BudgetReservation reservation, boolean wantsTimings)
-            throws IOException {
+            RowGroupSurvivor survivor, FetchPlan plan, BudgetReservation reservation, boolean wantsTimings) {
         long startNanos = wantsTimings ? System.nanoTime() : 0L;
         boolean speculative = reservation != BudgetReservation.NONE;
         Pooled buffer = acquireRangeBuffer(plan.requestedBytes(), speculative);
@@ -208,7 +205,7 @@ public final class RowGroupFetcher {
             List<FetchedColumnChunk> columns = sliceColumns(byColumn(placed), survivor.chunks());
             long fetchNanos = wantsTimings ? System.nanoTime() - startNanos : 0L;
             return new RowGroupFetch(List.of(buffer), columns, reservation, fetchNanos);
-        } catch (IOException | RuntimeException e) {
+        } catch (RuntimeException e) {
             closeQuietly(buffer);
             reservation.release();
             throw e;
@@ -322,7 +319,7 @@ public final class RowGroupFetcher {
     }
 
     private List<FetchedColumnChunk> sliceColumns(
-            Map<ColumnPath, List<PlacedUnit>> placedByColumn, RowGroupChunks chunks) throws IOException {
+            Map<ColumnPath, List<PlacedUnit>> placedByColumn, RowGroupChunks chunks) {
         List<ColumnPath> leaves = projectedSchema.leafColumns();
         List<FetchedColumnChunk> columns = new ArrayList<>(leaves.size());
         for (ColumnPath path : leaves) {

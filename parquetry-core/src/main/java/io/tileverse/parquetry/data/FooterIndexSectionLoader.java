@@ -46,6 +46,10 @@ import io.tileverse.parquetry.observe.FetchPurpose;
  * plus bitset); one whose length is absent counts the bitset byte size discovered from the filter header, the only
  * figure cheaply available on that path. Passing {@link FetchAccumulator#NONE} reduces every record call to a no-op.
  *
+ * <p>The page indexes and the bloom filters of a file lie outside its column chunks. A section located outside the
+ * file, or declared longer than the bytes of the file outside its column chunks, comes from a corrupt footer and is
+ * refused before a buffer of the declared length is allocated.
+ *
  * <p>{@link #prefetch} reads a whole phase's sections in one call and holds their bytes until each is decoded. A batch
  * spanning both kinds of index section keeps its byte tallies split by kind and still counts one call, reporting what
  * the call cost under the first of those kinds.
@@ -59,13 +63,16 @@ final class FooterIndexSectionLoader implements IndexSectionLoader {
 
     private final ByteRangeSource source;
     private final FetchAccumulator accumulator;
+    private final long columnChunkBytes;
 
     /** The bytes of a prefetched batch, keyed by file offset and removed by the read that decodes them. */
     private final Map<Long, MemorySegment> held = new HashMap<>();
 
-    FooterIndexSectionLoader(ByteRangeSource source, FetchAccumulator accumulator) {
+    /** @param columnChunkBytes the compressed bytes of the column chunks of the file, as its footer declares them */
+    FooterIndexSectionLoader(ByteRangeSource source, FetchAccumulator accumulator, long columnChunkBytes) {
         this.source = source;
         this.accumulator = accumulator;
+        this.columnChunkBytes = columnChunkBytes;
     }
 
     @Override
@@ -81,11 +88,12 @@ final class FooterIndexSectionLoader implements IndexSectionLoader {
     @Override
     public SplitBlockBloomFilter readBloom(long offset, int length) {
         if (length > 0) {
+            requireReadable(FetchPurpose.BLOOM_FILTER, offset, length);
             SplitBlockBloomFilter filter = BloomFilterReader.read(source, offset, length);
             accumulator.add(FetchPurpose.BLOOM_FILTER, length);
             return filter;
         }
-        SplitBlockBloomFilter filter = BloomFilterReader.readWithoutLength(source, offset);
+        SplitBlockBloomFilter filter = BloomFilterReader.readWithoutLength(source, offset, bytesOutsideColumnChunks());
         accumulator.add(FetchPurpose.BLOOM_FILTER, filter.byteSize());
         return filter;
     }
@@ -93,7 +101,7 @@ final class FooterIndexSectionLoader implements IndexSectionLoader {
     @Override
     public void prefetch(List<IndexSectionRange> sections) {
         dropBytesHeldFromAnEarlierBatch();
-        List<IndexSectionRange> batch = inFileOrder(withinTheFile(sections));
+        List<IndexSectionRange> batch = inFileOrder(readable(sections));
         if (batch.size() < 2 || !fitsOneBuffer(batch)) {
             return;
         }
@@ -113,17 +121,19 @@ final class FooterIndexSectionLoader implements IndexSectionLoader {
     }
 
     /**
-     * The sections lying within the file. A section located outside it is left to fail at its own lookup, and takes no
-     * part in sizing the buffer of the batch.
+     * The sections lying within the file and no longer than its bytes outside the column chunks. A section failing
+     * either check is left to fail at its own lookup, and takes no part in sizing the buffer of the batch.
      */
-    private List<IndexSectionRange> withinTheFile(List<IndexSectionRange> sections) {
-        List<IndexSectionRange> within = new ArrayList<>(sections.size());
+    private List<IndexSectionRange> readable(List<IndexSectionRange> sections) {
+        List<IndexSectionRange> readable = new ArrayList<>(sections.size());
         for (IndexSectionRange section : sections) {
-            if (liesWithinTheFile(section.fileOffset(), section.length())) {
-                within.add(section);
+            boolean refused = reachesOutsideTheFile(section.fileOffset(), section.length())
+                    || exceedsTheBytesOutsideColumnChunks(section.length());
+            if (!refused) {
+                readable.add(section);
             }
         }
-        return within;
+        return readable;
     }
 
     private static List<IndexSectionRange> inFileOrder(List<IndexSectionRange> sections) {
@@ -134,12 +144,12 @@ final class FooterIndexSectionLoader implements IndexSectionLoader {
 
     /**
      * Whether one buffer can hold the sections of {@code batch}. The sections of a file lie apart from each other, and
-     * their lengths sum to no more than the file. A longer total comes from a corrupt footer: the batch is not read,
-     * and each section is left to its own lookup.
+     * their lengths sum to no more than the bytes outside its column chunks. A longer total comes from a corrupt
+     * footer: the batch is not read, and each section is left to its own lookup.
      */
     private boolean fitsOneBuffer(List<IndexSectionRange> batch) {
         long total = totalLength(batch);
-        return total <= source.size() && total <= LARGEST_BUFFER_BYTES;
+        return total <= bytesOutsideColumnChunks() && total <= LARGEST_BUFFER_BYTES;
     }
 
     private static long totalLength(List<IndexSectionRange> batch) {
@@ -230,23 +240,56 @@ final class FooterIndexSectionLoader implements IndexSectionLoader {
         if (prefetched != null && prefetched.byteSize() == length) {
             return prefetched;
         }
-        requireWithinTheFile(offset, length);
+        requireReadable(purpose, offset, length);
         MemorySegment bytes = MemorySegment.ofArray(new byte[length]);
         source.readFully(offset, bytes);
         accumulator.add(purpose, length);
         return bytes;
     }
 
-    /** Refuses a section located outside the file before a buffer of its declared length is allocated. */
-    private void requireWithinTheFile(long offset, int length) {
-        if (!liesWithinTheFile(offset, length)) {
-            throw new MalformedFileException("Index section of " + length + " bytes at offset " + offset
+    /**
+     * Refuses a section located outside the file, or longer than the bytes outside its column chunks, before a buffer
+     * of its declared length is allocated.
+     */
+    private void requireReadable(FetchPurpose purpose, long offset, int length) {
+        if (reachesOutsideTheFile(offset, length)) {
+            throw new MalformedFileException(nameOf(purpose) + " of " + length + " bytes at offset " + offset
                     + " reaches outside the file of " + source.size() + " bytes");
+        }
+        if (exceedsTheBytesOutsideColumnChunks(length)) {
+            throw new MalformedFileException(nameOf(purpose) + " of " + length + " bytes at offset " + offset
+                    + " is longer than the file's " + bytesOutsideColumnChunks() + " bytes outside its column chunks");
         }
     }
 
-    private boolean liesWithinTheFile(long offset, int length) {
-        return offset >= 0 && length >= 0 && length <= source.size() - offset;
+    private boolean reachesOutsideTheFile(long offset, int length) {
+        return offset < 0 || length < 0 || length > source.size() - offset;
+    }
+
+    private boolean exceedsTheBytesOutsideColumnChunks(int length) {
+        return length > bytesOutsideColumnChunks();
+    }
+
+    private static String nameOf(FetchPurpose purpose) {
+        return switch (purpose) {
+            case COLUMN_INDEX -> "Column index";
+            case OFFSET_INDEX -> "Offset index";
+            case BLOOM_FILTER -> "Bloom filter";
+            default -> "Index section";
+        };
+    }
+
+    /**
+     * The bytes of the file outside its column chunks, where its page indexes and bloom filters lie with the footer.
+     * Chunk sizes of a corrupt footer sum to anything. A sum beyond the file leaves no such bytes: the sections are
+     * refused, and the read goes on without them. A negative sum leaves the whole file.
+     */
+    private long bytesOutsideColumnChunks() {
+        long fileSize = source.size();
+        if (columnChunkBytes < 0) {
+            return fileSize;
+        }
+        return Math.max(0L, fileSize - columnChunkBytes);
     }
 
     /** Running bytes and range count for one {@link FetchPurpose} within a batch. */

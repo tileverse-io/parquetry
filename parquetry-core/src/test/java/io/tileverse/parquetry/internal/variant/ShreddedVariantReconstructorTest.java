@@ -27,7 +27,7 @@ import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
-import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.internal.variant.ShreddedVariantReconstructor.NodeReader;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -77,7 +77,7 @@ class ShreddedVariantReconstructorTest {
         ShreddedVariantReconstructor reconstructor = reconstructor(emptyMetadata());
 
         assertThatThrownBy(() -> reconstructor.reconstruct(model, reader))
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining("conflicting value and typed_value");
     }
 
@@ -151,7 +151,7 @@ class ShreddedVariantReconstructorTest {
         ShreddedVariantReconstructor reconstructor = reconstructor(reference);
 
         assertThatThrownBy(() -> reconstructor.reconstruct(model, reader))
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining("non-object value with shredded fields");
     }
 
@@ -172,7 +172,7 @@ class ShreddedVariantReconstructorTest {
         ShreddedVariantReconstructor reconstructor = reconstructor(metadata);
 
         assertThatThrownBy(() -> reconstructor.reconstruct(model, reader))
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining("non-object value with shredded fields");
     }
 
@@ -221,7 +221,7 @@ class ShreddedVariantReconstructorTest {
         ShreddedVariantReconstructor reconstructor = reconstructor(metadata);
 
         assertThatThrownBy(() -> reconstructor.reconstruct(model, reader))
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining("conflicting value and typed_value for field");
     }
 
@@ -247,7 +247,7 @@ class ShreddedVariantReconstructorTest {
         ShreddedVariantReconstructor reconstructor = reconstructor(reference);
 
         assertThatThrownBy(() -> reconstructor.reconstruct(model, reader))
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining("conflicting value and typed_value for field");
     }
 
@@ -433,7 +433,7 @@ class ShreddedVariantReconstructorTest {
         ShreddedVariantReconstructor reconstructor = reconstructor(metadata);
 
         assertThatThrownBy(() -> reconstructor.reconstruct(model, reader))
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining("conflicting value and typed_value");
     }
 

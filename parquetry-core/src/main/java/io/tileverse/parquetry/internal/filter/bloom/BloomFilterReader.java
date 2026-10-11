@@ -76,9 +76,10 @@ public final class BloomFilterReader {
     /**
      * Reads the bloom-filter chunk at {@code offset} when {@code bloom_filter_length} is unknown (older Parquet writers
      * pre-spec-2.10 omit the field). Uses a two-step fetch: a small probe to decode the header, then a bounded read of
-     * exactly the header-declared bitset size.
+     * exactly the header-declared bitset size. A header declaring a bitset longer than {@code bitsetBytesLimit} is
+     * refused before a buffer of that size is allocated.
      */
-    public static SplitBlockBloomFilter readWithoutLength(ByteRangeSource source, long offset) {
+    public static SplitBlockBloomFilter readWithoutLength(ByteRangeSource source, long offset, long bitsetBytesLimit) {
         byte[] probeBytes = new byte[HEADER_PROBE_BYTES];
         int probed = source.read(offset, MemorySegment.ofArray(probeBytes));
         if (probed <= 0) {
@@ -88,6 +89,7 @@ public final class BloomFilterReader {
         ByteBuffer headerView = probe.duplicate();
         BloomFilterHeader header = readHeader(headerView);
         rejectUnsupported(header);
+        requireBitsetWithinTheLimit(header, offset, bitsetBytesLimit);
         int headerByteLength = headerView.position() - probe.position();
         int remainingHeader = probe.limit() - probe.position() - headerByteLength;
         if (remainingHeader >= header.numBytes()) {
@@ -102,6 +104,13 @@ public final class BloomFilterReader {
         byte[] bitsetBytes = new byte[header.numBytes()];
         source.readFully(bitsetStart, MemorySegment.ofArray(bitsetBytes));
         return new SplitBlockBloomFilter(asReadOnlySegment(ByteBuffer.wrap(bitsetBytes)));
+    }
+
+    private static void requireBitsetWithinTheLimit(BloomFilterHeader header, long offset, long bitsetBytesLimit) {
+        if (header.numBytes() > bitsetBytesLimit) {
+            throw new MalformedFileException("Bloom filter at offset " + offset + " declares a bitset of "
+                    + header.numBytes() + " bytes, above the limit of " + bitsetBytesLimit + " bytes");
+        }
     }
 
     /** Refuses a filter located outside the file before a buffer of its declared length is allocated. */

@@ -150,6 +150,33 @@ class SqlPredicateTranslatorTest {
         assertThat(gt.v()).isEqualTo(new Value.IntVal(5));
     }
 
+    // A literal beyond INT32 stays a long: narrowed to an int, it would match other rows.
+    @Test
+    void int32EqKeepsLongLiteral() {
+        Predicate.Eq eq = (Predicate.Eq) parseNumeric("i32 = 4294967297");
+        assertThat(eq.v()).isEqualTo(new Value.LongVal(4294967297L));
+    }
+
+    @Test
+    void int32NotEqKeepsLongLiteral() {
+        Predicate.NotEq notEq = (Predicate.NotEq) parseNumeric("i32 <> -4294967297");
+        assertThat(notEq.v()).isEqualTo(new Value.LongVal(-4294967297L));
+    }
+
+    @Test
+    void int32GtKeepsLongLiteral() {
+        Predicate.Gt gt = (Predicate.Gt) parseNumeric("i32 > 2147483648");
+        assertThat(gt.v()).isEqualTo(new Value.LongVal(2147483648L));
+    }
+
+    @Test
+    void int32BoundsNarrowToInt() {
+        Predicate.GtEq lowest = (Predicate.GtEq) parseNumeric("i32 >= -2147483648");
+        Predicate.LtEq highest = (Predicate.LtEq) parseNumeric("i32 <= 2147483647");
+        assertThat(lowest.v()).isEqualTo(new Value.IntVal(Integer.MIN_VALUE));
+        assertThat(highest.v()).isEqualTo(new Value.IntVal(Integer.MAX_VALUE));
+    }
+
     @Test
     void floatEqualityNarrowsLiteralToFloat() {
         Predicate.Eq eq = (Predicate.Eq) parseNumeric("f32 = 1.5");
@@ -220,6 +247,13 @@ class SqlPredicateTranslatorTest {
     void inListOnIntColumnCoercesToIntVal() {
         Predicate.In in = (Predicate.In) parseNumeric("i32 IN (1, 2)");
         assertThat(in.values()).containsExactly(new Value.IntVal(1), new Value.IntVal(2));
+    }
+
+    // The values of an IN list are narrowed one by one: the value beyond INT32 stays a long.
+    @Test
+    void inListOnIntKeepsLongValue() {
+        Predicate.In in = (Predicate.In) parseNumeric("i32 IN (1, 4294967297)");
+        assertThat(in.values()).containsExactly(new Value.IntVal(1), new Value.LongVal(4294967297L));
     }
 
     private static final ParquetSchema UUID_COLUMN = Fixtures.uuidColumnSchema();

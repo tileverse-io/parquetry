@@ -34,7 +34,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.format.LogicalType;
-import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
@@ -410,7 +410,7 @@ class VariantEncoderTest {
         VariantEncoder encoder =
                 new VariantEncoder().startObject().field("missing").addInt(1).endObject();
         assertThatThrownBy(() -> encoder.encodeValue(empty))
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining("missing");
     }
 

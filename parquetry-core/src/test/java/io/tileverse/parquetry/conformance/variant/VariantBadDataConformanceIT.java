@@ -95,9 +95,14 @@ class VariantBadDataConformanceIT {
     void rejectsMalformedVariantWithAFormatError(String fileName) {
         VariantCell cell = readSingleRow(fileName);
 
-        assertThatThrownBy(() -> walk(cell.decode()))
+        assertThatThrownBy(() -> decodeAndWalk(cell))
                 .as("%s must fail decoding or walking with a format error", fileName)
-                .isInstanceOf(ParquetFormatException.class);
+                .isInstanceOf(ParquetFormatException.class)
+                .isNotExactlyInstanceOf(ParquetFormatException.class);
+    }
+
+    private static void decodeAndWalk(VariantCell cell) {
+        walk(cell.decode());
     }
 
     @Test

@@ -212,7 +212,7 @@ class IndexSectionBatchReadTest {
             long offset = chunk.offsetIndexOffset().orElseThrow();
             int length = chunk.offsetIndexLength().orElseThrow();
             OffsetIndex expected = ParquetFormat.readOffsetIndex(source, offset, length);
-            FooterIndexSectionLoader loader = new FooterIndexSectionLoader(source, FetchAccumulator.NONE);
+            FooterIndexSectionLoader loader = new FooterIndexSectionLoader(source, FetchAccumulator.NONE, 0L);
             loader.prefetch(List.of(
                     new IndexSectionRange(FetchPurpose.OFFSET_INDEX, offset, length),
                     new IndexSectionRange(FetchPurpose.OFFSET_INDEX, offset, length + 1)));
@@ -288,7 +288,7 @@ class IndexSectionBatchReadTest {
                 0,
                 leaves,
                 schema,
-                decorate.apply(new FooterIndexSectionLoader(source, accumulator)));
+                decorate.apply(new FooterIndexSectionLoader(source, accumulator, 0L)));
         source.reset();
         return new Fixture(source, accumulator, chunks);
     }

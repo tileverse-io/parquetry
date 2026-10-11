@@ -37,7 +37,7 @@ import io.tileverse.parquetry.columnar.StructVector;
 import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.columnar.VariantVector;
 import io.tileverse.parquetry.format.LogicalType;
-import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.GroupKind;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -406,7 +406,7 @@ final class DremelAssembler {
         private SchemaNode requireChild(SchemaNode.Group group, String name) {
             SchemaNode child = findChild(group, name);
             if (child == null) {
-                throw new ParquetFormatException("variant group is missing required child '" + name + "'");
+                throw new MalformedFileException("variant group is missing required child '" + name + "'");
             }
             return child;
         }

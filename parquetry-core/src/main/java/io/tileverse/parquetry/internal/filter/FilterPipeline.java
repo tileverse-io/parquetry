@@ -320,6 +320,9 @@ public final class FilterPipeline {
 
     private static RowGroupPlan evaluateRowGroup(
             int index, RowGroupInputs inputs, Predicate normalized, FilterToggles toggles) {
+        if (inputs.rowCount() == 0L) {
+            return withoutRows(index);
+        }
         if (normalized instanceof Predicate.RowIndexExcluded) {
             return evaluateRowPositionDeletes(index, inputs, normalized);
         }
@@ -332,8 +335,7 @@ public final class FilterPipeline {
             return new RowGroupPlan(
                     index, inputs.rowCount(), tierDecisions, RowGroupOutcome.ELIMINATED, surviving, Optional.empty());
         }
-        // An empty row group has no rows to match. Letting it fall through keeps the existing behavior, where a later
-        // tier eliminates it, instead of claiming MATCHED and fetching a chunk that should never be read.
+        // A negative row count, from a corrupt footer, must never be added to a count.
         if (statsDecision instanceof PruningDecision.PassedAll && inputs.rowCount() > 0) {
             return new RowGroupPlan(
                     index, inputs.rowCount(), tierDecisions, RowGroupOutcome.MATCHED, surviving, Optional.empty());
@@ -373,6 +375,14 @@ public final class FilterPipeline {
 
         RowGroupOutcome outcome = surviving.isPresent() ? RowGroupOutcome.PARTIAL : RowGroupOutcome.FULL;
         return new RowGroupPlan(index, inputs.rowCount(), tierDecisions, outcome, surviving, Optional.empty());
+    }
+
+    /**
+     * The plan of a row group with no rows: skipped before any tier runs, with no tier decision. Its column chunks hold
+     * nothing to read, and pyarrow writes them in a form that fails when fetched.
+     */
+    private static RowGroupPlan withoutRows(int index) {
+        return new RowGroupPlan(index, 0L, List.of(), RowGroupOutcome.ELIMINATED, Optional.empty(), Optional.empty());
     }
 
     /**

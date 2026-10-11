@@ -88,12 +88,16 @@ public final class DataPageV2Reader implements DataPageReader {
 
     /**
      * Decompresses (or copies, when {@code !compressed}) {@code valuesSlice} into an Arena-allocated segment of size
-     * {@code uncompressedSize}.
+     * {@code uncompressedSize}. A page of null cells alone has no value bytes: the zero bytes stored for them are no
+     * stream of a codec, and are not handed to it.
      */
     private static MemorySegment decodeValues(
             MemorySegment valuesSlice, Compression codec, Arena pageArena, int uncompressedSize, boolean compressed)
             throws IOException {
         MemorySegment valueBytes = pageArena.allocate(uncompressedSize);
+        if (uncompressedSize == 0) {
+            return valueBytes;
+        }
         if (compressed) {
             codec.decompress(valuesSlice, valueBytes);
         } else {

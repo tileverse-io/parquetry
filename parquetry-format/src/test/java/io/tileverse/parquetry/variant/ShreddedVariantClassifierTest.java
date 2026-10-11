@@ -25,7 +25,7 @@ import java.util.OptionalInt;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.format.LogicalType;
-import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
@@ -46,7 +46,7 @@ class ShreddedVariantClassifierTest {
         SchemaNode.Group variantGroup = variantGroupWithObjectField(Repetition.OPTIONAL);
 
         assertThatThrownBy(() -> ShreddedVariantClassifier.classify(variantGroup))
-                .isInstanceOf(ParquetFormatException.class)
+                .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining("must be a required group");
     }
 

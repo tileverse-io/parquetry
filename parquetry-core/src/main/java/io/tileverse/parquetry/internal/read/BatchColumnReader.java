@@ -20,8 +20,6 @@ import static io.tileverse.parquetry.format.ParquetLayouts.FLOAT;
 import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
 import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -1000,18 +998,14 @@ final class BatchColumnReader {
     }
 
     private DecodedPage readNextDataPage(Arena arena) {
-        try {
-            if (pendingPage != null) {
-                return decodePendingPage(arena);
-            }
-            return pageCursor.nextDataPage(maxLevels, codec, arena);
-        } catch (IOException e) {
-            throw new UncheckedIOException("Failed to read next page for column " + columnPath.dot(), e);
+        if (pendingPage != null) {
+            return decodePendingPage(arena);
         }
+        return pageCursor.nextDataPage(maxLevels, codec, arena);
     }
 
     /** Hands the page held pending to the page walk for decompression, clearing the reader's pending state. */
-    private DecodedPage decodePendingPage(Arena arena) throws IOException {
+    private DecodedPage decodePendingPage(Arena arena) {
         PageCursor.PendingDataPage pending = pendingPage;
         pendingPage = null;
         pendingPageRowsSkipped = 0;

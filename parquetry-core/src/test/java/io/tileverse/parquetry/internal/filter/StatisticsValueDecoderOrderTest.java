@@ -25,6 +25,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.filter.Value;
@@ -60,6 +61,20 @@ class StatisticsValueDecoderOrderTest {
     @MethodSource("boundsOrderedUnlikeTheirCells")
     void boundOrderedUnlikeItsCellsIsDeclined(PrimitiveKind kind, LogicalType logicalType) {
         Optional<Value> decoded = StatisticsValueDecoder.decode(kind, Optional.of(logicalType), TWELVE_BYTES);
+
+        assertThat(decoded).isEmpty();
+    }
+
+    /**
+     * UNKNOWN annotates a column of nulls, and stands for an annotation of a later version of the format too: the order
+     * of the bounds of such a column is not known to this reader.
+     */
+    @ParameterizedTest(name = "{0} annotated UNKNOWN")
+    @EnumSource(PrimitiveKind.class)
+    void boundOfUnknownTypeIsDeclined(PrimitiveKind kind) {
+        LogicalType unknown = new LogicalType.UnknownType();
+
+        Optional<Value> decoded = StatisticsValueDecoder.decode(kind, Optional.of(unknown), TWELVE_BYTES);
 
         assertThat(decoded).isEmpty();
     }

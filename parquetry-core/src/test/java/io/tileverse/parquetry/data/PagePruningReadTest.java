@@ -30,7 +30,10 @@ import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
+import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -40,6 +43,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.CorpusFixtures;
 
 /** End-to-end: a page-selective predicate over a multi-page row group returns exactly the matching rows. */
 class PagePruningReadTest {
@@ -100,6 +104,24 @@ class PagePruningReadTest {
             // A predicate every page can satisfy: the tier passes all pages, no mask, full decode.
             try (Stream<ParquetRecord> rows = dataset.read(col("v").gtEq(0), Projection.ALL, ReadOptions.DEFAULTS)) {
                 assertThat(rows.count()).isEqualTo(100L);
+            }
+        }
+    }
+
+    // These corpus files mark the pages of a required column as holding only nulls, although they hold values.
+    @ParameterizedTest
+    @ValueSource(
+            strings = {"datapage_v1-uncompressed-checksum.parquet", "datapage_v1-snappy-compressed-checksum.parquet"})
+    void bogusNullPagesLoseNoRows(String corpusFile) {
+        Path file = CorpusFixtures.parquetTestingData().resolve(corpusFile);
+        Predicate positive = col("a").gt(0);
+        long halfOfTheRows = 2560L;
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+
+            assertThat(reader.count(positive, ReadOptions.DEFAULTS)).isEqualTo(halfOfTheRows);
+            try (Stream<ParquetRecord> rows = reader.read(positive, Projection.ALL, ReadOptions.DEFAULTS)) {
+                assertThat(rows.count()).isEqualTo(halfOfTheRows);
             }
         }
     }

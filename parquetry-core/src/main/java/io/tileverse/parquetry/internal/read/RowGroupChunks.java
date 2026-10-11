@@ -287,10 +287,10 @@ public final class RowGroupChunks {
     }
 
     /**
-     * The memoized column-index tier input (kind + column index + offset index), or empty when either index is not
-     * usable or the column index lacks an entry per page of the offset index. Loading it populates the
-     * {@link #offsetIndex} and {@link #columnIndex} memos, and a later {@code offsetIndex(path)} for the same column
-     * does not re-read.
+     * The memoized column-index tier input (kind + column index + offset index). It is empty when either index is not
+     * usable, when the column index lacks an entry per page of the offset index, or when the column index marks a page
+     * as holding only nulls with a null count of zero or less. Loading it populates the {@link #offsetIndex} and
+     * {@link #columnIndex} memos, and a later {@code offsetIndex(path)} for the same column does not re-read.
      */
     public Optional<ColumnPageStats> pageStats(ColumnPath path) {
         return pageStatsMemo.computeIfAbsent(path, this::loadPageStats);
@@ -377,11 +377,13 @@ public final class RowGroupChunks {
         if (ci.isEmpty() || oi.isEmpty()) {
             return Optional.empty();
         }
-        if (!hasOneEntryPerPage(ci.orElseThrow(), oi.orElseThrow())) {
+        ColumnIndex columnIndex = ci.orElseThrow();
+        OffsetIndex offsetIndex = oi.orElseThrow();
+        if (!hasOneEntryPerPage(columnIndex, offsetIndex) || !nullPagesAgreeWithNullCounts(columnIndex)) {
             return Optional.empty();
         }
         return Optional.of(new ColumnPageStats(
-                kind.orElseThrow(), ci.orElseThrow(), oi.orElseThrow(), logicalType(path), boundsOrdered(path)));
+                kind.orElseThrow(), columnIndex, offsetIndex, logicalType(path), boundsOrdered(path)));
     }
 
     /** Whether the null flags and the bounds of {@code columnIndex} have one entry per page of {@code offsetIndex}. */
@@ -390,6 +392,28 @@ public final class RowGroupChunks {
         return columnIndex.nullPages().size() == pages
                 && columnIndex.minValues().size() == pages
                 && columnIndex.maxValues().size() == pages;
+    }
+
+    /**
+     * Whether the null pages of {@code columnIndex} agree with its null counts. A page marked as holding only nulls
+     * must have a null count above zero. If it does not, the mark cannot be trusted: the page may hold values, and
+     * skipping it would lose rows.
+     *
+     * <p>An index passes when it has no null counts, or when their number differs from the number of pages.
+     */
+    private static boolean nullPagesAgreeWithNullCounts(ColumnIndex columnIndex) {
+        List<Boolean> nullPages = columnIndex.nullPages();
+        Optional<List<Long>> perPage = columnIndex.nullCounts().filter(counts -> counts.size() == nullPages.size());
+        if (perPage.isEmpty()) {
+            return true;
+        }
+        List<Long> nullCounts = perPage.orElseThrow();
+        for (int page = 0; page < nullPages.size(); page++) {
+            if (Boolean.TRUE.equals(nullPages.get(page)) && nullCounts.get(page) <= 0L) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private boolean boundsOrdered(ColumnPath path) {

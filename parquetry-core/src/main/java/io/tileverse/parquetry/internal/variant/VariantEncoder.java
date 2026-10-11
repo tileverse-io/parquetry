@@ -31,7 +31,7 @@ import java.util.Map;
 import java.util.TreeSet;
 import java.util.UUID;
 
-import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.schema.UuidConverter;
 import io.tileverse.parquetry.variant.Variant;
 import io.tileverse.parquetry.variant.VariantBytes;
@@ -114,7 +114,7 @@ public final class VariantEncoder {
      * @param metadata the dictionary that already holds every object field name in the built value
      * @return the read-only value segment the {@link Variant} navigator reads back against {@code metadata}
      * @throws IllegalStateException if nothing was added, or if an object or array is still open
-     * @throws ParquetFormatException if an object field name is absent from {@code metadata}
+     * @throws MalformedFileException if an object field name is absent from {@code metadata}
      */
     public MemorySegment encodeValue(VariantMetadata metadata) {
         requireCompleteTopLevelValue();
@@ -138,7 +138,7 @@ public final class VariantEncoder {
         for (String key : keys) {
             int id = metadata.idOf(key);
             if (id < 0) {
-                throw new ParquetFormatException("variant field name is absent from the metadata dictionary: " + key);
+                throw new MalformedFileException("variant field name is absent from the metadata dictionary: " + key);
             }
             ids.put(key, id);
         }

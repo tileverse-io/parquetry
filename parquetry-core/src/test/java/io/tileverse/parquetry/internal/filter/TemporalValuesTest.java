@@ -18,6 +18,7 @@ package io.tileverse.parquetry.internal.filter;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 
@@ -90,6 +91,22 @@ class TemporalValuesTest {
         assertThat(TemporalValues.toEpochUnitIfInRange(year9999, TimeUnit.MICROS))
                 .hasValue(253_402_214_400_000_000L);
         assertThat(TemporalValues.toEpochUnitIfInRange(year9999, TimeUnit.NANOS))
+                .isEmpty();
+    }
+
+    @Test
+    void dateInRangeHasAnEpochDay() {
+        assertThat(TemporalValues.toEpochDayIfInRange(LocalDate.ofEpochDay(Integer.MAX_VALUE)))
+                .hasValue(Integer.MAX_VALUE);
+        assertThat(TemporalValues.toEpochDayIfInRange(LocalDate.ofEpochDay(Integer.MIN_VALUE)))
+                .hasValue(Integer.MIN_VALUE);
+    }
+
+    @Test
+    void dateOutOfRangeHasNoEpochDay() {
+        assertThat(TemporalValues.toEpochDayIfInRange(LocalDate.ofEpochDay(Integer.MAX_VALUE + 1L)))
+                .isEmpty();
+        assertThat(TemporalValues.toEpochDayIfInRange(LocalDate.ofEpochDay(Integer.MIN_VALUE - 1L)))
                 .isEmpty();
     }
 

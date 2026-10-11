@@ -58,6 +58,7 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.testsupport.FooterRewrite;
+import io.tileverse.parquetry.testsupport.RecordingByteRangeSource;
 
 /**
  * A page index or a bloom filter declared longer than the file holds is left unread, and a page index declaring more
@@ -65,7 +66,9 @@ import io.tileverse.parquetry.testsupport.FooterRewrite;
  * scan.
  *
  * <p>The file has 300 rows in three pages: an integer column holding the row number, with both page indexes and a bloom
- * filter. Each case edits the footer, the bloom filter header, or the first bytes of a page index, to declare 2 GB.
+ * filter. The cases over that file edit the footer, the bloom filter header, or the first bytes of a page index, to
+ * declare 2 GB. The case of a page index laid over the column chunk writes a file of its own: 30,000 rows, a chunk far
+ * longer than the bytes around it.
  */
 class OversizedSectionLengthTest {
 
@@ -73,6 +76,10 @@ class OversizedSectionLengthTest {
     private static final int ROWS = 300;
     private static final int ROWS_PER_PAGE = 100;
     private static final int TWO_GB = Integer.MAX_VALUE;
+    private static final int SQUARES = 30_000;
+    /** The first byte after the magic number, where the first column chunk begins. */
+    private static final long DATA_START = 4L;
+
     private static final int TWO_GB_OF_BLOCKS = Integer.MAX_VALUE - 31;
 
     @TempDir
@@ -143,6 +150,104 @@ class OversizedSectionLengthTest {
         declareABloomBitsetOf(TWO_GB_OF_BLOCKS, file);
 
         assertFiltersSelectTheirRows(file);
+    }
+
+    // A page index declared over the column chunk is left unread, and the filter still selects its rows.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("pageIndexesLaidOverTheColumnChunk")
+    void pageIndexOverTheChunkIsUnread(String name, UnaryOperator<ColumnChunk> edit) throws IOException {
+        Path squares = tempDir.resolve("squares.parquet");
+        writeSquares(squares);
+        Path file = FooterRewrite.rewrite(squares, tempDir.resolve("edited.parquet"), eachChunk(edit));
+        ColumnMetaData chunk = onlyChunk(file).metaData().orElseThrow();
+        long bloomStart = chunk.bloomFilterOffset().orElseThrow();
+        long bloomEnd = bloomStart + chunk.bloomFilterLength().orElseThrow();
+        long firstOfTheLastFifty = square(SQUARES - 50);
+        Predicate lastFifty = new Predicate.GtEq(V, new Value.LongVal(firstOfTheLastFifty));
+        ReadOptions withoutBloomFilter =
+                ReadOptions.builder().useBloomFilter(false).build();
+
+        try (RecordingByteRangeSource source = new RecordingByteRangeSource(ByteRangeSource.ofFile(file))) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            source.reset();
+
+            assertThat(reader.count(lastFifty, withoutBloomFilter)).isEqualTo(50L);
+            // The bloom filter is not consulted: its bytes are read only as part of the index laid over the file.
+            assertThat(source.readAnyByteIn(bloomStart, bloomEnd))
+                    .as("bytes read from the bloom filter")
+                    .isFalse();
+        }
+    }
+
+    /** Each index is declared from the first byte after the magic number to the end of the bloom filter. */
+    static Stream<Arguments> pageIndexesLaidOverTheColumnChunk() {
+        UnaryOperator<ColumnChunk> columnIndex =
+                chunk -> withColumnIndexAt(chunk, DATA_START, lengthToTheEndOfTheBloomFilter(chunk));
+        UnaryOperator<ColumnChunk> offsetIndex =
+                chunk -> withOffsetIndexAt(chunk, DATA_START, lengthToTheEndOfTheBloomFilter(chunk));
+        return Stream.of(
+                Arguments.of("a column index over the column chunk", columnIndex),
+                Arguments.of("an offset index over the column chunk", offsetIndex));
+    }
+
+    private static int lengthToTheEndOfTheBloomFilter(ColumnChunk chunk) {
+        ColumnMetaData meta = chunk.metaData().orElseThrow();
+        long bloomEnd = meta.bloomFilterOffset().orElseThrow()
+                + meta.bloomFilterLength().orElseThrow();
+        return Math.toIntExact(bloomEnd - DATA_START);
+    }
+
+    private static ColumnChunk withColumnIndexAt(ColumnChunk chunk, long offset, int length) {
+        return new ColumnChunk(
+                chunk.filePath(),
+                chunk.fileOffset(),
+                chunk.metaData(),
+                chunk.offsetIndexOffset(),
+                chunk.offsetIndexLength(),
+                OptionalLong.of(offset),
+                OptionalInt.of(length),
+                chunk.cryptoMetadata(),
+                chunk.encryptedColumnMetadata());
+    }
+
+    private static ColumnChunk withOffsetIndexAt(ColumnChunk chunk, long offset, int length) {
+        return new ColumnChunk(
+                chunk.filePath(),
+                chunk.fileOffset(),
+                chunk.metaData(),
+                OptionalLong.of(offset),
+                OptionalInt.of(length),
+                chunk.columnIndexOffset(),
+                chunk.columnIndexLength(),
+                chunk.cryptoMetadata(),
+                chunk.encryptedColumnMetadata());
+    }
+
+    /**
+     * Writes the squares of the row numbers in three pages, with a bloom filter: a column chunk far larger than the
+     * page indexes, the bloom filter and the footer together.
+     */
+    private void writeSquares(Path target) throws IOException {
+        SchemaNode.Primitive v = new SchemaNode.Primitive(
+                "v", Repetition.OPTIONAL, PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(v), Optional.empty(), -1);
+        WriteOptions options = WriteOptions.builder()
+                .tempDir(tempDir)
+                .pageValueLimit(SQUARES / 3)
+                .bloomFilter("v", new BloomFilterConfig(0.01, 1_000L))
+                .build();
+        try (OutputStream out = Files.newOutputStream(target);
+                ParquetFileWriter writer = ParquetFileWriter.create(out, new ParquetSchema(root), options)) {
+            ParquetRecordBatchBuilder appender = writer.appender();
+            for (long row = 0; row < SQUARES; row++) {
+                appender.setLong(V, square(row));
+                appender.endRow();
+            }
+        }
+    }
+
+    private static long square(long row) {
+        return row * row;
     }
 
     private static void assertFiltersSelectTheirRows(Path file) {

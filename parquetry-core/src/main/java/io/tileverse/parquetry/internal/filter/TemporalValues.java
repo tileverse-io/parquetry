@@ -16,9 +16,11 @@
 package io.tileverse.parquetry.internal.filter;
 
 import java.math.BigInteger;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
+import java.util.OptionalInt;
 import java.util.OptionalLong;
 
 import io.tileverse.parquetry.format.LogicalType.TimeUnit;
@@ -62,6 +64,16 @@ public final class TemporalValues {
         BigInteger count = wholeSeconds.add(subSecond);
         boolean fitsInt64 = count.bitLength() < Long.SIZE;
         return fitsInt64 ? OptionalLong.of(count.longValue()) : OptionalLong.empty();
+    }
+
+    /**
+     * The INT32 encoding of a date, its days since the epoch; empty for a date beyond the days of INT32. They reach
+     * about 5.8 million years to each side of the epoch.
+     */
+    public static OptionalInt toEpochDayIfInRange(LocalDate value) {
+        long days = value.toEpochDay();
+        boolean fitsInt32 = days == (int) days;
+        return fitsInt32 ? OptionalInt.of((int) days) : OptionalInt.empty();
     }
 
     private static ArithmeticException beyondInt64(LocalDateTime value, TimeUnit unit) {

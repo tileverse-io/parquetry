@@ -24,6 +24,8 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.cli.support.Fixtures;
 import io.tileverse.parquetry.filter.Predicate;
+import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 class FilterParserTest {
@@ -67,6 +69,32 @@ class FilterParserTest {
         assertThatThrownBy(() -> parse("nope = 1"))
                 .isInstanceOf(FilterParseException.class)
                 .hasMessageContaining("no such column");
+    }
+
+    @Test
+    void rejectsIntegerBeyondInt64() {
+        assertThatThrownBy(() -> parse("pop = 99999999999999999999"))
+                .isInstanceOf(FilterParseException.class)
+                .hasMessageContaining("99999999999999999999");
+        assertThatThrownBy(() -> parse("pop > -9223372036854775809"))
+                .isInstanceOf(FilterParseException.class)
+                .hasMessageContaining("9223372036854775809");
+    }
+
+    @Test
+    void parsesTheBoundsOfInt64() {
+        Predicate.Eq smallest = (Predicate.Eq) parse("pop = -9223372036854775808");
+        Predicate.Eq largest = (Predicate.Eq) parse("pop = 9223372036854775807");
+
+        assertThat(smallest.v()).isEqualTo(new Value.LongVal(Long.MIN_VALUE));
+        assertThat(largest.v()).isEqualTo(new Value.LongVal(Long.MAX_VALUE));
+    }
+
+    @Test
+    void parsesHugeIntegerAsDouble() {
+        Predicate parsed = FilterParser.parse("f64 > 99999999999999999999", Fixtures.numericKindsSchema(), Set.of());
+
+        assertThat(parsed).isEqualTo(new Predicate.Gt(ColumnPath.of("f64"), new Value.DoubleVal(1.0e20)));
     }
 
     @Test

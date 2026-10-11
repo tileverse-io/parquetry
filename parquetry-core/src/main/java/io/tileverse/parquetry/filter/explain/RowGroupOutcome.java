@@ -19,7 +19,7 @@ package io.tileverse.parquetry.filter.explain;
  * The end-of-pipeline outcome for a single row group:
  *
  * <ul>
- *   <li>{@link #ELIMINATED} - no I/O for this row group; some tier proved no row can match.
+ *   <li>{@link #ELIMINATED} - no I/O for this row group: a tier proved no row can match, or the row group has no rows.
  *   <li>{@link #PARTIAL} - a strict subset of rows survives; record-level evaluation still runs.
  *   <li>{@link #FULL} - every row survives the a-priori tiers; record-level evaluation still applies.
  *   <li>{@link #MATCHED} - statistics proved every row matches the predicate; no decode and no record-level evaluation

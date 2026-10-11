@@ -76,7 +76,8 @@ Notes:
 - **Query geometry**: `ST_GeomFromText('WKT')`, `ST_MakeEnvelope(minx, miny, maxx, maxy)`
 
 The left side of a comparison is a column; the right side is a literal (number, `'string'`, or `true`/`false`).
-A column named as a SQL keyword, or with a space, goes in double quotes: `"from" > 1`, `"my column" = 2`.
+A column named as a SQL keyword, or with a space, goes in double quotes: `"from" > 1`, `"my column" = 2`. A double
+quote inside the name is written twice: `"a""b" = 4`.
 `ST_Contains`/`ST_Within` and `ST_Covers`/`ST_CoveredBy` honor argument order. Spatial tests run in the file's native
 CRS; the query geometry is assumed to already be in that CRS (no reprojection). An unsupported predicate fails with
 exit code 5 and a message pointing back at `--filter-help`.
