@@ -79,7 +79,7 @@
     <maven.compiler.target>25</maven.compiler.target>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-    <tileverse.version>2.1-SNAPSHOT</tileverse.version>
+    <tileverse.version>2.1-RC</tileverse.version>
     <caffeine.version>3.2.3</caffeine.version>
     <jackson.version>3.2.2</jackson.version>
     <opentelemetry.version>1.46.0</opentelemetry.version>
