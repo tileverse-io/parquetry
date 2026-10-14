@@ -81,7 +81,7 @@
 
     <tileverse.version>2.1-SNAPSHOT</tileverse.version>
     <caffeine.version>3.2.3</caffeine.version>
-    <jackson.version>3.2.2</jackson.version>
+    <jackson.version>3.2.3</jackson.version>
     <opentelemetry.version>1.46.0</opentelemetry.version>
     <aircompressor.version>3.6</aircompressor.version>
     <brotli-dec.version>0.1.2</brotli-dec.version>
