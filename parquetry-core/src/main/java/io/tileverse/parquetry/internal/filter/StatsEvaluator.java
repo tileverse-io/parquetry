@@ -194,10 +194,10 @@ public final class StatsEvaluator {
 
     /**
      * An existential {@code ANY} over a repeated leaf may only eliminate the whole row group: if no element anywhere in
-     * the chunk matches the inner comparison then no row matches. It must never report {@code PassedAll}, because a row
-     * with an empty or all-null list has zero elements and therefore fails {@code ANY} even when every present element
-     * matches; such rows still need record-level confirmation. {@code ALL} and {@code ONE} aggregate across rows and
-     * cannot be decided from chunk statistics at all.
+     * the chunk matches the inner comparison then no row matches. It must never report {@code PassedAll}: a row with an
+     * empty list has no element and fails {@code ANY}, and a null element matches no comparison. Such rows still need
+     * record-level confirmation. {@code ALL} and {@code ONE} aggregate across rows and cannot be decided from chunk
+     * statistics at all.
      */
     private static PruningDecision evaluateQuantified(
             MatchAction match, Predicate leaf, TypedColumns columns, long rowCount) {

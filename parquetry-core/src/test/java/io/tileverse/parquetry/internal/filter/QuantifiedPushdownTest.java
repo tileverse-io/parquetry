@@ -40,9 +40,9 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
  * Verifies how the pushdown tiers handle a {@link Predicate.Quantified} over a physical repeated leaf. The contract is
  * the same for every tier: an existential {@link MatchAction#ANY} may only eliminate the whole row group (no element
  * anywhere in the chunk matches implies no row matches), but must never report a positive match such as
- * {@code PassedAll}. A row with an empty or all-null list has zero elements and therefore fails {@code ANY} even when
- * every present element matches; such rows still need record-level confirmation. {@link MatchAction#ALL} and
- * {@link MatchAction#ONE} can never prune because chunk-level stats aggregate across rows.
+ * {@code PassedAll}. A row with an empty list has no element and fails {@code ANY}, and a null element matches no
+ * comparison: such rows still need record-level confirmation. {@link MatchAction#ALL} and {@link MatchAction#ONE} can
+ * never prune because chunk-level stats aggregate across rows.
  *
  * <p>The reader is flat-only and cannot write a real {@code LIST<STRUCT>} file. The tiers are driven through stubbed
  * lookups keyed by the physical leaf path the assembler would expose.

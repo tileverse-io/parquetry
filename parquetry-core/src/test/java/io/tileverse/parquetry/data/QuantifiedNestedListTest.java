@@ -52,7 +52,8 @@ import io.tileverse.parquetry.testsupport.CorpusFixtures;
 /**
  * A quantified comparison over a list nested in lists tests the values of the innermost lists of a row, at any depth.
  * An empty or null inner list holds no value, and neither does a null struct holding the inner list. A null value, a
- * null struct and a struct without the compared field are elements of an innermost list matching no comparison.
+ * null struct and a struct without the compared field are elements of an innermost list matching no comparison. They
+ * match {@code IS NULL}.
  *
  * <p>The file has 8 rows in two row groups and four columns: a list of lists of integers, a list of lists of structs
  * with an integer field, a list of lists of lists of integers, and a list of structs holding an integer and a list of
@@ -176,6 +177,9 @@ class QuantifiedNestedListTest {
                 Arguments.of("ONE matrix = 5", one(matrixIs5), 2L),
                 Arguments.of("NOT ANY matrix = 5", new Predicate.Not(any(matrixIs5)), 5L),
                 Arguments.of("ANY matrix IS NOT NULL", any(new Predicate.IsNotNull(MATRIX_VALUE)), 6L),
+                Arguments.of("ANY matrix IS NULL", any(new Predicate.IsNull(MATRIX_VALUE)), 1L),
+                Arguments.of("ONE matrix IS NULL", one(new Predicate.IsNull(MATRIX_VALUE)), 1L),
+                Arguments.of("ANY code IS NULL", any(new Predicate.IsNull(GROUP_CODE)), 2L),
                 Arguments.of("ANY code = 5", any(new Predicate.Eq(GROUP_CODE, intValue(5))), 2L),
                 Arguments.of("ANY code = 7", any(new Predicate.Eq(GROUP_CODE, intValue(7))), 2L),
                 Arguments.of("ALL code > 0", all(new Predicate.Gt(GROUP_CODE, intValue(0))), 6L),

@@ -48,8 +48,9 @@ import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Pins the null-element semantics of {@link Predicate.Quantified} at record level. A null element of a repeated leaf is
- * a present, non-matching member of the universe: it never makes ANY true, and it counts against ALL and ONE the same
- * way any non-matching element does. This mirrors GeoTools and SQL {@code = ALL} / {@code = ANY} behavior.
+ * a present member of the universe. It matches no comparison: it never makes ANY of a comparison true, and it counts
+ * against ALL and ONE the same way any non-matching element does. This mirrors GeoTools and SQL {@code = ALL} /
+ * {@code = ANY} behavior. As in SQL, a null element matches {@code IS NULL}.
  */
 class QuantifiedNullSemanticsTest {
 
@@ -132,6 +133,56 @@ class QuantifiedNullSemanticsTest {
         assertThat(evaluateStruct(MatchAction.ONE, "Berlin", row))
                 .as("exactly one non-null leaf matches; ONE is true")
                 .isTrue();
+    }
+
+    @Test
+    void nullElementMatchesIsNull() {
+        Predicate isNull = new Predicate.IsNull(LEAF);
+        RecordLevelEvaluator.RecordAccessor oneNull = universeRow("a", null);
+        RecordLevelEvaluator.RecordAccessor onlyNulls = universeRow(null, null);
+
+        assertThat(holds(MatchAction.ANY, isNull, oneNull)).as("ANY").isTrue();
+        assertThat(holds(MatchAction.ONE, isNull, oneNull)).as("ONE").isTrue();
+        assertThat(holds(MatchAction.ALL, isNull, oneNull))
+                .as("ALL with a value")
+                .isFalse();
+        assertThat(holds(MatchAction.ALL, isNull, onlyNulls)).as("ALL of nulls").isTrue();
+        assertThat(holds(MatchAction.ONE, isNull, onlyNulls))
+                .as("ONE of two nulls")
+                .isFalse();
+        assertThat(holds(MatchAction.ANY, new Predicate.IsNotNull(LEAF), onlyNulls))
+                .as("ANY IS NOT NULL of nulls")
+                .isFalse();
+    }
+
+    // A null element is tested in the three-valued logic of SQL: IS NULL holds, a comparison is unknown.
+    @Test
+    void compoundLeafOnNullElements() {
+        Predicate isNull = new Predicate.IsNull(LEAF);
+        Predicate isA = new Predicate.Eq(LEAF, new Value.StringVal("a"));
+        Predicate isNullOrA = new Predicate.Or(List.of(isNull, isA));
+        Predicate isNullAndA = new Predicate.And(List.of(isNull, isA));
+        Predicate notValueA = new Predicate.Not(new Predicate.And(List.of(new Predicate.IsNotNull(LEAF), isA)));
+
+        assertThat(holds(MatchAction.ANY, isNullOrA, universeRow("b", null)))
+                .as("ANY null OR a")
+                .isTrue();
+        assertThat(holds(MatchAction.ALL, isNullOrA, universeRow("a", null)))
+                .as("ALL null OR a")
+                .isTrue();
+        assertThat(holds(MatchAction.ANY, isNullAndA, universeRow("b", null)))
+                .as("ANY null AND a")
+                .isFalse();
+        assertThat(holds(MatchAction.ANY, notValueA, universeRow("a", null)))
+                .as("ANY NOT a value a")
+                .isTrue();
+        assertThat(holds(MatchAction.ANY, new Predicate.Not(isA), universeRow("a", null)))
+                .as("ANY NOT a")
+                .isFalse();
+    }
+
+    private static boolean holds(MatchAction match, Predicate leaf, RecordLevelEvaluator.RecordAccessor row) {
+        return RecordLevelEvaluator.test(new Predicate.Quantified(match, leaf), row);
     }
 
     private static boolean evaluateStruct(MatchAction match, String wanted, ParquetRecord row) {
