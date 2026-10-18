@@ -24,6 +24,7 @@ import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.filter.Bbox;
+import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
@@ -35,6 +36,7 @@ class FilePrunerTest {
     private static final ColumnPath ID = ColumnPath.of("id");
     private static final ColumnPath GEOM = ColumnPath.of("geom");
     private static final ColumnPath NAME = ColumnPath.of("name");
+    private static final ColumnPath TAG = ColumnPath.of("tags", "list", "element");
 
     private static BoundingBox box(double xmin, double ymin, double xmax, double ymax) {
         return new BoundingBox(
@@ -61,7 +63,8 @@ class FilePrunerTest {
                         new ColumnStatistics(
                                 Optional.of(new Value.LongVal(0)),
                                 Optional.of(new Value.LongVal(10)),
-                                OptionalLong.of(0)))
+                                OptionalLong.of(0),
+                                OptionalLong.of(100)))
                 .build();
         Predicate p = new Predicate.Gt(ID, new Value.LongVal(50));
         assertThat(eliminated(FilePruner.evaluate(p, stats))).isTrue();
@@ -76,7 +79,8 @@ class FilePrunerTest {
                         new ColumnStatistics(
                                 Optional.of(new Value.LongVal(0)),
                                 Optional.of(new Value.LongVal(100)),
-                                OptionalLong.of(0)))
+                                OptionalLong.of(0),
+                                OptionalLong.of(100)))
                 .build();
         Predicate p = new Predicate.Gt(ID, new Value.LongVal(50));
         assertThat(eliminated(FilePruner.evaluate(p, stats))).isFalse();
@@ -111,8 +115,39 @@ class FilePrunerTest {
                         new ColumnStatistics(
                                 Optional.of(new Value.StringVal("d")),
                                 Optional.of(new Value.StringVal("m")),
-                                OptionalLong.of(0)))
+                                OptionalLong.of(0),
+                                OptionalLong.of(100)))
                 .build();
+    }
+
+    // A list column holds more values than records. A null count equal to the record count leaves values in the file.
+    @Test
+    void anyIsNotNullKeepsListValues() {
+        FileStats stats = nullCountStats(TAG, OptionalLong.of(300));
+        Predicate anyTag = new Predicate.Quantified(MatchAction.ANY, new Predicate.IsNotNull(TAG));
+        assertThat(eliminated(FilePruner.evaluate(anyTag, stats))).isFalse();
+    }
+
+    @Test
+    void isNotNullDropsAFileOfNulls() {
+        FileStats stats = nullCountStats(ID, OptionalLong.of(100));
+        assertThat(eliminated(FilePruner.evaluate(new Predicate.IsNotNull(ID), stats)))
+                .isTrue();
+    }
+
+    // Without a value count, nothing proves that the column holds only nulls.
+    @Test
+    void isNotNullNeedsTheValueCount() {
+        FileStats stats = nullCountStats(ID, OptionalLong.empty());
+        assertThat(eliminated(FilePruner.evaluate(new Predicate.IsNotNull(ID), stats)))
+                .isFalse();
+    }
+
+    /** A file of 100 records. Its {@code column} counts 100 nulls and {@code valueCount} values. */
+    private static FileStats nullCountStats(ColumnPath column, OptionalLong valueCount) {
+        ColumnStatistics nulls =
+                new ColumnStatistics(Optional.empty(), Optional.empty(), OptionalLong.of(100), valueCount);
+        return FileStats.builder().recordCount(100).column(column, nulls).build();
     }
 
     @Test

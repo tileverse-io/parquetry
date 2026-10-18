@@ -19,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -46,6 +47,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.CorpusFixtures;
 
 /**
  * A quantified comparison over a list nested in lists tests the values of the innermost lists of a row, at any depth.
@@ -55,6 +57,11 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * <p>The file has 8 rows in two row groups and four columns: a list of lists of integers, a list of lists of structs
  * with an integer field, a list of lists of lists of integers, and a list of structs holding an integer and a list of
  * integers.
+ *
+ * <p>DuckDB 1.5.6 wrote {@code duckdb-fixtures/null-struct-in-list.parquet} from {@code SELECT 1 AS id, [{'code': 1},
+ * NULL]::STRUCT(code INTEGER)[] AS v}. Its {@code code} chunk holds 2 values and records a null count of 2. It wrote
+ * {@code null-struct-in-list-without-bounds.parquet} from the same row with a {@code HUGEINT} code, stored as a DOUBLE
+ * chunk without bounds.
  */
 class QuantifiedNestedListTest {
 
@@ -152,20 +159,7 @@ class QuantifiedNestedListTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("comparisonsOverNestedLists")
     void quantifiedComparisonTestsTheValuesOfTheInnermostLists(String name, Predicate predicate, long expected) {
-        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            ParquetFileReader reader = ParquetFileReader.open(source);
-
-            assertThat(reader.count(predicate, ReadOptions.DEFAULTS))
-                    .as("count")
-                    .isEqualTo(expected);
-            assertThat(reader.count(predicate, METADATA_PRUNING_OFF))
-                    .as("count without pruning")
-                    .isEqualTo(expected);
-            assertThat(rowsRead(reader, predicate)).as("rows read").isEqualTo(expected);
-            assertThat(rowsReadInBatches(reader, predicate))
-                    .as("rows read in batches")
-                    .isEqualTo(expected);
-        }
+        assertRowsMatching(file, predicate, expected);
     }
 
     static Stream<Arguments> comparisonsOverNestedLists() {
@@ -181,6 +175,7 @@ class QuantifiedNestedListTest {
                 Arguments.of("ONE matrix = 4", one(new Predicate.Eq(MATRIX_VALUE, intValue(4))), 0L),
                 Arguments.of("ONE matrix = 5", one(matrixIs5), 2L),
                 Arguments.of("NOT ANY matrix = 5", new Predicate.Not(any(matrixIs5)), 5L),
+                Arguments.of("ANY matrix IS NOT NULL", any(new Predicate.IsNotNull(MATRIX_VALUE)), 6L),
                 Arguments.of("ANY code = 5", any(new Predicate.Eq(GROUP_CODE, intValue(5))), 2L),
                 Arguments.of("ANY code = 7", any(new Predicate.Eq(GROUP_CODE, intValue(7))), 2L),
                 Arguments.of("ALL code > 0", all(new Predicate.Gt(GROUP_CODE, intValue(0))), 6L),
@@ -194,6 +189,52 @@ class QuantifiedNestedListTest {
                 Arguments.of("ALL tag > 0", all(new Predicate.Gt(EVENT_TAG, intValue(0))), 7L),
                 Arguments.of("ONE tag = 5", one(new Predicate.Eq(EVENT_TAG, intValue(5))), 1L),
                 Arguments.of("NOT ANY tag = 4", new Predicate.Not(any(new Predicate.Eq(EVENT_TAG, intValue(4)))), 6L));
+    }
+
+    // Null counts equal to the rows or to the values, in chunks holding values. parquet-mr counts empty and null lists
+    // as nulls, and DuckDB 1.5 counts a null struct of a list twice.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("listsWithTiedNullCounts")
+    void isNotNullWithTiedNullCount(Path parquetFile, Predicate predicate, long expected) {
+        assertRowsMatching(parquetFile, predicate, expected);
+    }
+
+    static Stream<Arguments> listsWithTiedNullCounts() throws URISyntaxException {
+        Path corpus = CorpusFixtures.parquetTestingData();
+        ColumnPath nestedString = ColumnPath.of("a", "list", "element", "list", "element", "list", "element");
+        ColumnPath nestedInt = ColumnPath.of("int_array_array", "list", "element", "list", "element");
+        ColumnPath structCode = ColumnPath.of("v", "list", "element", "code");
+        Path duckdbFile = duckdbFixture("null-struct-in-list.parquet");
+        Path duckdbFileWithoutBounds = duckdbFixture("null-struct-in-list-without-bounds.parquet");
+        return Stream.of(
+                Arguments.of(
+                        corpus.resolve("nested_lists.snappy.parquet"), any(new Predicate.IsNotNull(nestedString)), 3L),
+                Arguments.of(corpus.resolve("nonnullable.impala.parquet"), any(new Predicate.IsNotNull(nestedInt)), 1L),
+                Arguments.of(duckdbFile, any(new Predicate.IsNotNull(structCode)), 1L),
+                Arguments.of(duckdbFileWithoutBounds, any(new Predicate.IsNotNull(structCode)), 1L));
+    }
+
+    private static Path duckdbFixture(String name) throws URISyntaxException {
+        return Path.of(QuantifiedNestedListTest.class
+                .getResource("/duckdb-fixtures/" + name)
+                .toURI());
+    }
+
+    private static void assertRowsMatching(Path parquetFile, Predicate predicate, long expected) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(parquetFile)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+
+            assertThat(reader.count(predicate, ReadOptions.DEFAULTS))
+                    .as("count")
+                    .isEqualTo(expected);
+            assertThat(reader.count(predicate, METADATA_PRUNING_OFF))
+                    .as("count without pruning")
+                    .isEqualTo(expected);
+            assertThat(rowsRead(reader, predicate)).as("rows read").isEqualTo(expected);
+            assertThat(rowsReadInBatches(reader, predicate))
+                    .as("rows read in batches")
+                    .isEqualTo(expected);
+        }
     }
 
     private static Value intValue(int value) {

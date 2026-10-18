@@ -42,6 +42,9 @@ import io.tileverse.parquetry.schema.SchemaNode;
 
 class FilterPipelineToggleTest {
 
+    /** The values of a column in a row group of 1000 rows: one per row. */
+    private static final long VALUE_COUNT = 1000L;
+
     @Test
     void statsFilterDisabledSkipsEvaluatorAndReportsNotApplied() {
         ExplainPlan plan = evaluate(eliminatingInputs(), new FilterPipeline.FilterToggles(false, true));
@@ -121,6 +124,7 @@ class FilterPipelineToggleTest {
                 Optional.of(encodeInt(min)),
                 Optional.of(encodeInt(max)),
                 OptionalLong.of(0),
+                VALUE_COUNT,
                 Optional.empty(),
                 NaNCells.POSSIBLE);
     }

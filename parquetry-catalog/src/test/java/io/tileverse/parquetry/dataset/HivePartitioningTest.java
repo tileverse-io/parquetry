@@ -62,13 +62,15 @@ class HivePartitioningTest {
                         new ColumnStatistics(
                                 Optional.of(new Value.IntVal(2024)),
                                 Optional.of(new Value.IntVal(2024)),
-                                OptionalLong.of(0)))
+                                OptionalLong.of(0),
+                                OptionalLong.of(100)))
                 .containsEntry(
                         ColumnPath.of("city"),
                         new ColumnStatistics(
                                 Optional.of(new Value.StringVal("rome")),
                                 Optional.of(new Value.StringVal("rome")),
-                                OptionalLong.of(0)));
+                                OptionalLong.of(0),
+                                OptionalLong.of(100)));
         assertThat(stats.recordCount()).isEqualTo(100L);
     }
 
@@ -89,7 +91,8 @@ class HivePartitioningTest {
                         new ColumnStatistics(
                                 Optional.of(new Value.LongVal(2024L)),
                                 Optional.of(new Value.LongVal(2024L)),
-                                OptionalLong.of(0)));
+                                OptionalLong.of(0),
+                                OptionalLong.of(5)));
         assertThat(binding.constantsFor(Map.of("year", "2024")))
                 .containsExactly(new ConstantColumn(ColumnPath.of("year"), new Value.LongVal(2024L)));
     }
@@ -120,7 +123,8 @@ class HivePartitioningTest {
         assertThat(stats.columns())
                 .containsEntry(
                         ColumnPath.of("dt"),
-                        new ColumnStatistics(Optional.of(expected), Optional.of(expected), OptionalLong.of(0)));
+                        new ColumnStatistics(
+                                Optional.of(expected), Optional.of(expected), OptionalLong.of(0), OptionalLong.of(7)));
     }
 
     @Test

@@ -211,12 +211,12 @@ public final class HivePartitioning {
     public FileStats fileStats(Map<String, String> partitionValues, long recordCount) {
         FileStats.Builder builder = FileStats.builder().recordCount(recordCount);
         for (Map.Entry<String, String> entry : partitionValues.entrySet()) {
-            addColumnStat(builder, entry.getKey(), entry.getValue());
+            addColumnStat(builder, entry.getKey(), entry.getValue(), recordCount);
         }
         return builder.build();
     }
 
-    private void addColumnStat(FileStats.Builder builder, String key, String rawValue) {
+    private void addColumnStat(FileStats.Builder builder, String key, String rawValue, long recordCount) {
         BoundColumn column = boundColumns.get(key);
         if (column == null) {
             return;
@@ -226,7 +226,8 @@ public final class HivePartitioning {
                 : PartitionValueParser.parse(rawValue, column.kind(), column.logicalType());
         value.ifPresent(parsed -> builder.column(
                 ColumnPath.of(key),
-                new ColumnStatistics(Optional.of(parsed), Optional.of(parsed), OptionalLong.of(0))));
+                new ColumnStatistics(
+                        Optional.of(parsed), Optional.of(parsed), OptionalLong.of(0), OptionalLong.of(recordCount))));
     }
 
     /** The constant output columns for the synthetic keys present in {@code partitionValues}, in key order. */

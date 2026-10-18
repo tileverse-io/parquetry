@@ -187,6 +187,7 @@ class IcebergFileStatsTest {
         assertThat(categoryStats.min()).contains(new Value.StringVal("b"));
         assertThat(categoryStats.max()).contains(new Value.StringVal("b"));
         assertThat(categoryStats.nullCount()).hasValue(0L);
+        assertThat(categoryStats.valueCount()).hasValue(100L);
     }
 
     private void assertGeometryBounds(FileStats stats) {
@@ -207,6 +208,7 @@ class IcebergFileStatsTest {
         assertThat(column).isNotNull();
         assertThat(column.min()).contains(new Value.LongVal(VAL_LOWER));
         assertThat(column.max()).contains(new Value.LongVal(VAL_UPPER));
+        assertThat(column.valueCount()).as("one value per record").hasValue(stats.recordCount());
     }
 
     private static MemorySegment leLong(long value) {

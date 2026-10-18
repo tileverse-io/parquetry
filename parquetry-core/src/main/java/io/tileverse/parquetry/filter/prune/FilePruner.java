@@ -21,6 +21,7 @@ import java.util.Optional;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
+import io.tileverse.parquetry.internal.filter.NaNCells;
 import io.tileverse.parquetry.internal.filter.PredicateNormalizer;
 import io.tileverse.parquetry.internal.filter.SpatialBoundsEvaluator;
 import io.tileverse.parquetry.internal.filter.StatsEvaluator;
@@ -61,7 +62,8 @@ public final class FilePruner {
 
     private static StatsEvaluator.ColumnSummary summary(ColumnStatistics c) {
         PrimitiveKind kind = c.min().or(c::max).map(FilePruner::kindOf).orElse(PrimitiveKind.BYTE_ARRAY);
-        return new StatsEvaluator.ColumnSummary(kind, c.min(), c.max(), c.nullCount());
+        return new StatsEvaluator.ColumnSummary(
+                kind, c.min(), c.max(), c.nullCount(), c.valueCount(), NaNCells.POSSIBLE);
     }
 
     private static PrimitiveKind kindOf(Value value) {

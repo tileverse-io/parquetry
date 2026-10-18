@@ -174,6 +174,7 @@ class StatsEvaluatorTest {
                 Optional.empty(),
                 Optional.empty(),
                 OptionalLong.of(0L),
+                ROW_COUNT,
                 Optional.empty(),
                 NaNCells.POSSIBLE);
         FilterPipeline.ColumnStatsLookup cols = single("year", noBounds);
@@ -486,6 +487,7 @@ class StatsEvaluatorTest {
                 Optional.empty(),
                 Optional.empty(),
                 OptionalLong.of(0L),
+                ROW_COUNT,
                 Optional.of(new LogicalType.Float16Type()),
                 NaNCells.ALL);
         FilterPipeline.ColumnStatsLookup cols = single("half", onlyNaNHalves);
@@ -886,6 +888,7 @@ class StatsEvaluatorTest {
                 Optional.empty(),
                 Optional.empty(),
                 OptionalLong.of(nullCount),
+                ROW_COUNT,
                 Optional.empty(),
                 NaNCells.ALL);
     }
@@ -896,6 +899,7 @@ class StatsEvaluatorTest {
                 Optional.of(encodeDouble(min)),
                 Optional.of(encodeDouble(max)),
                 OptionalLong.of(nullCount),
+                ROW_COUNT,
                 Optional.empty(),
                 nans);
     }
@@ -912,6 +916,7 @@ class StatsEvaluatorTest {
                 Optional.of(min),
                 Optional.of(max),
                 OptionalLong.of(nullCount),
+                ROW_COUNT,
                 Optional.empty(),
                 NaNCells.POSSIBLE);
     }
@@ -924,6 +929,7 @@ class StatsEvaluatorTest {
                 Optional.of(min),
                 Optional.of(max),
                 OptionalLong.of(0L),
+                ROW_COUNT,
                 Optional.of(logicalType),
                 NaNCells.POSSIBLE);
     }
