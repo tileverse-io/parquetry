@@ -154,7 +154,8 @@ public sealed interface ParquetRecord permits DefaultParquetRecord, DetachedParq
     /**
      * The size of the repeated leaf's universe at {@code leafPath}, INCLUDING null elements. Unlike
      * {@link #multiValue(ColumnPath)}, which drops nulls because callers read element values, this counts every present
-     * element. A quantified ALL/ONE filter treats a null element as a present, non-matching member of the universe.
+     * element. A quantified filter treats a null element as a present member of the universe, matching {@code IS NULL}
+     * and no comparison.
      */
     int multiValueSize(ColumnPath leafPath);
 

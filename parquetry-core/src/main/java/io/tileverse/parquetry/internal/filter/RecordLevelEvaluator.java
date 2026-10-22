@@ -59,9 +59,10 @@ public final class RecordLevelEvaluator {
         List<Object> multiValue(ColumnPath leafPath);
 
         /**
-         * The size of the repeated leaf's universe INCLUDING null elements. A null element is a present, non-matching
-         * member of the universe under ALL and ONE. The default falls back to the null-free count from
-         * {@link #multiValue(ColumnPath)}; accessors that can see null elements override this to include them.
+         * The size of the repeated leaf's universe INCLUDING null elements. A null element is a present member of the
+         * universe under ANY, ALL and ONE: it matches {@code IS NULL} and no comparison. The default falls back to the
+         * null-free count from {@link #multiValue(ColumnPath)}; accessors that can see null elements override this to
+         * include them.
          */
         default int multiValueSize(ColumnPath leafPath) {
             return multiValue(leafPath).size();
@@ -122,7 +123,7 @@ public final class RecordLevelEvaluator {
         ColumnPath leafColumn = Predicate.columns(leaf).iterator().next();
         List<Object> elements = row.multiValue(leafColumn);
         int universeSize = row.multiValueSize(leafColumn);
-        int matches = 0;
+        int matches = matchingNullElements(leaf, universeSize - elements.size());
         for (Object element : elements) {
             if (test(leaf, singletonAccessor(leafColumn, element))) {
                 matches++;
@@ -133,6 +134,75 @@ public final class RecordLevelEvaluator {
             case ALL -> matches == universeSize;
             case ONE -> matches == 1;
         };
+    }
+
+    /**
+     * The null elements matching {@code leaf}: all of them or none. A null element is tested in the three-valued logic
+     * of SQL: it matches {@code IS NULL}, it fails {@code IS NOT NULL}, and a comparison with it is unknown.
+     */
+    private static int matchingNullElements(Predicate leaf, int nullElements) {
+        if (truthForNull(leaf) == Truth.TRUE) {
+            return nullElements;
+        }
+        return 0;
+    }
+
+    /** The truth of {@code leaf} for a null element. An unknown truth matches no element. */
+    private static Truth truthForNull(Predicate leaf) {
+        return switch (leaf) {
+            case Predicate.IsNull _ -> Truth.TRUE;
+            case Predicate.IsNotNull _ -> Truth.FALSE;
+            case Predicate.Always(boolean value) -> Truth.of(value);
+            case Predicate.Not(Predicate child) -> truthForNull(child).negated();
+            case Predicate.And(List<Predicate> children) -> Truth.allOf(truthsForNull(children));
+            case Predicate.Or(List<Predicate> children) -> Truth.anyOf(truthsForNull(children));
+            default -> Truth.UNKNOWN;
+        };
+    }
+
+    private static List<Truth> truthsForNull(List<Predicate> children) {
+        return children.stream().map(RecordLevelEvaluator::truthForNull).toList();
+    }
+
+    /** A truth value of SQL. A comparison with a null is {@link #UNKNOWN}. */
+    private enum Truth {
+        TRUE,
+        FALSE,
+        UNKNOWN;
+
+        static Truth of(boolean value) {
+            return value ? TRUE : FALSE;
+        }
+
+        Truth negated() {
+            return switch (this) {
+                case TRUE -> FALSE;
+                case FALSE -> TRUE;
+                case UNKNOWN -> UNKNOWN;
+            };
+        }
+
+        /** FALSE when one truth is FALSE, otherwise UNKNOWN when one is UNKNOWN, otherwise TRUE. */
+        static Truth allOf(List<Truth> truths) {
+            if (truths.contains(FALSE)) {
+                return FALSE;
+            }
+            if (truths.contains(UNKNOWN)) {
+                return UNKNOWN;
+            }
+            return TRUE;
+        }
+
+        /** TRUE when one truth is TRUE, otherwise UNKNOWN when one is UNKNOWN, otherwise FALSE. */
+        static Truth anyOf(List<Truth> truths) {
+            if (truths.contains(TRUE)) {
+                return TRUE;
+            }
+            if (truths.contains(UNKNOWN)) {
+                return UNKNOWN;
+            }
+            return FALSE;
+        }
     }
 
     private static RecordAccessor singletonAccessor(ColumnPath leafColumn, Object element) {

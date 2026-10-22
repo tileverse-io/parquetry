@@ -49,8 +49,8 @@ final class MultiValues {
 
     /**
      * The size of the repeated leaf's universe INCLUDING null elements. {@link #flatten} drops nulls because callers
-     * read element values; quantified ALL/ONE evaluation needs the full count, where a null is a present non-matching
-     * member.
+     * read element values. Quantified evaluation needs the full count: a null element is a present member, matching
+     * {@code IS NULL} and no comparison.
      */
     static int flattenSize(ParquetRecord rec, ColumnPath leafPath) {
         int[] count = {0};
@@ -168,7 +168,7 @@ final class MultiValues {
         return boundary != null && !isMapWrapper(boundary.repeatedGroup());
     }
 
-    /** A null struct element is a present list slot whose tail leaf has no value: one non-matching member. */
+    /** A null struct element is a present list slot without a value at its tail leaf: one null member. */
     private static void countNullStructElement(int[] count) {
         count[0]++;
     }

@@ -22,14 +22,19 @@ import java.util.OptionalLong;
 import io.tileverse.parquetry.filter.Value;
 
 /**
- * Typed statistics for one column of a file: decoded min and max values and the null count, each optional. A column
- * with no min/max can still prune null-only predicates through its null count.
+ * Typed statistics for one column of a file: decoded min and max values, the null count and the value count, each
+ * optional. A column with no min/max can still prune null checks through its null and value counts.
+ *
+ * <p>The value count includes the nulls. For a column nested in a list it counts one value per element and one per
+ * empty or null list: at least one per record. A column holds only nulls when its null count equals its value count.
  */
-public record ColumnStatistics(Optional<Value> min, Optional<Value> max, OptionalLong nullCount) {
+public record ColumnStatistics(
+        Optional<Value> min, Optional<Value> max, OptionalLong nullCount, OptionalLong valueCount) {
 
     public ColumnStatistics {
         Objects.requireNonNull(min, "min");
         Objects.requireNonNull(max, "max");
         Objects.requireNonNull(nullCount, "nullCount");
+        Objects.requireNonNull(valueCount, "valueCount");
     }
 }

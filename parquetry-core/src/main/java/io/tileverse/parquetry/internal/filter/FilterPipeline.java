@@ -110,7 +110,8 @@ public final class FilterPipeline {
 
     /**
      * Per-column input to the statistics-tier filter evaluator: the column's primitive kind, the chunk's minimum and
-     * maximum bounds, how many of its values are null, an optional logical type annotation (present when the file
+     * maximum bounds, how many of its values are null, how many values it holds with the nulls included (for a repeated
+     * leaf, one per element and one per empty or null list), an optional logical type annotation (present when the file
      * schema annotates the column, absent for plain physical columns), and what the NaN count recorded by the writer
      * tells about the NaN cells of the chunk ({@link NaNCells#POSSIBLE} without a recorded count). The kind tells the
      * evaluator how to decode the bound bytes, and the logical type drives typed decoding (e.g. INT64 annotated as a
@@ -125,6 +126,7 @@ public final class FilterPipeline {
             Optional<MemorySegment> minValue,
             Optional<MemorySegment> maxValue,
             OptionalLong nullCount,
+            long valueCount,
             Optional<LogicalType> logicalType,
             NaNCells nans) {}
 

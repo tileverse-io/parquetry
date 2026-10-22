@@ -59,26 +59,29 @@ public final class StatsEvaluator {
     private static final String NO_NAN_CELL = ": no cell is NaN";
     private static final String EMPTY_LIST = ": no value listed";
     private static final String ONLY_NAN_CELLS = ": the non-null cells are NaN";
+    private static final String ONLY_NULLS = ": only nulls";
 
     private StatsEvaluator() {}
 
     /**
-     * A typed view of one column's statistics: kind plus already-decoded min/max, null count, and what is known of its
-     * NaN cells.
+     * A typed view of one column's statistics: kind plus already-decoded min/max, null count, value count, and what is
+     * known of its NaN cells. The value count includes the nulls. For a repeated leaf it counts one value per element
+     * and one per empty or null list.
      */
     public record ColumnSummary(
-            PrimitiveKind kind, Optional<Value> min, Optional<Value> max, OptionalLong nullCount, NaNCells nans) {
+            PrimitiveKind kind,
+            Optional<Value> min,
+            Optional<Value> max,
+            OptionalLong nullCount,
+            OptionalLong valueCount,
+            NaNCells nans) {
         public ColumnSummary {
             Objects.requireNonNull(kind, "kind");
             Objects.requireNonNull(min, "min");
             Objects.requireNonNull(max, "max");
             Objects.requireNonNull(nullCount, "nullCount");
+            Objects.requireNonNull(valueCount, "valueCount");
             Objects.requireNonNull(nans, "nans");
-        }
-
-        /** A summary telling nothing about NaN cells. */
-        public ColumnSummary(PrimitiveKind kind, Optional<Value> min, Optional<Value> max, OptionalLong nullCount) {
-            this(kind, min, max, nullCount, NaNCells.POSSIBLE);
         }
     }
 
@@ -111,8 +114,8 @@ public final class StatsEvaluator {
             case Predicate.Gt(ColumnPath col, Value v) -> evalGt(col, v, columns.get(col));
             case Predicate.GtEq(ColumnPath col, Value v) -> evalGtEq(col, v, columns.get(col));
             case Predicate.In(ColumnPath col, List<Value> values) -> evalIn(col, values, columns.get(col), rowCount);
-            case Predicate.IsNull(ColumnPath col) -> evalIsNull(col, columns.get(col), rowCount);
-            case Predicate.IsNotNull(ColumnPath col) -> evalIsNotNull(col, columns.get(col), rowCount);
+            case Predicate.IsNull(ColumnPath col) -> evalIsNull(col, columns.get(col));
+            case Predicate.IsNotNull(ColumnPath col) -> evalIsNotNull(col, columns.get(col));
             case Predicate.Spatial _ ->
                 new PruningDecision.NotApplied(TIER, "spatial predicate handled by the bounds source");
             case Predicate.GeometryFilterPredicate _ ->
@@ -153,10 +156,11 @@ public final class StatsEvaluator {
         NaNCells nans = nanCells(cs, decodedMin, decodedMax);
         Optional<Value> min = usable(decodedMin);
         Optional<Value> max = usable(decodedMax);
+        OptionalLong valueCount = OptionalLong.of(cs.valueCount());
         if (inverted(min, max)) {
-            return new ColumnSummary(kind, Optional.empty(), Optional.empty(), cs.nullCount(), nans);
+            return new ColumnSummary(kind, Optional.empty(), Optional.empty(), cs.nullCount(), valueCount, nans);
         }
-        return new ColumnSummary(kind, min, max, cs.nullCount(), nans);
+        return new ColumnSummary(kind, min, max, cs.nullCount(), valueCount, nans);
     }
 
     /**
@@ -190,10 +194,10 @@ public final class StatsEvaluator {
 
     /**
      * An existential {@code ANY} over a repeated leaf may only eliminate the whole row group: if no element anywhere in
-     * the chunk matches the inner comparison then no row matches. It must never report {@code PassedAll}, because a row
-     * with an empty or all-null list has zero elements and therefore fails {@code ANY} even when every present element
-     * matches; such rows still need record-level confirmation. {@code ALL} and {@code ONE} aggregate across rows and
-     * cannot be decided from chunk statistics at all.
+     * the chunk matches the inner comparison then no row matches. It must never report {@code PassedAll}: a row with an
+     * empty list has no element and fails {@code ANY}, and a null element matches no comparison. Such rows still need
+     * record-level confirmation. {@code ALL} and {@code ONE} aggregate across rows and cannot be decided from chunk
+     * statistics at all.
      */
     private static PruningDecision evaluateQuantified(
             MatchAction match, Predicate leaf, TypedColumns columns, long rowCount) {
@@ -434,7 +438,7 @@ public final class StatsEvaluator {
         });
     }
 
-    private static PruningDecision evalIsNull(ColumnPath col, Optional<ColumnSummary> stats, long rowCount) {
+    private static PruningDecision evalIsNull(ColumnPath col, Optional<ColumnSummary> stats) {
         OptionalLong nullCountOpt = nullCountOf(stats);
         if (nullCountOpt.isEmpty()) {
             return new PruningDecision.NotApplied(TIER, OP_IS_NULL + col.dot() + ": nullCount missing");
@@ -443,25 +447,35 @@ public final class StatsEvaluator {
         if (nullCount == 0) {
             return new PruningDecision.Eliminated(TIER, OP_IS_NULL + col.dot() + ": no nulls");
         }
-        if (nullCount == rowCount) {
-            return new PruningDecision.PassedAll(TIER, OP_IS_NULL + col.dot() + ": all rows null");
+        if (onlyNulls(stats, nullCount)) {
+            return new PruningDecision.PassedAll(TIER, OP_IS_NULL + col.dot() + ONLY_NULLS);
         }
         return new PruningDecision.Inconclusive(TIER, OP_IS_NULL + col.dot() + ": some nulls");
     }
 
-    private static PruningDecision evalIsNotNull(ColumnPath col, Optional<ColumnSummary> stats, long rowCount) {
+    private static PruningDecision evalIsNotNull(ColumnPath col, Optional<ColumnSummary> stats) {
         OptionalLong nullCountOpt = nullCountOf(stats);
         if (nullCountOpt.isEmpty()) {
             return new PruningDecision.NotApplied(TIER, OP_IS_NOT_NULL + col.dot() + ": nullCount missing");
         }
         long nullCount = nullCountOpt.getAsLong();
-        if (nullCount == rowCount) {
-            return new PruningDecision.Eliminated(TIER, OP_IS_NOT_NULL + col.dot() + ": all rows null");
+        if (onlyNulls(stats, nullCount)) {
+            return new PruningDecision.Eliminated(TIER, OP_IS_NOT_NULL + col.dot() + ONLY_NULLS);
         }
         if (nullCount == 0) {
             return new PruningDecision.PassedAll(TIER, OP_IS_NOT_NULL + col.dot() + ": no nulls");
         }
         return new PruningDecision.Inconclusive(TIER, OP_IS_NOT_NULL + col.dot() + ": some nulls");
+    }
+
+    /**
+     * Whether the column holds only nulls: its null count equals its value count. A repeated leaf can hold more values
+     * than rows, and a null count equal to its row count can leave values. Without a value count, nothing proves that
+     * the column holds only nulls.
+     */
+    private static boolean onlyNulls(Optional<ColumnSummary> stats, long nullCount) {
+        OptionalLong valueCount = stats.map(ColumnSummary::valueCount).orElseGet(OptionalLong::empty);
+        return valueCount.isPresent() && nullCount == valueCount.getAsLong();
     }
 
     /**

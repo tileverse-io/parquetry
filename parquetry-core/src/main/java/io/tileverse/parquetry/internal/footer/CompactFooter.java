@@ -52,7 +52,8 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * <p>Deliberately dropped: encodings, encoding statistics, size statistics, column key/value metadata, sorting columns,
  * the deprecated {@code file_offset}, crypto metadata, and the statistics distinct count and exactness flags. Nothing
  * on the planning or scan path reads them. The statistics NaN count is reduced to two facts: whether it is zero, and
- * whether it adds up with the null count to the values of the chunk.
+ * whether it adds up with the null count to the values of the chunk. The null count of a leaf named by
+ * {@link UncountedNulls} is dropped too.
  *
  * <h2>Layout</h2>
  *
@@ -181,8 +182,10 @@ public final class CompactFooter {
         ChunkBounds bounds = ChunkBounds.of(footer);
         SectionSizes sizes = measureSections(rowGroups, bounds);
         BitSet unorderedLeaves = UnorderedBounds.leavesOf(footer);
+        BitSet uncountedLeaves = UncountedNulls.leavesOf(footer);
         return new CompactFooter(
-                new BlobWriter(rowGroups.size(), leaves, sizes, unorderedLeaves, bounds).write(rowGroups));
+                new BlobWriter(rowGroups.size(), leaves, sizes, unorderedLeaves, uncountedLeaves, bounds)
+                        .write(rowGroups));
     }
 
     /** The number of row groups in the encoded footer. */
@@ -358,14 +361,21 @@ public final class CompactFooter {
         private final long geoSectionOffset;
         private final long arenaOffset;
         private final BitSet unorderedLeaves;
+        private final BitSet uncountedLeaves;
         private final ChunkBounds bounds;
         private int nextGeoEntry;
         private int nextArenaByte;
 
         BlobWriter(
-                int rowGroupCount, LeafIndex leaves, SectionSizes sizes, BitSet unorderedLeaves, ChunkBounds bounds) {
+                int rowGroupCount,
+                LeafIndex leaves,
+                SectionSizes sizes,
+                BitSet unorderedLeaves,
+                BitSet uncountedLeaves,
+                ChunkBounds bounds) {
             this.leaves = leaves;
             this.unorderedLeaves = unorderedLeaves;
+            this.uncountedLeaves = uncountedLeaves;
             this.bounds = bounds;
             this.rowGroupCount = rowGroupCount;
             this.leafCount = leaves.size();
@@ -441,7 +451,7 @@ public final class CompactFooter {
             long base = chunkTableOffset + ((long) rowGroupIndex * leafCount + leaf) * CHUNK_RECORD_BYTES;
             requireLeafNotAlreadyWritten(base, site);
             writeChunkOffsets(base, chunk, meta);
-            writeChunkCounts(base, meta);
+            writeChunkCounts(base, meta, uncountedLeaves.get(leaf));
             writeChunkTypes(base, meta, site);
             writeChunkStatistics(base, meta);
             writeChunkNaNFlags(base, meta);
@@ -519,9 +529,9 @@ public final class CompactFooter {
             return length < 0 ? ABSENT_INT : (int) length;
         }
 
-        private void writeChunkCounts(long base, ColumnMetaData meta) {
+        private void writeChunkCounts(long base, ColumnMetaData meta, boolean nullCountDropped) {
             blob.set(INT64, base + CHUNK_NUM_VALUES, meta.numValues());
-            blob.set(INT64, base + CHUNK_NULL_COUNT, nullCount(meta));
+            blob.set(INT64, base + CHUNK_NULL_COUNT, nullCountDropped ? ABSENT_LONG : nullCount(meta));
             blob.set(INT32, base + CHUNK_TOTAL_COMPRESSED_SIZE, totalCompressedSize(meta));
         }
 

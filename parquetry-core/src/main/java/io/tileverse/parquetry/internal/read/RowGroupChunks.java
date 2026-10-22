@@ -149,13 +149,33 @@ public final class RowGroupChunks {
         ChunkMeta chunk = maybeChunk.orElseThrow();
         Optional<MemorySegment> minValue = orderedBound(chunk, chunk.minValue());
         Optional<MemorySegment> maxValue = orderedBound(chunk, chunk.maxValue());
-        OptionalLong nullCount = chunk.nullCount();
+        OptionalLong nullCount = consistentNullCount(chunk);
         if (!hasStatistics(minValue, maxValue, nullCount)) {
             return Optional.empty();
         }
         NaNCells nans = countedNaNCells(path, chunk);
         return primitiveKind(path)
-                .map(kind -> new ColumnStats(kind, minValue, maxValue, nullCount, logicalType(path), nans));
+                .map(kind -> new ColumnStats(
+                        kind, minValue, maxValue, nullCount, chunk.numValues(), logicalType(path), nans));
+    }
+
+    /**
+     * The null count of the chunk, or empty when it contradicts the chunk. A null count cannot exceed the value count.
+     * It cannot equal the value count either when the writer recorded a bound, because a bound proves a value. DuckDB
+     * 1.5 counts a null struct of a list twice and writes such null counts.
+     */
+    private static OptionalLong consistentNullCount(ChunkMeta chunk) {
+        OptionalLong nullCount = chunk.nullCount();
+        if (nullCount.isEmpty()) {
+            return nullCount;
+        }
+        long nulls = nullCount.getAsLong();
+        long values = chunk.numValues();
+        boolean recordsABound = chunk.minValue().isPresent() || chunk.maxValue().isPresent();
+        if (nulls > values || (nulls == values && recordsABound)) {
+            return OptionalLong.empty();
+        }
+        return nullCount;
     }
 
     /** What the NaN count recorded for the chunk tells; nothing without a recorded count. */

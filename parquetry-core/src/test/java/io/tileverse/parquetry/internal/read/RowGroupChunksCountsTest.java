@@ -17,6 +17,7 @@ package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.MemorySegment;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -36,20 +37,27 @@ import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.format.SchemaElement;
 import io.tileverse.parquetry.format.Statistics;
+import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnStats;
 import io.tileverse.parquetry.internal.filter.NaNCells;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaBuilder;
 
 /**
- * Covers how the NaN count of a chunk reaches the pruning inputs. A count of zero rules NaN cells out, and NaN and null
- * counts adding up to the values of the chunk tell that it holds no number. A flat column has one value per row: counts
- * adding up to another value count come from a writer counting its values some other way, and tell nothing.
+ * Covers how the NaN and null counts of a chunk reach the pruning inputs. A count of zero rules NaN cells out, and NaN
+ * and null counts adding up to the values of the chunk tell that it holds no number. A flat column has one value per
+ * row: counts adding up to another value count come from a writer counting its values some other way, and tell nothing.
+ *
+ * <p>A null count contradicting the chunk reads as absent: a count above the value count, or a count equal to it
+ * although the writer recorded a bound.
  */
-class RowGroupChunksNaNCountTest {
+class RowGroupChunksCountsTest {
 
     private static final ColumnPath V = ColumnPath.of("v");
     private static final long ROWS = 10L;
+    /** The PLAIN bytes of the DOUBLE 0.0. */
+    private static final MemorySegment ZERO =
+            MemorySegment.ofArray(new byte[Double.BYTES]).asReadOnly();
 
     static Stream<Arguments> countedChunks() {
         return Stream.of(
@@ -77,14 +85,44 @@ class RowGroupChunksNaNCountTest {
         assertThat(chunks.stats(V).orElseThrow().nans()).isEqualTo(expected);
     }
 
+    // DuckDB 1.5 counts a null struct of a list twice, beyond the values of a chunk holding values.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("nullCounts")
+    void nullCountAgreesWithChunk(String scenario, long nullCount, boolean recordsABound, OptionalLong expected) {
+        Statistics.StatisticsBuilder statistics = Statistics.builder().nullCount(count(nullCount));
+        if (recordsABound) {
+            statistics.minValue(ZERO).maxValue(ZERO);
+        }
+        FileMetaData footer = footer(statistics.build(), ROWS);
+        ParquetSchema schema = SchemaBuilder.build(footer.schema());
+
+        RowGroupChunks chunks = TestRowGroupChunks.of(footer, 0, schema, TestRowGroupChunks.noIndexSections());
+
+        OptionalLong read = chunks.stats(V).map(ColumnStats::nullCount).orElseGet(OptionalLong::empty);
+        assertThat(read).isEqualTo(expected);
+    }
+
+    static Stream<Arguments> nullCounts() {
+        return Stream.of(
+                Arguments.of("some nulls", 3L, true, count(3L)),
+                Arguments.of("only nulls", ROWS, false, count(ROWS)),
+                Arguments.of("only nulls and a bound", ROWS, true, OptionalLong.empty()),
+                Arguments.of("more nulls than values", ROWS + 1, false, OptionalLong.empty()));
+    }
+
     private static OptionalLong count(long value) {
         return OptionalLong.of(value);
     }
 
-    /** A one-row-group footer of {@link #ROWS} rows with one nullable DOUBLE column. */
+    /** The footer of a column recording a NaN count and a null count, without bounds. */
     private static FileMetaData footer(OptionalLong nanCount, OptionalLong nullCount, long numValues) {
         Statistics statistics =
                 Statistics.builder().nullCount(nullCount).nanCount(nanCount).build();
+        return footer(statistics, numValues);
+    }
+
+    /** A one-row-group footer of {@link #ROWS} rows with one nullable DOUBLE column. */
+    private static FileMetaData footer(Statistics statistics, long numValues) {
         ColumnMetaData meta = ColumnMetaData.builder()
                 .type(PhysicalType.DOUBLE)
                 .codec(CompressionCodec.UNCOMPRESSED)

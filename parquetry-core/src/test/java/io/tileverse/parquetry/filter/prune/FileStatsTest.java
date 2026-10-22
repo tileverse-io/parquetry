@@ -29,12 +29,18 @@ class FileStatsTest {
 
     private static ColumnStatistics exact(long value) {
         return new ColumnStatistics(
-                Optional.of(new Value.LongVal(value)), Optional.of(new Value.LongVal(value)), OptionalLong.of(0));
+                Optional.of(new Value.LongVal(value)),
+                Optional.of(new Value.LongVal(value)),
+                OptionalLong.of(0),
+                OptionalLong.empty());
     }
 
     private static ColumnStatistics range(long min, long max, long nulls) {
         return new ColumnStatistics(
-                Optional.of(new Value.LongVal(min)), Optional.of(new Value.LongVal(max)), OptionalLong.of(nulls));
+                Optional.of(new Value.LongVal(min)),
+                Optional.of(new Value.LongVal(max)),
+                OptionalLong.of(nulls),
+                OptionalLong.empty());
     }
 
     @Test

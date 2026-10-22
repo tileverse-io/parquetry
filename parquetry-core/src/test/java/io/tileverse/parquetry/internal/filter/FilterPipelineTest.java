@@ -46,6 +46,9 @@ import io.tileverse.parquetry.schema.SchemaNode;
 
 class FilterPipelineTest {
 
+    /** The values of a column in a row group of 1000 rows: one per row. */
+    private static final long VALUE_COUNT = 1000L;
+
     @Test
     void statsElimSkipsLaterTiers() {
         ParquetSchema schema = flatSchema();
@@ -186,6 +189,7 @@ class FilterPipelineTest {
                 Optional.of(encodeInt(min)),
                 Optional.of(encodeInt(max)),
                 OptionalLong.of(nullCount),
+                VALUE_COUNT,
                 Optional.empty(),
                 NaNCells.POSSIBLE);
     }

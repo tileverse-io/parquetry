@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.prune.ColumnStatistics;
+import io.tileverse.parquetry.internal.filter.NaNCells;
 import io.tileverse.parquetry.internal.filter.StatsEvaluator.ColumnSummary;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
@@ -35,7 +36,9 @@ class FooterStatsAggregatorTest {
                 PrimitiveKind.INT64,
                 Optional.of(new Value.LongVal(min)),
                 Optional.of(new Value.LongVal(max)),
-                OptionalLong.of(nulls));
+                OptionalLong.of(nulls),
+                OptionalLong.of(100),
+                NaNCells.POSSIBLE);
     }
 
     @Test
@@ -49,6 +52,24 @@ class FooterStatsAggregatorTest {
         assertThat(result.orElseThrow().min()).contains(new Value.LongVal(5));
         assertThat(result.orElseThrow().max()).contains(new Value.LongVal(30));
         assertThat(result.orElseThrow().nullCount()).hasValue(3);
+        assertThat(result.orElseThrow().valueCount()).hasValue(300);
+    }
+
+    @Test
+    void valueCountNeedsEachRowGroup() {
+        ColumnSummary uncounted = new ColumnSummary(
+                PrimitiveKind.INT64,
+                Optional.of(new Value.LongVal(1)),
+                Optional.of(new Value.LongVal(2)),
+                OptionalLong.of(0),
+                OptionalLong.empty(),
+                NaNCells.POSSIBLE);
+        List<Optional<ColumnSummary>> perRowGroup = List.of(Optional.of(summary(10, 20, 1)), Optional.of(uncounted));
+
+        Optional<ColumnStatistics> result = FooterStatsAggregator.aggregate(perRowGroup);
+
+        assertThat(result.orElseThrow().valueCount()).isEmpty();
+        assertThat(result.orElseThrow().nullCount()).hasValue(1);
     }
 
     @Test
@@ -61,7 +82,12 @@ class FooterStatsAggregatorTest {
     @Test
     void missingMinInOneRowGroupDropsMinButKeepsNullCount() {
         ColumnSummary noMin = new ColumnSummary(
-                PrimitiveKind.INT64, Optional.empty(), Optional.of(new Value.LongVal(25)), OptionalLong.of(4));
+                PrimitiveKind.INT64,
+                Optional.empty(),
+                Optional.of(new Value.LongVal(25)),
+                OptionalLong.of(4),
+                OptionalLong.of(100),
+                NaNCells.POSSIBLE);
         List<Optional<ColumnSummary>> perRowGroup = List.of(Optional.of(summary(10, 20, 1)), Optional.of(noMin));
 
         Optional<ColumnStatistics> result = FooterStatsAggregator.aggregate(perRowGroup);

@@ -27,10 +27,10 @@ import io.tileverse.parquetry.internal.filter.ValueComparison;
 
 /**
  * Combines one column's per-row-group {@link ColumnSummary} into a single file-level {@link ColumnStatistics}: the
- * least of the row-group minima, the greatest of the maxima, and the sum of the null counts. Each of the three
- * aggregates is evaluated independently and drops to empty as soon as one row group lacks it (a row group with no value
- * for a statistic could hold anything, and the file cannot bound it). The result is empty when no statistic is known at
- * all, which simply means the column does not prune.
+ * least of the row-group minima, the greatest of the maxima, the sum of the null counts and the sum of the value
+ * counts. Each aggregate is evaluated independently and drops to empty as soon as one row group lacks it (a row group
+ * with no value for a statistic could hold anything, and the file cannot bound it). The result is empty when no
+ * statistic is known at all, which simply means the column does not prune.
  *
  * <p>All summaries are expected to come from the same column of one file, and therefore share a
  * {@link io.tileverse.parquetry.schema.PrimitiveKind}; min/max ordering uses
@@ -47,11 +47,12 @@ public final class FooterStatsAggregator {
         }
         Optional<Value> min = leastMin(perRowGroup);
         Optional<Value> max = greatestMax(perRowGroup);
-        OptionalLong nullCount = summedNullCount(perRowGroup);
+        OptionalLong nullCount = summed(perRowGroup, ColumnSummary::nullCount);
+        OptionalLong valueCount = summed(perRowGroup, ColumnSummary::valueCount);
         if (min.isEmpty() && max.isEmpty() && nullCount.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(new ColumnStatistics(min, max, nullCount));
+        return Optional.of(new ColumnStatistics(min, max, nullCount, valueCount));
     }
 
     private static Optional<Value> leastMin(List<Optional<ColumnSummary>> perRowGroup) {
@@ -83,14 +84,16 @@ public final class FooterStatsAggregator {
         return Optional.ofNullable(extreme);
     }
 
-    private static OptionalLong summedNullCount(List<Optional<ColumnSummary>> perRowGroup) {
+    /** The sum of a count across the row groups, empty as soon as one row group lacks it. */
+    private static OptionalLong summed(
+            List<Optional<ColumnSummary>> perRowGroup, Function<ColumnSummary, OptionalLong> count) {
         long sum = 0L;
         for (Optional<ColumnSummary> group : perRowGroup) {
-            OptionalLong groupNulls = group.map(ColumnSummary::nullCount).orElse(OptionalLong.empty());
-            if (groupNulls.isEmpty()) {
+            OptionalLong groupCount = group.map(count).orElse(OptionalLong.empty());
+            if (groupCount.isEmpty()) {
                 return OptionalLong.empty();
             }
-            sum += groupNulls.orElseThrow();
+            sum += groupCount.orElseThrow();
         }
         return OptionalLong.of(sum);
     }

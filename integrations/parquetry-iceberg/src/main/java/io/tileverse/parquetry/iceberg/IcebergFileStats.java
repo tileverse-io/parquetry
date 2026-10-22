@@ -55,12 +55,15 @@ final class IcebergFileStats {
                 addColumn(builder, field, ref);
             }
         }
-        addPartitionBounds(builder, fields, partitionConstants);
+        addPartitionBounds(builder, fields, partitionConstants, ref.recordCount());
         return builder.build();
     }
 
     private static void addPartitionBounds(
-            FileStats.Builder builder, List<IcebergField> fields, Map<Integer, Value> partitionConstants) {
+            FileStats.Builder builder,
+            List<IcebergField> fields,
+            Map<Integer, Value> partitionConstants,
+            long recordCount) {
         for (IcebergField field : fields) {
             Value constant = partitionConstants.get(field.fieldId());
             if (constant == null) {
@@ -68,7 +71,11 @@ final class IcebergFileStats {
             }
             builder.column(
                     ColumnPath.of(field.name()),
-                    new ColumnStatistics(Optional.of(constant), Optional.of(constant), OptionalLong.of(0L)));
+                    new ColumnStatistics(
+                            Optional.of(constant),
+                            Optional.of(constant),
+                            OptionalLong.of(0L),
+                            OptionalLong.of(recordCount)));
         }
     }
 
@@ -115,7 +122,9 @@ final class IcebergFileStats {
         if (min.isEmpty() && max.isEmpty() && nullCount.isEmpty()) {
             return;
         }
-        builder.column(ColumnPath.of(field.name()), new ColumnStatistics(min, max, nullCount));
+        // A top-level field holds one value per record.
+        OptionalLong valueCount = OptionalLong.of(ref.recordCount());
+        builder.column(ColumnPath.of(field.name()), new ColumnStatistics(min, max, nullCount, valueCount));
     }
 
     private static Optional<Value> decode(IcebergField field, MemorySegment bytes) {

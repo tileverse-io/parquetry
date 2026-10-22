@@ -40,9 +40,9 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
  * Verifies how the pushdown tiers handle a {@link Predicate.Quantified} over a physical repeated leaf. The contract is
  * the same for every tier: an existential {@link MatchAction#ANY} may only eliminate the whole row group (no element
  * anywhere in the chunk matches implies no row matches), but must never report a positive match such as
- * {@code PassedAll}. A row with an empty or all-null list has zero elements and therefore fails {@code ANY} even when
- * every present element matches; such rows still need record-level confirmation. {@link MatchAction#ALL} and
- * {@link MatchAction#ONE} can never prune because chunk-level stats aggregate across rows.
+ * {@code PassedAll}. A row with an empty list has no element and fails {@code ANY}, and a null element matches no
+ * comparison: such rows still need record-level confirmation. {@link MatchAction#ALL} and {@link MatchAction#ONE} can
+ * never prune because chunk-level stats aggregate across rows.
  *
  * <p>The reader is flat-only and cannot write a real {@code LIST<STRUCT>} file. The tiers are driven through stubbed
  * lookups keyed by the physical leaf path the assembler would expose.
@@ -52,6 +52,8 @@ class QuantifiedPushdownTest {
     private static final ColumnPath LEAF = ColumnPath.of("addresses", "list", "element", "locality");
     private static final ColumnPath INT_LEAF = ColumnPath.of("scores", "list", "element");
     private static final long ROW_COUNT = 1000;
+    /** The elements of the repeated leaves: three per row. */
+    private static final long VALUE_COUNT = 3 * ROW_COUNT;
 
     @Test
     void statsAnyDelegatesAndEliminatesWhenValueOutsideRange() {
@@ -101,6 +103,23 @@ class QuantifiedPushdownTest {
     void statsAnyOverIntChunkEliminatesWhenValueOutOfRange() {
         FilterPipeline.ColumnStatsLookup cols = intStatsLookup(7, 7);
         Predicate quantified = quantifiedInt(MatchAction.ANY, 99);
+        PruningDecision decision = StatsEvaluator.evaluate(quantified, cols, ROW_COUNT);
+        assertThat(decision).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    // A list column holds more values than rows. A null count equal to the row count leaves values in the chunk.
+    @Test
+    void anyIsNotNullKeepsListValues() {
+        FilterPipeline.ColumnStatsLookup cols = intLeafWithNulls(ROW_COUNT);
+        Predicate quantified = new Predicate.Quantified(MatchAction.ANY, new Predicate.IsNotNull(INT_LEAF));
+        PruningDecision decision = StatsEvaluator.evaluate(quantified, cols, ROW_COUNT);
+        assertThat(decision).isNotInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void anyIsNotNullDropsOnlyNulls() {
+        FilterPipeline.ColumnStatsLookup cols = intLeafWithNulls(VALUE_COUNT);
+        Predicate quantified = new Predicate.Quantified(MatchAction.ANY, new Predicate.IsNotNull(INT_LEAF));
         PruningDecision decision = StatsEvaluator.evaluate(quantified, cols, ROW_COUNT);
         assertThat(decision).isInstanceOf(PruningDecision.Eliminated.class);
     }
@@ -173,9 +192,27 @@ class QuantifiedPushdownTest {
         return path -> Optional.ofNullable(map.get(path));
     }
 
+    /** Stats of the int leaf with the bounds 1 and 9 and {@code nullCount} nulls among its elements. */
+    private static FilterPipeline.ColumnStatsLookup intLeafWithNulls(long nullCount) {
+        Map<ColumnPath, FilterPipeline.ColumnStats> map = new HashMap<>();
+        map.put(INT_LEAF, stats(PrimitiveKind.INT32, encodeInt(1), encodeInt(9), nullCount));
+        return path -> Optional.ofNullable(map.get(path));
+    }
+
     private static FilterPipeline.ColumnStats nullFreeStats(PrimitiveKind kind, MemorySegment min, MemorySegment max) {
+        return stats(kind, min, max, 0L);
+    }
+
+    private static FilterPipeline.ColumnStats stats(
+            PrimitiveKind kind, MemorySegment min, MemorySegment max, long nullCount) {
         return new FilterPipeline.ColumnStats(
-                kind, Optional.of(min), Optional.of(max), OptionalLong.of(0L), Optional.empty(), NaNCells.POSSIBLE);
+                kind,
+                Optional.of(min),
+                Optional.of(max),
+                OptionalLong.of(nullCount),
+                VALUE_COUNT,
+                Optional.empty(),
+                NaNCells.POSSIBLE);
     }
 
     private static MemorySegment encodeUtf8(String value) {
