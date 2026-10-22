@@ -16,13 +16,17 @@
 package io.tileverse.parquetry.schema.geo.projjson;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import tools.jackson.databind.JsonNode;
+
 /**
- * A PROJJSON coordinate operation that converts coordinates from one CRS to another. Carried by {@link BoundCRS} via
+ * A PROJJSON coordinate operation that converts coordinates from one CRS to another. Used by {@link BoundCRS} through
  * {@link BoundCRS#transformation()}, and also valid as a top-level PROJJSON document (the PROJJSON schema treats
  * {@code Transformation} as a CRS-shaped object).
  *
@@ -34,6 +38,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  * @param parameters method-specific numeric or file-reference parameters; defensively copied
  * @param accuracy stated accuracy of the operation in metres, as a free-form string from the writer
  * @param id registry {@link Identifier} (typically an EPSG operation code); empty when defined inline only
+ * @param raw the source document of this operation, empty for one built in code; see
+ *     {@link CoordinateReferenceSystem#raw()}
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record Transformation(
@@ -43,10 +49,47 @@ public record Transformation(
         Optional<Conversion.Method> method,
         List<Conversion.Parameter> parameters,
         Optional<String> accuracy,
-        Optional<Identifier> id)
+        Optional<Identifier> id,
+        @JsonIgnore Optional<JsonNode> raw)
         implements CoordinateReferenceSystem {
 
     public Transformation {
         parameters = parameters == null ? List.of() : List.copyOf(parameters);
+        raw = raw == null ? Optional.empty() : raw;
+    }
+
+    /** Builds an operation from its properties, with no parsed document to write back. */
+    public Transformation(
+            Optional<String> name,
+            Optional<CoordinateReferenceSystem> sourceCrs,
+            Optional<CoordinateReferenceSystem> targetCrs,
+            Optional<Conversion.Method> method,
+            List<Conversion.Parameter> parameters,
+            Optional<String> accuracy,
+            Optional<Identifier> id) {
+        this(name, sourceCrs, targetCrs, method, parameters, accuracy, id, Optional.empty());
+    }
+
+    @Override
+    public Transformation withRaw(JsonNode document) {
+        return new Transformation(name, sourceCrs, targetCrs, method, parameters, accuracy, id, Optional.of(document));
+    }
+
+    /** The parsed document takes no part: a parsed operation equals one built with the same properties. */
+    @Override
+    public boolean equals(Object o) {
+        return o instanceof Transformation other
+                && Objects.equals(name, other.name)
+                && Objects.equals(sourceCrs, other.sourceCrs)
+                && Objects.equals(targetCrs, other.targetCrs)
+                && Objects.equals(method, other.method)
+                && Objects.equals(parameters, other.parameters)
+                && Objects.equals(accuracy, other.accuracy)
+                && Objects.equals(id, other.id);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(name, sourceCrs, targetCrs, method, parameters, accuracy, id);
     }
 }

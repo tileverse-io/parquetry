@@ -87,9 +87,9 @@ public final class CoordinateReferenceSystems {
     }
 
     /**
-     * Renders a typed CRS back to a PROJJSON string via the symmetric serializer registered on {@link ProjJsonModule}.
-     * The output carries the {@code "type"} discriminator for every concrete record;
-     * {@link CoordinateReferenceSystem.Unknown} re-emits its captured raw JSON verbatim.
+     * Renders a CRS as a PROJJSON string through the serializer registered on {@link ProjJsonModule}. A CRS parsed from
+     * a document is written as that document, unchanged. A CRS built in code renders field by field with a leading
+     * {@code "type"} discriminator. See {@link CoordinateReferenceSystem#raw()}.
      */
     public static String toProjjson(CoordinateReferenceSystem crs) {
         return MAPPER.writeValueAsString(crs);

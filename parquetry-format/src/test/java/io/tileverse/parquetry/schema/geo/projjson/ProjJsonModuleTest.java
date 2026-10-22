@@ -105,7 +105,7 @@ class ProjJsonModuleTest {
         CoordinateReferenceSystem crs = MAPPER.readValue(json, CoordinateReferenceSystem.class);
         assertThat(crs).isInstanceOfSatisfying(CoordinateReferenceSystem.Unknown.class, u -> {
             assertThat(u.rawType()).isEqualTo("TemporalCRS");
-            assertThat(u.raw().get("name").asString()).isEqualTo("Calendar time");
+            assertThat(u.document().get("name").asString()).isEqualTo("Calendar time");
         });
     }
 
@@ -118,7 +118,7 @@ class ProjJsonModuleTest {
         CoordinateReferenceSystem crs = MAPPER.readValue(json, CoordinateReferenceSystem.class);
         assertThat(crs).isInstanceOfSatisfying(CoordinateReferenceSystem.Unknown.class, u -> {
             assertThat(u.rawType()).isEmpty();
-            assertThat(u.raw().get("name").asString()).isEqualTo("mystery CRS");
+            assertThat(u.document().get("name").asString()).isEqualTo("mystery CRS");
         });
     }
 

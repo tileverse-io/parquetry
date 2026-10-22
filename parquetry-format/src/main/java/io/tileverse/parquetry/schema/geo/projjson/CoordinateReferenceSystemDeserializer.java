@@ -30,6 +30,9 @@ import tools.jackson.databind.deser.std.StdDeserializer;
  * one). A missing type is valid in a nested position - a PROJJSON {@code base_crs} may omit it - so it is not rejected
  * here; a top-level CRS that omits it is caught where the top-level context is known (see
  * {@code GeoParquetMetadata.parse}).
+ *
+ * <p>Each parsed CRS keeps its source document, through {@link CoordinateReferenceSystem#withRaw(JsonNode)}. The
+ * serializer writes that document back unchanged, which keeps the PROJJSON properties not modeled by the records.
  */
 final class CoordinateReferenceSystemDeserializer extends StdDeserializer<CoordinateReferenceSystem> {
 
@@ -52,7 +55,8 @@ final class CoordinateReferenceSystemDeserializer extends StdDeserializer<Coordi
         }
         JsonParser treeParser = rc.treeAsTokens(root);
         treeParser.nextToken();
-        return rc.readValue(treeParser, target);
+        CoordinateReferenceSystem parsed = rc.readValue(treeParser, target);
+        return parsed.withRaw(root);
     }
 
     private static Class<? extends CoordinateReferenceSystem> targetFor(String type) {

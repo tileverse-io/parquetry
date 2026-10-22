@@ -17,12 +17,26 @@ package io.tileverse.parquetry.schema.geo.projjson;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Coverage for the {@link CoordinateReferenceSystems} facade and the bundled EPSG / OGC resource set. */
 class CoordinateReferenceSystemsTest {
@@ -106,6 +120,62 @@ class CoordinateReferenceSystemsTest {
         String json = CoordinateReferenceSystems.toProjjson(original);
         CoordinateReferenceSystem parsed = CoordinateReferenceSystems.fromProjjson(json);
         assertThat(parsed).isEqualTo(original);
+    }
+
+    // Reading a bundled CRS and writing it back must change nothing. PROJ rejects a document that drops the
+    // datum_ensemble of OGC:CRS84, EPSG:4326 and the CRSs derived from them.
+    @ParameterizedTest
+    @MethodSource("bundledResources")
+    void bundledCrsRoundTripsVerbatim(String resource) {
+        String source = readResource(resource);
+        String written = CoordinateReferenceSystems.toProjjson(CoordinateReferenceSystems.fromProjjson(source));
+        assertThat(parseTree(written)).as(resource).isEqualTo(parseTree(source));
+    }
+
+    static Stream<String> bundledResources() {
+        Stream<String> ogc = Stream.of("ogc/CRS84.json");
+        Stream<String> epsg = bundledEpsgCodes().map(code -> "epsg/EPSG_" + code + ".json");
+        return Stream.concat(ogc, epsg);
+    }
+
+    private static Stream<Integer> bundledEpsgCodes() {
+        Path directory = resourceDirectory("epsg");
+        try (Stream<Path> files = Files.list(directory)) {
+            return files
+                    .map(Path::getFileName)
+                    .map(Path::toString)
+                    .filter(name -> name.startsWith("EPSG_") && name.endsWith(".json"))
+                    .map(name -> name.substring("EPSG_".length(), name.length() - ".json".length()))
+                    .map(Integer::valueOf)
+                    .sorted()
+                    .toList()
+                    .stream();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private static Path resourceDirectory(String name) {
+        URL url = CoordinateReferenceSystems.class.getResource(name);
+        assertThat(url).as("bundled resource directory %s", name).isNotNull();
+        try {
+            return Path.of(url.toURI());
+        } catch (URISyntaxException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static String readResource(String resource) {
+        try (InputStream in = CoordinateReferenceSystems.class.getResourceAsStream(resource)) {
+            assertThat(in).as(resource).isNotNull();
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private static JsonNode parseTree(String json) {
+        return JsonMapper.builder().build().readTree(json);
     }
 
     @Test
