@@ -47,6 +47,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.geoparquet.ColumnCrs;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
@@ -132,11 +133,11 @@ class FeatureWriteSchemaTest {
         assertThat(geo.columns()).containsOnlyKeys("geom");
         GeoColumn column = geo.columns().get("geom");
         assertThat(column.encoding()).contains("WKB");
-        assertThat(column.crs()).isPresent();
+        assertThat(column.crs().projjson()).isPresent();
     }
 
     @Test
-    void nullCrsGeometryOmitsCrs() {
+    void nullCrsGeometryIsUnknown() {
         SimpleFeatureTypeBuilder typeBuilder = new SimpleFeatureTypeBuilder();
         typeBuilder.setName("t");
         typeBuilder.add("geom", Point.class);
@@ -153,7 +154,7 @@ class FeatureWriteSchemaTest {
 
         assertThat(writeSchema.geoMetadata()).isPresent();
         GeoColumn column = writeSchema.geoMetadata().orElseThrow().columns().get("geom");
-        assertThat(column.crs()).isEmpty();
+        assertThat(column.crs()).isEqualTo(ColumnCrs.UNKNOWN);
     }
 
     @Test

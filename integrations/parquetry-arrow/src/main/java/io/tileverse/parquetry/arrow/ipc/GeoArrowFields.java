@@ -88,7 +88,7 @@ final class GeoArrowFields {
         if (geo.isPresent()) {
             GeoColumn column = geo.get().columns().get(path.dot());
             if (column != null) {
-                Optional<Object> crs = column.crs().map(Object.class::cast);
+                Optional<Object> crs = column.crs().projjson().map(Object.class::cast);
                 return Optional.of(new GeometryInfo(crs, column.edges().orElse("planar")));
             }
         }

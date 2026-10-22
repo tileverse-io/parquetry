@@ -15,8 +15,9 @@
  */
 package io.tileverse.parquetry.geotools.data;
 
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.util.Optional;
-import java.util.OptionalInt;
 
 import org.geotools.api.referencing.FactoryException;
 import org.geotools.api.referencing.crs.CoordinateReferenceSystem;
@@ -24,108 +25,90 @@ import org.geotools.referencing.CRS;
 import org.geotools.referencing.crs.DefaultGeographicCRS;
 
 import io.tileverse.parquetry.schema.geo.ParquetCrs;
+import io.tileverse.parquetry.schema.geo.geoparquet.ColumnCrs;
 import io.tileverse.parquetry.schema.geo.projjson.Identifier;
 
 /**
  * Resolves a GeoParquet CRS to a GeoTools {@link CoordinateReferenceSystem}.
  *
- * <p>Resolution order:
+ * <p>A column that declares no CRS of its own uses the GeoParquet default, OGC:CRS84. Every other case resolves through
+ * an identifier: OGC:CRS84 is that default itself, and any other authority and code goes to the GeoTools registry,
+ * decoded with {@code longitudeFirst=true} to match the lon/lat order of GeoParquet geometry columns.
  *
- * <ol>
- *   <li>EPSG identifier found in the PROJJSON - decoded via {@code CRS.decode("EPSG:NNNN", true)} (longitudeFirst=true,
- *       matching GeoParquet's lon/lat convention).
- *   <li>No PROJJSON or no recognisable identifier - defaults to {@link DefaultGeographicCRS#WGS84} (OGC:CRS84,
- *       lon/lat).
- * </ol>
- *
- * <p>The {@link #toGeoTools(ParquetCrs)} overload additionally resolves the native Parquet {@code crs} reference forms:
- * an {@code authority:code} reference is decoded through the GeoTools registry, a {@code srid:} reference is treated as
- * an EPSG code ({@code srid:0} is the undefined CRS), and a {@code projjson:} reference (which needs an out-of-band
- * registry) falls back to the default.
+ * <p>Resolution returns empty when the CRS is unknown, when it has no identifier, or when the registry cannot decode
+ * it, and logs what it could not resolve. A caller then assigns no CRS. Standing in with WGS 84 would state degrees for
+ * data that may be in metres: a column in ESRI:102003 is in metres, and reading it as WGS 84 misplaces every coordinate
+ * without anything saying so. Resolving a CRS defined inline with no identifier at all needs a PROJJSON-to-GeoTools
+ * conversion this package does not have.
  */
 final class ProjJsonCrsConverter {
+
+    private static final Logger LOGGER = System.getLogger(ProjJsonCrsConverter.class.getName());
 
     private ProjJsonCrsConverter() {}
 
     /**
-     * Converts a native Parquet {@code crs} to a GeoTools CRS, resolving the reference forms through the GeoTools
-     * registry. Never null; defaults to WGS84 (lon/lat) when resolution fails or the CRS is undefined.
+     * Resolves what a GeoParquet column says about its CRS. The spec default stands in for an absent declaration; an
+     * unknown or unresolvable CRS resolves to empty.
      */
-    static CoordinateReferenceSystem toGeoTools(ParquetCrs crs) {
-        return switch (crs) {
-            case ParquetCrs.Inline(var projjson) -> toGeoTools(Optional.of(projjson));
-            case ParquetCrs.AuthorityCode(String authority, String code) -> resolveAuthorityCode(authority, code);
-            case ParquetCrs.Srid(long id) -> resolveEpsgSrid(id);
-            case ParquetCrs.ProjjsonKey _ -> DefaultGeographicCRS.WGS84;
+    static Optional<CoordinateReferenceSystem> toGeoTools(ColumnCrs declaration) {
+        return switch (declaration) {
+            case ColumnCrs.Defaulted _ -> Optional.of(DefaultGeographicCRS.WGS84);
+            case ColumnCrs.Unknown _ -> unresolved("the column declares its CRS unknown");
+            case ColumnCrs.Defined defined ->
+                fromIdentifier(defined.crs().id(), defined.crs().name());
         };
     }
 
     /**
-     * Resolves an {@code authority:code} reference through the GeoTools registry (longitudeFirst=true). OGC:CRS84 is
-     * the GeoParquet default (lon/lat WGS84); any code the registry cannot decode falls back to WGS84.
+     * Resolves a native Parquet {@code crs} reference. An {@code authority:code} goes through the GeoTools registry, a
+     * {@code srid:} reference is read as an EPSG code, and a {@code projjson:} reference needs an out-of-band registry,
+     * unavailable in this package.
      */
-    private static CoordinateReferenceSystem resolveAuthorityCode(String authority, String code) {
+    static Optional<CoordinateReferenceSystem> toGeoTools(ParquetCrs crs) {
+        return switch (crs) {
+            case ParquetCrs.Inline inline ->
+                fromIdentifier(inline.projjson().id(), inline.projjson().name());
+            case ParquetCrs.AuthorityCode(String authority, String code) -> fromAuthorityCode(authority, code);
+            case ParquetCrs.Srid(long id) -> fromSrid(id);
+            case ParquetCrs.ProjjsonKey(String key) -> unresolved("projjson:" + key + " needs an out of band registry");
+        };
+    }
+
+    private static Optional<CoordinateReferenceSystem> fromAuthorityCode(String authority, String code) {
         boolean isOgcCrs84 = "OGC".equalsIgnoreCase(authority) && "CRS84".equalsIgnoreCase(code);
         if (isOgcCrs84) {
-            return DefaultGeographicCRS.WGS84;
+            return Optional.of(DefaultGeographicCRS.WGS84);
         }
-        try {
-            return CRS.decode(authority + ":" + code, true);
-        } catch (FactoryException _) {
-            return DefaultGeographicCRS.WGS84;
-        }
+        return decode(authority + ":" + code);
     }
 
-    /**
-     * Resolves a {@code srid:} reference as an EPSG code. A non-positive SRID is the undefined CRS and resolves to the
-     * WGS84 default, matching the lenient reader posture.
-     */
-    private static CoordinateReferenceSystem resolveEpsgSrid(long srid) {
+    private static Optional<CoordinateReferenceSystem> fromSrid(long srid) {
         if (srid <= 0) {
-            return DefaultGeographicCRS.WGS84;
+            return unresolved("srid:" + srid + " is the undefined CRS");
         }
+        return decode("EPSG:" + srid);
+    }
+
+    private static Optional<CoordinateReferenceSystem> fromIdentifier(
+            Optional<Identifier> id, Optional<String> crsName) {
+        if (id.isEmpty()) {
+            return unresolved("the inline PROJJSON of " + crsName.orElse("an unnamed CRS") + " has no identifier");
+        }
+        return fromAuthorityCode(id.get().authority(), id.get().code());
+    }
+
+    /** Decodes with {@code longitudeFirst=true}: GeoParquet geometry columns use lon/lat (easting-first) order. */
+    private static Optional<CoordinateReferenceSystem> decode(String code) {
         try {
-            return CRS.decode("EPSG:" + srid, true);
-        } catch (FactoryException _) {
-            return DefaultGeographicCRS.WGS84;
+            return Optional.of(CRS.decode(code, true));
+        } catch (FactoryException e) {
+            return unresolved(code + " is not in the GeoTools registry: " + e.getMessage());
         }
     }
 
-    /**
-     * Converts an optional PROJJSON CRS to a GeoTools CRS.
-     *
-     * @param projjson the PROJJSON CRS from a GeoParquet geometry column, or empty when the column metadata does not
-     *     specify a CRS
-     * @return a GeoTools CRS, never null; defaults to WGS84 (lon/lat) when resolution fails
-     */
-    static CoordinateReferenceSystem toGeoTools(
-            Optional<io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem> projjson) {
-        if (projjson.isEmpty()) {
-            return DefaultGeographicCRS.WGS84;
-        }
-        Optional<Identifier> id =
-                projjson.flatMap(io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem::id);
-        if (id.isPresent()) {
-            return resolveFromIdentifier(id.get());
-        }
-        // Non-EPSG PROJJSON is not resolved in this increment; default to CRS84 (the GeoParquet default).
-        return DefaultGeographicCRS.WGS84;
-    }
-
-    /**
-     * Attempts EPSG lookup when the identifier has an EPSG code. Falls back to WGS84 when the EPSG registry is
-     * unavailable or the code is unknown.
-     */
-    private static CoordinateReferenceSystem resolveFromIdentifier(Identifier id) {
-        OptionalInt epsg = id.epsgCode();
-        if (epsg.isEmpty()) {
-            return DefaultGeographicCRS.WGS84;
-        }
-        try {
-            // longitudeFirst=true: GeoParquet geometry columns use lon/lat (easting-first) order.
-            return CRS.decode("EPSG:" + epsg.getAsInt(), true);
-        } catch (FactoryException _) {
-            return DefaultGeographicCRS.WGS84;
-        }
+    private static Optional<CoordinateReferenceSystem> unresolved(String reason) {
+        LOGGER.log(Level.WARNING, "No coordinate reference system assigned: {0}", reason);
+        return Optional.empty();
     }
 }

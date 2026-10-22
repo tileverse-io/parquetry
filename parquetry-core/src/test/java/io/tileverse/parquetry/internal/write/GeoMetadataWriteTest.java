@@ -87,8 +87,14 @@ class GeoMetadataWriteTest {
         GeoParquetMetadata parsed = GeoParquetMetadata.parse(geoJson);
         assertThat(parsed).isInstanceOf(GeoParquetMetadata.V1_1.class);
         GeoColumn geometryColumn = parsed.columns().get("geometry");
-        assertThat(geometryColumn.crs()).isPresent();
-        assertThat(geometryColumn.crs().orElseThrow().id().orElseThrow().epsgCode())
+        assertThat(geometryColumn.crs().projjson()).isPresent();
+        assertThat(geometryColumn
+                        .crs()
+                        .projjson()
+                        .orElseThrow()
+                        .id()
+                        .orElseThrow()
+                        .epsgCode())
                 .hasValue(4326);
 
         SchemaElement geometryElement = footerElementByName(footer, "geometry");
@@ -207,7 +213,8 @@ class GeoMetadataWriteTest {
 
         FileMetaData footer = readFooter(file);
         GeoParquetMetadata parsed = GeoParquetMetadata.parse(geoJsonOrThrow(footer));
-        CoordinateReferenceSystem crs = parsed.columns().get("geometry").crs().orElseThrow();
+        CoordinateReferenceSystem crs =
+                parsed.columns().get("geometry").crs().projjson().orElseThrow();
         CoordinateReferenceSystem expected =
                 CoordinateReferenceSystems.forEpsg(4326).orElseThrow();
         assertThat(crs.id().orElseThrow().epsgCode()).hasValue(4326);

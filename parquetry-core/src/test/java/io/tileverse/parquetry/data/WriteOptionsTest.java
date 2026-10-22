@@ -62,6 +62,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.geoparquet.ColumnCrs;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystems;
 
@@ -178,7 +179,7 @@ class WriteOptionsTest {
 
         WriteOptions o = WriteOptions.builder().crs("geom", crs84).build();
 
-        assertThat(o.crs()).containsEntry("geom", crs84);
+        assertThat(o.crs()).containsEntry("geom", ColumnCrs.of(crs84));
     }
 
     @Test
@@ -313,8 +314,8 @@ class WriteOptionsTest {
         BloomFilterConfig bloomDefaults = BloomFilterConfig.defaults();
         assertThatThrownBy(() -> bloomFilters.put("x", bloomDefaults))
                 .isInstanceOf(UnsupportedOperationException.class);
-        Map<String, CoordinateReferenceSystem> crs = o.crs();
-        CoordinateReferenceSystem crs84 = CoordinateReferenceSystems.ogcCrs84();
+        Map<String, ColumnCrs> crs = o.crs();
+        ColumnCrs crs84 = ColumnCrs.of(CoordinateReferenceSystems.ogcCrs84());
         assertThatThrownBy(() -> crs.put("x", crs84)).isInstanceOf(UnsupportedOperationException.class);
     }
 

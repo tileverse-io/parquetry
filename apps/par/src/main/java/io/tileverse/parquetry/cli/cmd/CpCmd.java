@@ -49,6 +49,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering;
+import io.tileverse.parquetry.schema.geo.geoparquet.ColumnCrs;
 import io.tileverse.parquetry.schema.geo.geoparquet.Covering;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
@@ -371,13 +372,23 @@ public final class CpCmd implements Callable<Integer> {
             if (!survivesProjection(writeSchema, columnName)) {
                 continue;
             }
-            // An absent CRS means the GeoParquet default (OGC:CRS84); declare it explicitly so the column is treated
-            // as geometry.
-            CoordinateReferenceSystem crs = column.getValue().crs().orElseGet(CoordinateReferenceSystems::ogcCrs84);
-            builder.crs(columnName, crs);
+            declareCrs(builder, columnName, column.getValue().crs());
             if (columnName.equals(geo.primaryColumn())) {
                 forwardCovering(builder, writeSchema, columnName, column.getValue());
             }
+        }
+    }
+
+    /**
+     * Declares the CRS of a copied column as the source declared it. An absent CRS means the GeoParquet default,
+     * OGC:CRS84. It is declared explicitly here to mark the column as geometry. A source that states its CRS unknown is
+     * copied as unknown: claiming CRS84 for it would state degrees for data that may be in metres.
+     */
+    private static void declareCrs(WriteOptions.Builder builder, String columnName, ColumnCrs declared) {
+        switch (declared) {
+            case ColumnCrs.Unknown _ -> builder.crsUnknown(columnName);
+            case ColumnCrs.Defined(CoordinateReferenceSystem crs) -> builder.crs(columnName, crs);
+            case ColumnCrs.Defaulted _ -> builder.crs(columnName, CoordinateReferenceSystems.ogcCrs84());
         }
     }
 

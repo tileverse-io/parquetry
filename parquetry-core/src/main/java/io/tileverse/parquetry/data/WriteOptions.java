@@ -26,6 +26,7 @@ import java.util.OptionalLong;
 import java.util.Set;
 
 import io.tileverse.parquetry.observe.WriteObserver;
+import io.tileverse.parquetry.schema.geo.geoparquet.ColumnCrs;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystems;
 
@@ -58,7 +59,8 @@ import lombok.NonNull;
  * @param encodingPolicies per-column encoding policy overrides keyed by dotted column path; unmodifiable
  * @param indexedColumns columns flagged for bloom filter emission; unmodifiable
  * @param bloomFilters per-column explicit bloom filter configs; unmodifiable
- * @param crs per-column CRS overrides keyed by dotted column path; unmodifiable
+ * @param crs what each geometry column declares about its CRS, keyed by dotted column path; unmodifiable. A column with
+ *     no entry is written with the GeoParquet default, OGC:CRS84.
  * @param keyValueMetadata caller-supplied file-level key/value metadata merged into the footer alongside the
  *     writer-managed GeoParquet entry; the reserved {@code "geo"} key is rejected; unmodifiable
  * @param pageValueLimits per-column page value limits keyed by dotted column path, each overriding
@@ -88,7 +90,7 @@ public record WriteOptions(
         @NonNull Map<String, EncodingPolicy> encodingPolicies,
         @NonNull Set<String> indexedColumns,
         @NonNull Map<String, BloomFilterConfig> bloomFilters,
-        @NonNull Map<String, CoordinateReferenceSystem> crs,
+        @NonNull Map<String, ColumnCrs> crs,
         @NonNull Map<String, String> keyValueMetadata,
         @NonNull Map<String, Integer> pageValueLimits,
         @NonNull OptionalInt coveringPageValueLimit,
@@ -428,7 +430,7 @@ public record WriteOptions(
         private final Map<String, EncodingPolicy> encodingPolicies = new LinkedHashMap<>();
         private final Set<String> indexedColumns = new LinkedHashSet<>();
         private final Map<String, BloomFilterConfig> bloomFilters = new LinkedHashMap<>();
-        private final Map<String, CoordinateReferenceSystem> crs = new LinkedHashMap<>();
+        private final Map<String, ColumnCrs> crs = new LinkedHashMap<>();
         private final Map<String, String> keyValueMetadata = new LinkedHashMap<>();
         private final Map<String, Integer> pageValueLimits = new LinkedHashMap<>();
         private OptionalInt coveringPageValueLimit = OptionalInt.empty();
@@ -535,14 +537,23 @@ public record WriteOptions(
         }
 
         public Builder crs(@NonNull String columnPath, @NonNull CoordinateReferenceSystem crs) {
-            this.crs.put(columnPath, crs);
+            this.crs.put(columnPath, ColumnCrs.of(crs));
+            return this;
+        }
+
+        /**
+         * Declares the CRS of a column unknown, written as {@code "crs": null}. A copy of a source that states its CRS
+         * unknown says so too, rather than claiming the OGC:CRS84 default for data that may be in metres.
+         */
+        public Builder crsUnknown(@NonNull String columnPath) {
+            this.crs.put(columnPath, ColumnCrs.UNKNOWN);
             return this;
         }
 
         /** Eagerly parses {@code rawProjjson}; throws on malformed input. */
         public Builder crs(@NonNull String columnPath, @NonNull String rawProjjson) {
             CoordinateReferenceSystem parsed = CoordinateReferenceSystems.fromProjjson(rawProjjson);
-            this.crs.put(columnPath, parsed);
+            this.crs.put(columnPath, ColumnCrs.of(parsed));
             return this;
         }
 
@@ -554,7 +565,7 @@ public record WriteOptions(
                         EPSG:%d is not in the curated bundle; use crs(col, String) for raw PROJJSON or \
                         crs(col, CoordinateReferenceSystem) for a typed instance""".formatted(epsgCode));
             }
-            this.crs.put(columnPath, bundled.get());
+            this.crs.put(columnPath, ColumnCrs.of(bundled.orElseThrow()));
             return this;
         }
 

@@ -23,7 +23,6 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import io.tileverse.parquetry.format.BoundingBox;
-import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 
 import lombok.Builder;
 import tools.jackson.databind.annotation.JsonDeserialize;
@@ -44,8 +43,8 @@ import tools.jackson.databind.annotation.JsonDeserialize;
  *     {@code "linestring"} / ... (2.0-dev native encoding kinds, deprecated path)
  * @param geometryTypes WKT-style type names this column carries (e.g. {@code ["Polygon", "MultiPolygon"]}); empty list
  *     when not declared
- * @param crs typed PROJJSON coordinate reference system; {@link Optional#empty()} means "use the spec default"
- *     (OGC:CRS84 for GeoParquet 1.x, the native annotation's default for 2.0)
+ * @param crs what the column says about its coordinate reference system: an inline PROJJSON document, the absent key
+ *     that means the spec default, or the null key that means the CRS is unknown. See {@link ColumnCrs}.
  * @param edges {@code "planar"} or {@code "spherical"} (1.x); {@link Optional#empty()} for planar default
  * @param orientation winding order, e.g. {@code "counterclockwise"} (1.1+)
  * @param bbox file-level bounding box, parsed from the GeoParquet corner-pair JSON array (4 or 6 doubles) into the
@@ -60,7 +59,10 @@ import tools.jackson.databind.annotation.JsonDeserialize;
 public record GeoColumn(
         Optional<String> encoding,
         @JsonProperty("geometry_types") List<String> geometryTypes,
-        Optional<CoordinateReferenceSystem> crs,
+
+        @JsonDeserialize(using = ColumnCrsDeserializer.class)
+        ColumnCrs crs,
+
         Optional<String> edges,
         Optional<String> orientation,
 
@@ -73,7 +75,7 @@ public record GeoColumn(
     public GeoColumn {
         encoding = encoding == null ? Optional.empty() : encoding;
         geometryTypes = geometryTypes == null ? List.of() : List.copyOf(geometryTypes);
-        crs = crs == null ? Optional.empty() : crs;
+        crs = crs == null ? ColumnCrs.DEFAULTED : crs;
         edges = edges == null ? Optional.empty() : edges;
         orientation = orientation == null ? Optional.empty() : orientation;
         bbox = bbox == null ? Optional.empty() : bbox;

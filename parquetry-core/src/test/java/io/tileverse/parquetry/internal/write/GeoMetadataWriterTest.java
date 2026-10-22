@@ -35,7 +35,9 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.ParquetCrs;
 import io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering;
+import io.tileverse.parquetry.schema.geo.geoparquet.ColumnCrs;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
@@ -66,7 +68,7 @@ class GeoMetadataWriterTest {
         GeoColumn col = parsed.columns().get("geometry");
         assertThat(col.encoding()).contains("WKB");
         assertThat(col.geometryTypes()).containsExactly("Polygon");
-        assertThat(col.crs().orElseThrow()).isInstanceOf(GeographicCRS.class);
+        assertThat(col.crs().projjson().orElseThrow()).isInstanceOf(GeographicCRS.class);
     }
 
     @Test
@@ -114,7 +116,7 @@ class GeoMetadataWriterTest {
         assertThat(col.encoding()).contains("WKB");
         assertThat(col.geometryTypes()).containsExactly("Polygon");
         assertThat(col.bbox()).isPresent();
-        assertThat(col.crs().orElseThrow()).isInstanceOf(GeographicCRS.class);
+        assertThat(col.crs().projjson().orElseThrow()).isInstanceOf(GeographicCRS.class);
         assertThat(col.covering())
                 .as("2.0 column metadata has no covering field")
                 .isEmpty();
@@ -194,9 +196,44 @@ class GeoMetadataWriterTest {
                 .orElseThrow();
         GeoParquetMetadata parsed = GeoParquetMetadata.parse(json);
         CoordinateReferenceSystem reparsed =
-                parsed.columns().get("geometry").crs().orElseThrow();
+                parsed.columns().get("geometry").crs().projjson().orElseThrow();
         assertThat(reparsed).isInstanceOf(GeographicCRS.class);
         assertThat(reparsed.id().orElseThrow().epsgCode()).hasValue(4326);
+    }
+
+    // A column whose CRS is unknown is written as "crs": null, not as the OGC:CRS84 default.
+    @Test
+    void unknownCrsIsWrittenAsNull() {
+        WriteOptions options = WriteOptions.builder()
+                .geoParquetMetadata(GeoParquetMetadataMode.V1_1_ONLY)
+                .crsUnknown("geometry")
+                .build();
+        ParquetSchema schema = flatSchema(requiredBinary("geometry"));
+        GeoMetadataWriter writer = new GeoMetadataWriter(options);
+
+        String json = writer.geoJsonPayload(schema, summaries("geometry", polygonSummary()))
+                .orElseThrow();
+        assertThat(json).contains("\"crs\":null");
+        assertThat(GeoParquetMetadata.parse(json).columns().get("geometry").crs())
+                .isEqualTo(ColumnCrs.UNKNOWN);
+    }
+
+    // The native annotation has no null: srid:0 is the Parquet spec's form of an undefined CRS.
+    @Test
+    void unknownCrsIsAnnotatedSridZero() {
+        WriteOptions options = WriteOptions.builder()
+                .geoParquetMetadata(GeoParquetMetadataMode.V2_0_ONLY)
+                .crsUnknown("geometry")
+                .build();
+        ParquetSchema schema = flatSchema(requiredBinary("geometry"));
+        GeoMetadataWriter writer = new GeoMetadataWriter(options);
+
+        ParquetSchema enriched = writer.applyV2LogicalTypes(schema);
+        SchemaNode.Primitive geomLeaf =
+                (SchemaNode.Primitive) enriched.find(ColumnPath.of("geometry")).orElseThrow();
+        LogicalType.Geometry geom =
+                (LogicalType.Geometry) geomLeaf.logicalType().orElseThrow();
+        assertThat(geom.crs()).contains(new ParquetCrs.Srid(0));
     }
 
     @Test

@@ -37,16 +37,17 @@ import io.tileverse.parquetry.testkit.TestCorpus;
  * identity parsing lives in {@code parquetry-core}; this is the GeoTools adapter's registry resolution of the same
  * fixtures.
  *
- * <p>The fixtures place the CRS in the {@code geo} metadata (the native logical-type {@code crs} is left empty); the
- * mapper resolves an EPSG identifier when the PROJJSON has one, and otherwise defaults to lon/lat WGS84 (the GeoParquet
- * default), which is what OGC:CRS84 and an id-less PROJJSON document both resolve to.
+ * <p>The fixtures place the CRS in the {@code geo} metadata; the native logical-type {@code crs} is left empty. The
+ * mapper resolves the identifier of the PROJJSON, and a column that declares no CRS of its own takes the GeoParquet
+ * default, lon/lat WGS84. A document that defines its CRS in full and states no identifier resolves to no CRS: turning
+ * such a definition into a GeoTools CRS needs a PROJJSON conversion parquetry does not have yet.
  */
 class GeoParquetCrsResolutionIT {
 
     /**
      * @param fixture the {@code data/crs/} file name
-     * @param expectedEpsg the EPSG code the geometry CRS must resolve to, or {@code -1} for the lon/lat WGS84 default
-     *     (the GeoParquet default, used when the PROJJSON has no EPSG identifier)
+     * @param expectedEpsg the EPSG code the geometry CRS must resolve to, {@code -1} for the lon/lat WGS84 default, or
+     *     {@code 0} when no CRS resolves
      */
     @ParameterizedTest(name = "{0} -> EPSG:{1}")
     @CsvSource({
@@ -54,7 +55,7 @@ class GeoParquetCrsResolutionIT {
         "crs-epsg-4326.parquet, 4326",
         "crs-default.parquet, -1",
         "crs-ogc-crs84.parquet, -1",
-        "crs-projjson-full.parquet, -1",
+        "crs-projjson-full.parquet, 0",
     })
     void resolvesGeometryCrs(String fixture, int expectedEpsg, @TempDir Path dir) throws Exception {
         Path file = TestCorpus.extractFile("geoparquet-testing/data/crs/" + fixture, dir);
@@ -66,6 +67,12 @@ class GeoParquetCrsResolutionIT {
             SimpleFeatureType ft = mapping.featureType();
             org.geotools.api.referencing.crs.CoordinateReferenceSystem crs = ft.getCoordinateReferenceSystem();
 
+            if (expectedEpsg == 0) {
+                assertThat(crs)
+                        .as("%s defines its CRS in full with no identifier, which does not resolve yet", fixture)
+                        .isNull();
+                return;
+            }
             assertThat(crs).as("%s resolves a geometry CRS", fixture).isNotNull();
             if (expectedEpsg > 0) {
                 assertThat(CRS.lookupEpsgCode(crs, false))

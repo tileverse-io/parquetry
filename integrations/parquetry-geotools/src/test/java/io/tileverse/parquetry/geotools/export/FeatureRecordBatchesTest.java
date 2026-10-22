@@ -44,6 +44,7 @@ import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.geo.MemorySegmentWkbReader;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.geo.geoparquet.ColumnCrs;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystems;
 
 class FeatureRecordBatchesTest {
@@ -211,17 +212,18 @@ class FeatureRecordBatchesTest {
      * is the identifier that says so.
      */
     @Test
-    void withGeometryCrsAddsResolvedCrsForMissingColumn() throws Exception {
+    void withGeometryCrsAddsResolvedCrs() throws Exception {
         SimpleFeatureType featureType = buildFeatureType();
         FeatureRecordBatches recordBatches = FeatureRecordBatches.forType(featureType);
 
         WriteOptions rebuilt = recordBatches.withGeometryCrs(WriteOptions.defaults());
 
-        assertThat(rebuilt.crs()).containsEntry("geom", CoordinateReferenceSystems.ogcCrs84());
+        assertThat(rebuilt.crs()).containsEntry("geom", ColumnCrs.of(CoordinateReferenceSystems.ogcCrs84()));
     }
 
+    // A geometry with no CRS is declared unknown, not CRS84: its data may be in metres.
     @Test
-    void withGeometryCrsFallsBackToCrs84WhenEpsgUnresolved() {
+    void withGeometryCrsDeclaresUnknown() {
         SimpleFeatureTypeBuilder typeBuilder = new SimpleFeatureTypeBuilder();
         typeBuilder.setName("t");
         typeBuilder.add("geom", Point.class);
@@ -230,7 +232,7 @@ class FeatureRecordBatchesTest {
 
         WriteOptions rebuilt = recordBatches.withGeometryCrs(WriteOptions.defaults());
 
-        assertThat(rebuilt.crs()).containsEntry("geom", CoordinateReferenceSystems.ogcCrs84());
+        assertThat(rebuilt.crs()).containsEntry("geom", ColumnCrs.UNKNOWN);
     }
 
     @Test

@@ -43,6 +43,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.ParquetCrs;
+import io.tileverse.parquetry.schema.geo.geoparquet.ColumnCrs;
 import io.tileverse.parquetry.schema.geo.geoparquet.Covering;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
@@ -222,8 +223,12 @@ final class FeatureTypeMapper {
             Optional<GeoParquetMetadata> geo,
             SimpleFeatureTypeBuilder ftb) {
         String attrName = path.dot();
-        CoordinateReferenceSystem crs = resolveCrs(path, logical, geo);
-        ftb.add(attrName, Geometry.class, crs);
+        Optional<CoordinateReferenceSystem> crs = resolveCrs(path, logical, geo);
+        if (crs.isPresent()) {
+            ftb.add(attrName, Geometry.class, crs.get());
+        } else {
+            ftb.add(attrName, Geometry.class);
+        }
         return new AttributeMapping(attrName, path, true, Geometry.class);
     }
 
@@ -370,21 +375,23 @@ final class FeatureTypeMapper {
     }
 
     /**
-     * Resolves the GeoTools CRS for a geometry column.
+     * Resolves the GeoTools CRS for a geometry column. The native GEOMETRY / GEOGRAPHY logical-type annotation comes
+     * first, then the GeoParquet 1.x {@code "geo"} column metadata.
      *
-     * <p>Resolution order: (1) CRS embedded in the native GEOMETRY/GEOGRAPHY logical-type annotation; (2) CRS from the
-     * GeoParquet 1.x {@code "geo"} column metadata; (3) WGS84 default (handled by {@link ProjJsonCrsConverter}).
+     * <p>A native annotation with no crs means the spec default, OGC:CRS84, unless the {@code "geo"} entry of the
+     * column says otherwise. Empty when the CRS is unknown or cannot be resolved; see {@link ProjJsonCrsConverter}. The
+     * attribute then has no CRS.
      */
-    private static CoordinateReferenceSystem resolveCrs(
+    private static Optional<CoordinateReferenceSystem> resolveCrs(
             ColumnPath path, Optional<LogicalType> logical, Optional<GeoParquetMetadata> geo) {
         Optional<ParquetCrs> fromLogical = logical.flatMap(FeatureTypeMapper::extractCrsFromLogicalType);
         if (fromLogical.isPresent()) {
             return ProjJsonCrsConverter.toGeoTools(fromLogical.get());
         }
-        Optional<io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem> fromMetadata = geo.flatMap(
-                        g -> Optional.ofNullable(g.columns().get(path.dot())))
-                .flatMap(GeoColumn::crs);
-        return ProjJsonCrsConverter.toGeoTools(fromMetadata);
+        ColumnCrs declared = geo.flatMap(g -> Optional.ofNullable(g.columns().get(path.dot())))
+                .map(GeoColumn::crs)
+                .orElse(ColumnCrs.DEFAULTED);
+        return ProjJsonCrsConverter.toGeoTools(declared);
     }
 
     /**
@@ -399,7 +406,8 @@ final class FeatureTypeMapper {
             return fromLogical.get().epsgCode();
         }
         return geo.flatMap(g -> Optional.ofNullable(g.columns().get(path.dot())))
-                .flatMap(GeoColumn::crs)
+                .map(GeoColumn::crs)
+                .flatMap(ColumnCrs::projjson)
                 .flatMap(io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem::id)
                 .map(Identifier::epsgCode)
                 .orElse(OptionalInt.empty());

@@ -49,9 +49,8 @@ import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.geo.geoparquet.ColumnCrs;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
-import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
-import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystems;
 
 /**
  * Lazily streams a GeoTools {@link FeatureCollection} as {@link ParquetRecordBatch}es sized to a row target and a byte
@@ -136,25 +135,22 @@ public final class FeatureRecordBatches {
     }
 
     /**
-     * Returns {@code base} with a CRS entry added for every geometry attribute whose dotted column path is absent from
-     * {@link WriteOptions#crs()}: the attribute's resolved EPSG CRS when one was found at schema derivation, or
-     * explicit CRS84 otherwise (the GeoParquet default). Returns {@code base} unchanged when every geometry attribute
-     * already has an entry.
+     * Returns {@code base} with a CRS declaration added for every geometry attribute whose dotted column path is absent
+     * from {@link WriteOptions#crs()}. Returns {@code base} unchanged when every geometry attribute already has one.
      */
     WriteOptions withGeometryCrs(WriteOptions base) {
-        Map<String, CoordinateReferenceSystem> additions = resolveMissingGeometryCrs(base.crs());
+        Map<String, ColumnCrs> additions = resolveMissingGeometryCrs(base.crs());
         if (additions.isEmpty()) {
             return base;
         }
-        Map<String, CoordinateReferenceSystem> merged = new LinkedHashMap<>(base.crs());
+        Map<String, ColumnCrs> merged = new LinkedHashMap<>(base.crs());
         merged.putAll(additions);
         return rebuildWithCrs(base, merged);
     }
 
-    /** The CRS entries to add for geometry attributes not already covered by {@code existingCrs}. */
-    private Map<String, CoordinateReferenceSystem> resolveMissingGeometryCrs(
-            Map<String, CoordinateReferenceSystem> existingCrs) {
-        Map<String, CoordinateReferenceSystem> additions = new LinkedHashMap<>();
+    /** The CRS declarations to add for geometry attributes not already covered by {@code existingCrs}. */
+    private Map<String, ColumnCrs> resolveMissingGeometryCrs(Map<String, ColumnCrs> existingCrs) {
+        Map<String, ColumnCrs> additions = new LinkedHashMap<>();
         for (FeatureWriteSchema.WriteAttribute attribute : writeSchema.attributes()) {
             if (needsCrsEntry(attribute, existingCrs)) {
                 String columnPath = attribute.path().dot();
@@ -166,21 +162,25 @@ public final class FeatureRecordBatches {
 
     /** Whether {@code attribute} is a geometry column that {@code existingCrs} does not already name. */
     private static boolean needsCrsEntry(
-            FeatureWriteSchema.WriteAttribute attribute, Map<String, CoordinateReferenceSystem> existingCrs) {
+            FeatureWriteSchema.WriteAttribute attribute, Map<String, ColumnCrs> existingCrs) {
         return attribute.geometry() && !existingCrs.containsKey(attribute.path().dot());
     }
 
-    /** The CRS for {@code columnPath}: its resolved EPSG code when one was found, else explicit CRS84. */
-    private CoordinateReferenceSystem resolveCrs(String columnPath) {
+    /**
+     * What to declare for {@code columnPath}: the CRS of its resolved EPSG code when one was found at schema
+     * derivation, otherwise unknown. A feature type whose geometry has no CRS, or one the EPSG registry does not
+     * recognise, is written as unknown rather than as the OGC:CRS84 default: the data may be in metres.
+     */
+    private ColumnCrs resolveCrs(String columnPath) {
         Integer epsg = writeSchema.geometryEpsg().get(columnPath);
         if (epsg == null) {
-            return CoordinateReferenceSystems.ogcCrs84();
+            return ColumnCrs.UNKNOWN;
         }
-        return EastingFirstCrs.forEpsg(epsg).orElseGet(CoordinateReferenceSystems::ogcCrs84);
+        return EastingFirstCrs.forEpsg(epsg).map(ColumnCrs::of).orElse(ColumnCrs.UNKNOWN);
     }
 
     /** Rebuilds {@code base} through its canonical constructor with {@code crs} replacing its own CRS map. */
-    private static WriteOptions rebuildWithCrs(WriteOptions base, Map<String, CoordinateReferenceSystem> crs) {
+    private static WriteOptions rebuildWithCrs(WriteOptions base, Map<String, ColumnCrs> crs) {
         return new WriteOptions(
                 base.parquetVersion(),
                 base.geoParquetMetadata(),

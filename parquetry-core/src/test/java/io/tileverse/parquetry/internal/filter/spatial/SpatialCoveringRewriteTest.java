@@ -41,6 +41,7 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering;
+import io.tileverse.parquetry.schema.geo.geoparquet.ColumnCrs;
 import io.tileverse.parquetry.schema.geo.geoparquet.Covering;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
@@ -270,7 +271,7 @@ class SpatialCoveringRewriteTest {
         return new GeoColumn(
                 Optional.of("WKB"),
                 List.of(),
-                Optional.empty(),
+                ColumnCrs.DEFAULTED,
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),
