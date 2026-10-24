@@ -138,8 +138,7 @@ public final class GeoMetadataWriter {
      *     an empty summary (bbox absent, no geometry types observed)
      * @param covering the active bbox covering plan, present when the write derives or declares a covering for its
      *     geometry column; empty when no covering is written. The declaration is emitted only on the plan's geometry
-     *     column and never under {@code V2_0_ONLY}: 2.0 column metadata has no covering field, and {@link WriteOptions}
-     *     rejects a covering request or declaration in that mode.
+     *     column, in the same shape for a 1.1.0 and a 2.0.0 document.
      */
     public Optional<String> geoJsonPayload(
             @NonNull ParquetSchema schema,
@@ -242,8 +241,9 @@ public final class GeoMetadataWriter {
     }
 
     /**
-     * Declares the {@code bbox} covering per GeoParquet 1.1, derived or existing: a {@code covering.bbox} object
-     * mapping each of the four extrema to the path of its sidecar column. The spec order is xmin, ymin, xmax, ymax.
+     * Declares the {@code bbox} covering as the GeoParquet spec defines it, derived or existing: a
+     * {@code covering.bbox} object mapping each of the four extrema to the path of its sidecar column. The spec order
+     * is xmin, ymin, xmax, ymax.
      */
     private static void writeCovering(JsonGenerator gen, BboxCoveringPlan plan) {
         gen.writeName("covering");

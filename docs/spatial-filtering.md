@@ -94,8 +94,8 @@ codes, whichever encoding the input used.
 
 **Row-group and page pruning** comes from one of two mechanisms:
 
-- **Covering-column lowering.** A GeoParquet 1.1 file stores each row's bounding
-  box in four `bbox.*` sidecar columns. Since those columns are the geometry's
+- **Covering-column lowering.** A GeoParquet file with a `bbox` covering (1.1 or
+  2.0) stores each row's bounding box in four `bbox.*` sidecar columns. Since those columns are the geometry's
   exact 2D box, every relation is equivalent to a conjunction of numeric
   comparisons on them - for example `BboxIntersects(q)` is `xmin <= q.maxX AND
   xmax >= q.minX AND ymin <= q.maxY AND ymax >= q.minY`. `SpatialCoveringRewrite`
@@ -118,15 +118,19 @@ whichever the file supports:
 
 | The file has ... | Row-group pruning | Page pruning | Record-level test |
 |------------------|-------------------|--------------|-------------------|
-| `bbox.*` covering columns (GeoParquet 1.1) | yes (lowered comparisons) | yes | covering comparisons, no WKB decode |
-| native per-row-group geometry stats (GeoParquet 2.0) | yes (SPATIAL tier) | no | `WkbEnvelope.matches` on WKB |
+| `bbox.*` covering columns (GeoParquet 1.1 or 2.0) | yes (lowered comparisons) | yes | covering comparisons, no WKB decode |
+| native per-row-group geometry stats only (GeoParquet 2.0) | yes (SPATIAL tier) | no | `WkbEnvelope.matches` on WKB |
 | neither | no | no | `WkbEnvelope.matches` on WKB |
 
-Files written by parquetry use the native path: the writer emits per-row-group
-geometry statistics but not `bbox.*` covering columns. Files written by tools that
-emit GeoParquet 1.1 covering take the lowering path, which prunes pages too. With
-no usable statistics, pruning declines to nothing and the result is still exact -
-the record-level test decides every row.
+A file with a covering takes the lowering path, whichever GeoParquet version its
+geo document declares, and prunes pages too. A GeoParquet 2.0 file without a
+covering takes the native path, at row-group granularity. With no usable
+statistics, pruning declines to nothing and the result is still exact - the
+record-level test decides every row.
+
+The default write (`DUAL_V1_1_AND_V2_0`) emits both: native per-row-group
+geometry statistics and a `bbox` covering. `WriteOptions.bboxCovering` requests or
+declines the covering in any metadata mode, including `V2_0_ONLY`.
 
 Pruning is conservative everywhere: a row group or page is dropped only when its
 statistics prove no row in it can match; pruning never changes which rows a

@@ -40,7 +40,7 @@ import tools.jackson.databind.annotation.JsonDeserialize;
  * </ul>
  *
  * @param encoding wire encoding of the geometry payload: {@code "WKB"} (default; all versions), {@code "point"} /
- *     {@code "linestring"} / ... (2.0-dev native encoding kinds, deprecated path)
+ *     {@code "linestring"} / ... (the 1.1 native encodings; 2.0 allows WKB only)
  * @param geometryTypes WKT-style type names this column carries (e.g. {@code ["Polygon", "MultiPolygon"]}); empty list
  *     when not declared
  * @param crs what the column says about its coordinate reference system: an inline PROJJSON document, the absent key
