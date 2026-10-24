@@ -358,6 +358,19 @@ class FeatureTypeMapperTest {
                 .isEqualTo(3857);
     }
 
+    // The Parquet spec reads an absent native crs as OGC:CRS84. Without a "geo" entry nothing says otherwise.
+    @Test
+    void nativeGeometryWithoutCrsIsCrs84() {
+        ParquetSchema schema = schemaWithNativeGeometry(Optional.empty());
+
+        FeatureTypeMapper.Mapping mapping = FeatureTypeMapper.map("native", null, schema, Optional.empty(), null);
+        org.geotools.api.referencing.crs.CoordinateReferenceSystem crs =
+                mapping.featureType().getCoordinateReferenceSystem();
+
+        assertThat(crs).isNotNull();
+        assertThat(CRS.getAxisOrder(crs)).isEqualTo(CRS.AxisOrder.EAST_NORTH);
+    }
+
     private static ParquetSchema schemaWithDecimalAmount() {
         SchemaNode.Primitive amount = new SchemaNode.Primitive(
                 "amount",
@@ -372,12 +385,16 @@ class FeatureTypeMapperTest {
     }
 
     private static ParquetSchema schemaWithNativeGeometryCrs(ParquetCrs crs) {
+        return schemaWithNativeGeometry(Optional.of(crs));
+    }
+
+    private static ParquetSchema schemaWithNativeGeometry(Optional<ParquetCrs> crs) {
         SchemaNode.Primitive geom = new SchemaNode.Primitive(
                 "geom",
                 Repetition.OPTIONAL,
                 PrimitiveKind.BYTE_ARRAY,
                 OptionalInt.empty(),
-                Optional.of(new LogicalType.Geometry(Optional.of(crs))),
+                Optional.of(new LogicalType.Geometry(crs)),
                 -1);
         SchemaNode.Group root =
                 new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(geom), Optional.empty(), -1);

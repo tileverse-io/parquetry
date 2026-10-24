@@ -67,6 +67,7 @@ class GeoParquetCrsConformanceIT {
                     .isNotNull();
 
             OptionalInt epsg = column.crs()
+                    .projjson()
                     .flatMap(CoordinateReferenceSystem::id)
                     .map(Identifier::epsgCode)
                     .orElse(OptionalInt.empty());
@@ -92,7 +93,7 @@ class GeoParquetCrsConformanceIT {
             GeoParquetMetadata geo =
                     GeoParquetMetadata.parse(reader.keyValueMetadata().get("geo"));
             Optional<Identifier> id =
-                    geo.columns().get(geo.primaryColumn()).crs().flatMap(CoordinateReferenceSystem::id);
+                    geo.columns().get(geo.primaryColumn()).crs().projjson().flatMap(CoordinateReferenceSystem::id);
 
             assertThat(id).as("%s: CRS carries a typed identifier", fixture).isPresent();
             assertThat(id.orElseThrow().authority()).isEqualTo(authority);

@@ -45,6 +45,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.geoparquet.ColumnCrs;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
@@ -196,14 +197,22 @@ record FeatureWriteSchema(
      * one was found.
      */
     private static GeoColumn geoColumn(String columnName, Map<String, Integer> geometryEpsg) {
-        Integer epsg = geometryEpsg.get(columnName);
-        Optional<io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem> crs =
-                epsg == null ? Optional.empty() : EastingFirstCrs.forEpsg(epsg);
         return GeoColumn.builder()
                 .encoding(Optional.of("WKB"))
                 .geometryTypes(List.of())
-                .crs(crs)
+                .crs(declaredCrs(geometryEpsg.get(columnName)))
                 .build();
+    }
+
+    /**
+     * States the CRS of a written column. A feature type whose geometry has no CRS, or one the EPSG registry does not
+     * recognise, is written as unknown rather than as the OGC:CRS84 default: the data may be in metres.
+     */
+    private static ColumnCrs declaredCrs(Integer epsg) {
+        if (epsg == null) {
+            return ColumnCrs.UNKNOWN;
+        }
+        return EastingFirstCrs.forEpsg(epsg).map(ColumnCrs::of).orElse(ColumnCrs.UNKNOWN);
     }
 
     /** The physical kind, byte length, and logical-type annotation for one scalar Java binding. */

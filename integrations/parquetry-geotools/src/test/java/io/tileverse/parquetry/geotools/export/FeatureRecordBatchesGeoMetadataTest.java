@@ -53,7 +53,7 @@ class FeatureRecordBatchesGeoMetadataTest {
         GeoColumn geomColumn = geoMetadata.columns().get("geom");
         assertThat(geomColumn).isNotNull();
         assertThat(geomColumn.encoding()).contains("WKB");
-        assertThat(geomColumn.crs()).isPresent();
+        assertThat(geomColumn.crs().projjson()).isPresent();
         assertThat(geomColumn.edges())
                 .as("no edges entry is written; the Arrow side reads edges().orElse(\"planar\")")
                 .isEmpty();

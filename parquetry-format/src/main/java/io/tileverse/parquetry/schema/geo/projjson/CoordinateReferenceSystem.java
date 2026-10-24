@@ -25,19 +25,28 @@ import tools.jackson.databind.JsonNode;
  * The typed PROJJSON coordinate reference system ADT. One of:
  *
  * <ul>
- *   <li>{@link GeographicCRS} - lat/lon on a geodetic datum (the most common GeoParquet case, OGC:CRS84).
+ *   <li>{@link GeographicCRS} - angular coordinates on a geodetic frame, the most common GeoParquet case. The axis
+ *       order is the one stated by the coordinate system: OGC:CRS84 is lon/lat, EPSG:4326 is lat/lon.
  *   <li>{@link GeodeticCRS} - 3D geocentric (X/Y/Z) on a geodetic datum.
  *   <li>{@link ProjectedCRS} - planar (easting/northing) derived from a base CRS via a {@link Conversion}.
  *   <li>{@link CompoundCRS} - horizontal + vertical (or other) components combined.
  *   <li>{@link BoundCRS} - a CRS paired with a transformation to a target CRS.
  *   <li>{@link VerticalCRS} - elevation / depth on a vertical datum.
- *   <li>{@link Transformation} - a top-level coordinate-operation document.
+ *   <li>{@link Transformation} - a coordinate operation rather than a CRS. The PROJJSON schema allows one as a
+ *       top-level document, which is why it is modeled here alongside the CRS types.
  *   <li>{@link Unknown} - forward-compat fallback when the PROJJSON {@code type} discriminator is one this package does
  *       not yet model.
  * </ul>
  *
  * <p>The common accessors {@link #name()} and {@link #id()} are declared on this interface. Use {@link #id()} together
  * with {@link Identifier#epsgCode()} to obtain the EPSG SRID where applicable.
+ *
+ * <p>A CRS parsed from a document keeps that document in {@link #raw()}, and writing it back emits the kept tree
+ * unchanged. The records model the properties read by parquetry; PROJJSON has many more, and several of them are
+ * required. OGC:CRS84, EPSG:4326 and the CRSs derived from them define their frame with a {@code datum_ensemble}, not
+ * modeled by any record here, and PROJ rejects a document that omits it. Writing the kept tree keeps such a document
+ * valid, and keeps the unmodeled properties, among them {@code scope}, {@code area}, {@code bbox} and {@code remarks}.
+ * A CRS built in code has no document and is written from its fields.
  *
  * <p>Polymorphic deserialization is driven by the JSON {@code type} discriminator via
  * {@link CoordinateReferenceSystemDeserializer}, wired through {@link ProjJsonModule}. The deserializer is wired at the
@@ -63,10 +72,22 @@ public sealed interface CoordinateReferenceSystem
     Optional<Identifier> id();
 
     /**
-     * Forward-compat fallback for PROJJSON {@code type} discriminators this package does not yet model. The raw JSON
-     * tree is preserved so callers can inspect it if they recognize the type.
+     * The source document of this CRS, empty for a CRS built in code. The serializer writes it unchanged, which keeps
+     * the properties not modeled by the records.
      */
-    record Unknown(String rawType, JsonNode raw) implements CoordinateReferenceSystem {
+    Optional<JsonNode> raw();
+
+    /**
+     * Returns a copy of this CRS that remembers its source document. Called by the deserializer; a caller building a
+     * CRS in code has no document to attach.
+     */
+    CoordinateReferenceSystem withRaw(JsonNode document);
+
+    /**
+     * Forward-compat fallback for a PROJJSON {@code type} discriminator not yet modeled by this package. The document
+     * is preserved for callers that recognize the type and want to inspect it.
+     */
+    record Unknown(String rawType, JsonNode document) implements CoordinateReferenceSystem {
 
         @Override
         public Optional<String> name() {
@@ -76,6 +97,16 @@ public sealed interface CoordinateReferenceSystem
         @Override
         public Optional<Identifier> id() {
             return Optional.empty();
+        }
+
+        @Override
+        public Optional<JsonNode> raw() {
+            return Optional.ofNullable(document);
+        }
+
+        @Override
+        public Unknown withRaw(JsonNode replacement) {
+            return new Unknown(rawType, replacement);
         }
     }
 }

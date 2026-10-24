@@ -170,8 +170,10 @@ class GeoParquetExporterIT {
         }
     }
 
+    // A feature type whose geometry has no CRS is written as unknown and read back with no CRS. Standing in with
+    // WGS 84 would state degrees for coordinates that may be in metres.
     @Test
-    void nullCrsWritesAndReadsWithDefault(@TempDir Path dir) throws Exception {
+    void nullCrsRoundTripsAsUnknown(@TempDir Path dir) throws Exception {
         SimpleFeatureTypeBuilder typeBuilder = new SimpleFeatureTypeBuilder();
         typeBuilder.setName("noCrs");
         typeBuilder.add("geom", Point.class);
@@ -189,10 +191,9 @@ class GeoParquetExporterIT {
             ContentFeatureSource fs = (ContentFeatureSource) store.getFeatureSource("features");
             CoordinateReferenceSystem readCrs = fs.getSchema().getCoordinateReferenceSystem();
 
-            assertThat(readCrs).isNotNull();
-            assertThat(CRS.equalsIgnoreMetadata(readCrs, CRS.decode("EPSG:4326", true)))
-                    .as("a geometry attribute with no source CRS defaults to WGS84 on read")
-                    .isTrue();
+            assertThat(readCrs)
+                    .as("a geometry attribute with no source CRS reads back with no CRS")
+                    .isNull();
         }
     }
 

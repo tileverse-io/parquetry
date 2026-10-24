@@ -195,12 +195,13 @@ public final class SchemaBuilder {
     /**
      * Translates one GeoParquet column entry into a {@link LogicalType.Geometry} or {@link LogicalType.Geography}.
      * GeoParquet 1.x's {@code "edges"} value ({@code "planar"} / {@code "spherical"}) maps to Geometry / Geography
-     * respectively, mirroring the GeoParquet 2.0 logical-type split. GeoParquet 1.x carries no Geography
-     * {@code algorithm}, so Geography always surfaces with {@code Optional.empty()} there (consumer falls back to the
-     * spec default {@code SPHERICAL}).
+     * respectively, mirroring the GeoParquet 2.0 logical-type split. GeoParquet 1.x defines no Geography
+     * {@code algorithm}. Geography therefore always has {@code Optional.empty()} there, and the consumer falls back to
+     * the spec default {@code SPHERICAL}. The crs follows {@link ColumnCrs#nativeCrs()}: a column with {@code "crs":
+     * null} is annotated {@code srid:0}, because a native annotation with no crs would mean OGC:CRS84.
      */
     private static LogicalType deriveLogicalType(GeoColumn geoColumn) {
-        Optional<ParquetCrs> crs = geoColumn.crs().map(ParquetCrs::inline);
+        Optional<ParquetCrs> crs = geoColumn.crs().nativeCrs();
         String edges = geoColumn.edges().orElse("planar");
         if ("spherical".equalsIgnoreCase(edges)) {
             return new LogicalType.Geography(crs, Optional.<EdgeInterpolationAlgorithm>empty());

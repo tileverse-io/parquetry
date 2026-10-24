@@ -36,6 +36,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.geoparquet.ColumnCrs;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystems;
 
@@ -170,13 +171,22 @@ public final class BboxCoveringPlan {
         };
     }
 
-    /** A geometry column with no configured CRS defaults to CRS84, hence a missing entry is treated as compatible. */
-    private static boolean isCrs84Compatible(CoordinateReferenceSystem crs) {
-        if (crs == null) {
+    /**
+     * Whether float ordinates hold enough precision for the column. A column with no configured CRS defaults to CRS84,
+     * hence a missing entry is compatible. An unknown CRS is not: its data may be in metres, where float loses
+     * precision.
+     */
+    private static boolean isCrs84Compatible(ColumnCrs declared) {
+        if (declared == null) {
             return true;
         }
-        boolean epsg4326 = crs.id().map(id -> id.epsgCode().orElse(-1) == 4326).orElse(false);
-        return epsg4326 || crs.equals(CoordinateReferenceSystems.ogcCrs84());
+        Optional<CoordinateReferenceSystem> crs = declared.projjson();
+        if (crs.isEmpty()) {
+            return declared instanceof ColumnCrs.Defaulted;
+        }
+        boolean epsg4326 =
+                crs.get().id().map(id -> id.epsgCode().orElse(-1) == 4326).orElse(false);
+        return epsg4326 || crs.get().equals(CoordinateReferenceSystems.ogcCrs84());
     }
 
     private static SchemaNode.Group coveringGroup(boolean useFloat) {

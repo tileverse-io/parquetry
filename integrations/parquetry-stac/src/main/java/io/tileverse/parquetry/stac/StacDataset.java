@@ -70,8 +70,10 @@ import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.geo.geoparquet.ColumnCrs;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
+import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.Identifier;
 
 import io.tileverse.stac.StacFormatException;
@@ -440,14 +442,15 @@ public final class StacDataset implements GeoParquetDataset {
             return true;
         }
         GeoColumn primary = geo.orElseThrow().columns().get(geo.orElseThrow().primaryColumn());
-        if (primary == null || primary.crs().isEmpty()) {
+        if (primary == null) {
             return true;
         }
-        return primary.crs()
-                .orElseThrow()
-                .id()
-                .map(StacDataset::isWgs84Identifier)
-                .orElse(false);
+        return switch (primary.crs()) {
+            case ColumnCrs.Defaulted _ -> true;
+            case ColumnCrs.Unknown _ -> false;
+            case ColumnCrs.Defined(CoordinateReferenceSystem crs) ->
+                crs.id().map(StacDataset::isWgs84Identifier).orElse(false);
+        };
     }
 
     /** OGC:CRS84 and EPSG:4326 both name WGS 84; axis order does not change a 2D extent box. */

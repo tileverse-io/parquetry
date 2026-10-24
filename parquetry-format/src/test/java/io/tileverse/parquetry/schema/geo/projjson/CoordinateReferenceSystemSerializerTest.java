@@ -162,7 +162,7 @@ class CoordinateReferenceSystemSerializerTest {
         CoordinateReferenceSystem reParsed = MAPPER.readValue(reEmitted, CoordinateReferenceSystem.class);
         assertThat(reParsed).isInstanceOfSatisfying(CoordinateReferenceSystem.Unknown.class, again -> {
             assertThat(again.rawType()).isEqualTo("FuturisticCRS");
-            assertThat(again.raw().get("flux").asInt()).isEqualTo(42);
+            assertThat(again.document().get("flux").asInt()).isEqualTo(42);
         });
     }
 

@@ -19,14 +19,19 @@ import java.util.Optional;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.JsonGenerator;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.SerializationContext;
 import tools.jackson.databind.ValueSerializer;
 
 /**
- * Polymorphic serializer mirror of {@link CoordinateReferenceSystemDeserializer}. Each concrete CRS record renders with
- * a leading {@code "type"} discriminator followed by its declared fields; {@link CoordinateReferenceSystem.Unknown}
- * re-emits the captured raw JSON tree verbatim so round-trip fidelity is preserved for {@code type} discriminators this
- * package does not yet model.
+ * Polymorphic serializer mirror of {@link CoordinateReferenceSystemDeserializer}.
+ *
+ * <p>A CRS parsed from a document is written as that document, unchanged. The records model the properties read by
+ * parquetry, and PROJJSON has many more; several of them are required, and dropping them produces a document rejected
+ * by PROJ. See {@link CoordinateReferenceSystem#raw()}.
+ *
+ * <p>A CRS built in code has no document. It renders field by field, with a leading {@code "type"} discriminator
+ * followed by its declared fields.
  *
  * <p><strong>Why the bodies are written field-by-field.</strong> Jackson 3's {@code SimpleSerializers} resolves
  * serializer lookups by walking class mappings, superclasses, and interfaces in turn. The polymorphic registration
@@ -47,8 +52,18 @@ final class CoordinateReferenceSystemSerializer extends ValueSerializer<Coordina
     @Override
     public void serialize(CoordinateReferenceSystem value, JsonGenerator gen, SerializationContext ctxt)
             throws JacksonException {
+        Optional<JsonNode> parsedDocument = value.raw();
+        if (parsedDocument.isPresent()) {
+            gen.writeTree(parsedDocument.get());
+            return;
+        }
+        writeFields(value, gen, ctxt);
+    }
+
+    private static void writeFields(CoordinateReferenceSystem value, JsonGenerator gen, SerializationContext ctxt)
+            throws JacksonException {
         switch (value) {
-            case CoordinateReferenceSystem.Unknown u -> gen.writeTree(u.raw());
+            case CoordinateReferenceSystem.Unknown u -> gen.writeTree(u.document());
             case GeographicCRS g -> writeGeographicCrs(g, gen, ctxt);
             case GeodeticCRS g -> writeGeodeticCrs(g, gen, ctxt);
             case ProjectedCRS p -> writeProjectedCrs(p, gen, ctxt);

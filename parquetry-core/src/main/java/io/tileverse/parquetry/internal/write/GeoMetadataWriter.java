@@ -31,7 +31,7 @@ import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
-import io.tileverse.parquetry.schema.geo.ParquetCrs;
+import io.tileverse.parquetry.schema.geo.geoparquet.ColumnCrs;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystems;
 import io.tileverse.parquetry.schema.geo.projjson.ProjJsonModule;
@@ -97,14 +97,14 @@ public final class GeoMetadataWriter {
         if (options.geoParquetMetadata() == GeoParquetMetadataMode.V1_1_ONLY) {
             return schema;
         }
-        Map<String, CoordinateReferenceSystem> crsConfig = options.crs();
+        Map<String, ColumnCrs> crsConfig = options.crs();
         if (crsConfig.isEmpty()) {
             return schema;
         }
         Map<ColumnPath, LogicalType> overrides = LinkedHashMap.newLinkedHashMap(crsConfig.size());
-        for (Map.Entry<String, CoordinateReferenceSystem> entry : crsConfig.entrySet()) {
+        for (Map.Entry<String, ColumnCrs> entry : crsConfig.entrySet()) {
             ColumnPath path = parseDotted(entry.getKey());
-            overrides.put(path, new LogicalType.Geometry(Optional.of(ParquetCrs.inline(entry.getValue()))));
+            overrides.put(path, new LogicalType.Geometry(entry.getValue().nativeCrs()));
         }
         return schema.withLogicalTypes(overrides);
     }
@@ -206,12 +206,7 @@ public final class GeoMetadataWriter {
         }
         gen.writeEndArray();
 
-        CoordinateReferenceSystem crs = options.crs().get(column.dot());
-        gen.writeName("crs");
-        if (crs == null) {
-            crs = CoordinateReferenceSystems.ogcCrs84();
-        }
-        gen.writePOJO(crs);
+        writeCrs(gen, options.crs().get(column.dot()));
 
         gen.writeStringProperty("edges", PLANAR_EDGES);
 
@@ -223,6 +218,23 @@ public final class GeoMetadataWriter {
             writeCovering(gen, covering.orElseThrow());
         }
         gen.writeEndObject();
+    }
+
+    /**
+     * Writes the {@code crs} of a column. A column with nothing declared is written as OGC:CRS84, the GeoParquet
+     * default, which keeps it readable as geometry. A column declared unknown is written as null, because no default
+     * stands in for an unknown CRS.
+     */
+    private static void writeCrs(JsonGenerator gen, ColumnCrs declared) {
+        gen.writeName("crs");
+        if (declared instanceof ColumnCrs.Unknown) {
+            gen.writeNull();
+            return;
+        }
+        CoordinateReferenceSystem crs = declared == null
+                ? CoordinateReferenceSystems.ogcCrs84()
+                : declared.projjson().orElseGet(CoordinateReferenceSystems::ogcCrs84);
+        gen.writePOJO(crs);
     }
 
     private static boolean coveringAppliesTo(Optional<BboxCoveringPlan> covering, ColumnPath column) {

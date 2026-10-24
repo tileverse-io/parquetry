@@ -15,10 +15,14 @@
  */
 package io.tileverse.parquetry.schema.geo.projjson;
 
+import java.util.Objects;
 import java.util.Optional;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+
+import tools.jackson.databind.JsonNode;
 
 /**
  * A CRS paired with a {@link Transformation} to a reference CRS. PROJ emits {@code BoundCRS} when transforming a
@@ -29,6 +33,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  * @param sourceCrs the CRS the data is in (the "bound" CRS)
  * @param targetCrs the CRS the {@link #transformation} maps the source data to
  * @param transformation the operation that takes {@link #sourceCrs} coordinates to {@link #targetCrs} coordinates
+ * @param raw the source document of this CRS, empty for a CRS built in code; see
+ *     {@link CoordinateReferenceSystem#raw()}
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record BoundCRS(
@@ -36,5 +42,42 @@ public record BoundCRS(
         Optional<Identifier> id,
         @JsonProperty("source_crs") Optional<CoordinateReferenceSystem> sourceCrs,
         @JsonProperty("target_crs") Optional<CoordinateReferenceSystem> targetCrs,
-        Optional<Transformation> transformation)
-        implements CoordinateReferenceSystem {}
+        Optional<Transformation> transformation,
+        @JsonIgnore Optional<JsonNode> raw)
+        implements CoordinateReferenceSystem {
+
+    public BoundCRS {
+        raw = raw == null ? Optional.empty() : raw;
+    }
+
+    /** Builds a CRS from its properties, with no parsed document to write back. */
+    public BoundCRS(
+            Optional<String> name,
+            Optional<Identifier> id,
+            Optional<CoordinateReferenceSystem> sourceCrs,
+            Optional<CoordinateReferenceSystem> targetCrs,
+            Optional<Transformation> transformation) {
+        this(name, id, sourceCrs, targetCrs, transformation, Optional.empty());
+    }
+
+    @Override
+    public BoundCRS withRaw(JsonNode document) {
+        return new BoundCRS(name, id, sourceCrs, targetCrs, transformation, Optional.of(document));
+    }
+
+    /** The parsed document takes no part: a parsed CRS equals a CRS built with the same properties. */
+    @Override
+    public boolean equals(Object o) {
+        return o instanceof BoundCRS other
+                && Objects.equals(name, other.name)
+                && Objects.equals(id, other.id)
+                && Objects.equals(sourceCrs, other.sourceCrs)
+                && Objects.equals(targetCrs, other.targetCrs)
+                && Objects.equals(transformation, other.transformation);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(name, id, sourceCrs, targetCrs, transformation);
+    }
+}

@@ -94,6 +94,25 @@ class SchemaBuilderGeoTest {
                 .isEmpty();
     }
 
+    // "crs": null means unknown. A Geometry with no crs would mean the OGC:CRS84 default instead.
+    @Test
+    void unknownGeoCrsBecomesSridZero() {
+        String geo = """
+                {
+                  "version": "1.1.0",
+                  "primary_column": "geometry",
+                  "columns": {
+                    "geometry": {"encoding": "WKB", "geometry_types": [], "crs": null}
+                  }
+                }
+                """;
+        ParquetSchema out = SchemaBuilder.synthesizeGeoLogicalTypes(GEO_SCHEMA, Map.of("geo", geo));
+        SchemaNode.Primitive leaf =
+                (SchemaNode.Primitive) out.find(ColumnPath.of("geometry")).orElseThrow();
+        LogicalType.Geometry geom = (LogicalType.Geometry) leaf.logicalType().orElseThrow();
+        assertThat(geom.crs()).contains(new ParquetCrs.Srid(0));
+    }
+
     @Test
     void sphericalEdgesYieldGeography() {
         String geo = """

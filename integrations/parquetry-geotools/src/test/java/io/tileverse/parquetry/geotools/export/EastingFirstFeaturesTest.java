@@ -117,14 +117,15 @@ class EastingFirstFeaturesTest {
                 .columns()
                 .get("geom")
                 .crs()
+                .projjson()
                 .orElseThrow();
-        io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem inWriteOptions = recordBatches
+        io.tileverse.parquetry.schema.geo.geoparquet.ColumnCrs inWriteOptions = recordBatches
                 .withGeometryCrs(WriteOptions.builder().build())
                 .crs()
                 .get("geom");
 
         assertThat(declared).isEqualTo(CoordinateReferenceSystems.ogcCrs84());
-        assertThat(inWriteOptions).isEqualTo(declared);
+        assertThat(inWriteOptions.projjson()).contains(declared);
     }
 
     /** Exports one point authored at {@code authored} in {@code crs} and returns the point as stored in the WKB. */

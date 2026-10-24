@@ -70,7 +70,7 @@ public sealed interface GeoParquetMetadata
      */
     private static void rejectTypelessColumnCrs(GeoParquetMetadata metadata) {
         metadata.columns()
-                .forEach((columnName, column) -> column.crs().ifPresent(crs -> {
+                .forEach((columnName, column) -> column.crs().projjson().ifPresent(crs -> {
                     if (crs instanceof CoordinateReferenceSystem.Unknown unknown
                             && unknown.rawType().isEmpty()) {
                         throw new MalformedFileException("GeoParquet column \"" + columnName

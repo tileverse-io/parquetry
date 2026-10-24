@@ -204,7 +204,7 @@ class GeoParquetMetadataTest {
         GeoParquetMetadata meta = GeoParquetMetadata.parse(json);
         assertThat(meta).as("1.1.0 dispatches to V1_1").isInstanceOf(GeoParquetMetadata.V1_1.class);
         GeoColumn col = meta.columns().get("geometry");
-        assertThat(col.crs())
+        assertThat(col.crs().projjson())
                 .as("inline PROJJSON CRS parses through ProjJsonModule into typed GeographicCRS")
                 .hasValueSatisfying(crs -> {
                     assertThat(crs).isInstanceOf(GeographicCRS.class);
@@ -298,6 +298,33 @@ class GeoParquetMetadataTest {
         BboxCovering bbox = meta.columns().get("g").covering().orElseThrow().bbox();
         assertThat(bbox.zmin()).contains(ColumnPath.of("a", "z"));
         assertThat(bbox.zmax()).contains(ColumnPath.of("a", "Z"));
+    }
+
+    // An absent crs key means the spec default, OGC:CRS84. The spec gives "crs": null a different meaning, and a
+    // consumer that reads an unknown CRS as the default states degrees for data that may be in metres.
+    @Test
+    void absentCrsIsNotTheSameAsNull() {
+        assertThat(parseColumnCrs("")).isEqualTo(ColumnCrs.DEFAULTED);
+        assertThat(parseColumnCrs("\"crs\": null,")).isEqualTo(ColumnCrs.UNKNOWN);
+    }
+
+    @Test
+    void inlineCrsParsesAsDefined() {
+        ColumnCrs declared = parseColumnCrs("\"crs\": {\"type\": \"GeographicCRS\", \"name\": \"WGS 84\"},");
+        assertThat(declared)
+                .isInstanceOfSatisfying(
+                        ColumnCrs.Defined.class,
+                        defined -> assertThat(defined.crs()).isInstanceOf(GeographicCRS.class));
+    }
+
+    private static ColumnCrs parseColumnCrs(String crsEntry) {
+        String json = """
+                {
+                  "version": "1.1.0", "primary_column": "g",
+                  "columns": {"g": {"encoding": "WKB", %s "geometry_types": []}}
+                }
+                """.formatted(crsEntry);
+        return GeoParquetMetadata.parse(json).columns().get("g").crs();
     }
 
     @Test
