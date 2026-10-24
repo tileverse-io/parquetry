@@ -56,9 +56,9 @@ import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.testsupport.Wkb;
 
 /**
- * A parquetry-written GeoParquet file has native per-row-group geometry bounds (no covering columns). A surviving
- * {@link Predicate.Spatial} leaf must therefore eliminate the row groups whose union bounding box proves no row can
- * match, at {@link Tier#SPATIAL}.
+ * A parquetry-written GeoParquet 2.0 file has native per-row-group geometry bounds. Written without a covering, a
+ * surviving {@link Predicate.Spatial} leaf must eliminate the row groups whose union bounding box proves no row can
+ * match, at {@link Tier#SPATIAL}. Written with a covering, the covering columns prune first.
  *
  * <p>The fixture writes four row groups, each clustered in a distinct square region: rg0 around [0..10], rg1 around
  * [100..110], rg2 around [200..210], rg3 around [300..310].
@@ -181,8 +181,9 @@ class SpatialRowGroupPruningTest {
         };
     }
 
+    /** The native path: a 2.0 file with no covering columns, the covering declined explicitly. */
     private Path writeFourClusteredRowGroups() throws Exception {
-        return writeFourClusteredRowGroups(Optional.empty());
+        return writeFourClusteredRowGroups(Optional.of(CoveringMode.NONE));
     }
 
     private Path writeFourClusteredRowGroups(Optional<CoveringMode> covering) throws Exception {

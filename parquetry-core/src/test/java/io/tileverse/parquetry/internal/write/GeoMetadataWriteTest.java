@@ -137,7 +137,9 @@ class GeoMetadataWriteTest {
         assertThat(geoJson).contains("\"version\":\"2.0.0\"");
         GeoParquetMetadata parsed = GeoParquetMetadata.parse(geoJson);
         assertThat(parsed).isInstanceOf(GeoParquetMetadata.V2.class);
-        assertThat(parsed.columns().get("geometry").covering()).isEmpty();
+        assertThat(parsed.columns().get("geometry").covering())
+                .as("the default covering applies under V2_0_ONLY too")
+                .isPresent();
 
         SchemaElement geometryElement = footerElementByName(footer, "geometry");
         assertThat(geometryElement.logicalType().orElseThrow()).isInstanceOf(LogicalType.Geometry.class);

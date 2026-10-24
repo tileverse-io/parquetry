@@ -222,6 +222,7 @@ public class SpatialGateBenchmark {
         WriteOptions.Builder builder = WriteOptions.builder()
                 .tempDir(workDir)
                 .geoParquetMetadata(GeoParquetMetadataMode.V2_0_ONLY)
+                .bboxCovering(WriteOptions.CoveringMode.NONE)
                 .crsEpsg(GEOMETRY_NAME, 4326)
                 .rowGroupSize(RowGroupSize.rows(rowsPerGroup))
                 .encodingPolicy(GEOMETRY_NAME, WriteOptions.EncodingPolicy.FORCE_PLAIN)

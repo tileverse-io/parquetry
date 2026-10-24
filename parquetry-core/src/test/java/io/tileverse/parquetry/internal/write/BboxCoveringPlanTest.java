@@ -66,10 +66,24 @@ class BboxCoveringPlanTest {
         assertThat(xmin.kind()).isEqualTo(PrimitiveKind.FLOAT);
     }
 
+    // The default covering follows one rule in all metadata modes.
     @Test
-    void v2OnlyDefaultResolvesToNoCovering() {
+    void v2OnlyDefaultResolvesToFloatCovering() {
         WriteOptions options = geoOptions()
                 .geoParquetMetadata(GeoParquetMetadataMode.V2_0_ONLY)
+                .build();
+        BboxCoveringPlan plan = resolve(options, geoSchema());
+        assertThat(plan.active()).isTrue();
+        SchemaNode.Primitive xmin = (SchemaNode.Primitive)
+                plan.writtenSchema().find(ColumnPath.of("bbox", "xmin")).orElseThrow();
+        assertThat(xmin.kind()).isEqualTo(PrimitiveKind.FLOAT);
+    }
+
+    @Test
+    void v2OnlyNoneResolvesToNoCovering() {
+        WriteOptions options = geoOptions()
+                .geoParquetMetadata(GeoParquetMetadataMode.V2_0_ONLY)
+                .bboxCovering(CoveringMode.NONE)
                 .build();
         BboxCoveringPlan plan = resolve(options, geoSchema());
         assertThat(plan.active()).isFalse();

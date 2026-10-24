@@ -71,8 +71,7 @@ import lombok.NonNull;
  * @param tempDir working directory for column-chunk temp files
  * @param writeObserver write-observability callback target; defaults to {@link WriteObserver#NONE}
  * @param writeObserverCadenceRows row cadence between {@link WriteObserver#onRowsWritten(long)} callbacks
- * @param bboxCovering explicit request for GeoParquet {@code bbox} covering columns; empty leaves the choice to the
- *     metadata mode at open time
+ * @param bboxCovering explicit request for GeoParquet {@code bbox} covering columns; empty means AUTO at open time
  * @param existingBboxCovering a bbox covering already in the schema, declared in the geo metadata without deriving
  *     columns; empty when none is declared
  * @param floatColumnOrder order of the statistics of the FLOAT, DOUBLE and FLOAT16 columns
@@ -216,9 +215,8 @@ public record WriteOptions(
     /**
      * Whether the writer generates GeoParquet {@code bbox} covering columns for the primary geometry column, and at
      * what precision. The covering is declared in the geo document of any version. An unset
-     * {@link WriteOptions#bboxCovering()} resolves by metadata mode at open time: AUTO when the file emits 1.1 metadata
-     * (DUAL or V1_1_ONLY), NONE under V2_0_ONLY. AUTO picks FLOAT for a CRS84/EPSG:4326 geometry column and DOUBLE
-     * otherwise.
+     * {@link WriteOptions#bboxCovering()} resolves to AUTO at open time, in any metadata mode. AUTO picks FLOAT for a
+     * CRS84/EPSG:4326 geometry column and DOUBLE otherwise.
      */
     public enum CoveringMode {
         NONE,
@@ -595,7 +593,7 @@ public record WriteOptions(
 
         /**
          * Requests GeoParquet {@code bbox} covering columns for the primary geometry column at the given precision.
-         * Leaving this unset lets the metadata mode decide at open time.
+         * Leaving this unset means AUTO: a covering for the primary geometry column of a geo write.
          */
         public Builder bboxCovering(@NonNull CoveringMode mode) {
             this.bboxCovering = Optional.of(mode);

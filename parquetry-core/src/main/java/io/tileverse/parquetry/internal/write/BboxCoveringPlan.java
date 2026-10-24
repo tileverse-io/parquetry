@@ -30,7 +30,6 @@ import io.tileverse.parquetry.data.ParquetWriteException;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.CoveringMode;
 import io.tileverse.parquetry.data.WriteOptions.ExistingBboxCovering;
-import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -43,9 +42,8 @@ import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystems;
 /**
  * Resolves the bbox covering of a write: either a covering declared over leaves already in the schema, or a derived
  * {@code bbox} group for the primary geometry column at a chosen precision, added to each batch. An unset
- * {@link WriteOptions#bboxCovering()} resolves to AUTO when the file emits GeoParquet 1.1 metadata and to NONE under
- * {@link GeoParquetMetadataMode#V2_0_ONLY}; a coherence problem is an error for an explicit request and a downgrade to
- * inactive for a defaulted one.
+ * {@link WriteOptions#bboxCovering()} resolves to AUTO in any metadata mode; a coherence problem is an error for an
+ * explicit request and a downgrade to inactive for a defaulted one.
  */
 public final class BboxCoveringPlan {
 
@@ -145,9 +143,6 @@ public final class BboxCoveringPlan {
         if (schema.find(ColumnPath.of(BBOX)).isPresent()) {
             return requireOrDowngrade(
                     explicit, schema, "cannot derive a bbox covering: the schema already has a column named 'bbox'");
-        }
-        if (!explicit && options.geoParquetMetadata() == GeoParquetMetadataMode.V2_0_ONLY) {
-            return inactive(schema);
         }
 
         ColumnPath geometryColumn = geometryColumns.get(0);
