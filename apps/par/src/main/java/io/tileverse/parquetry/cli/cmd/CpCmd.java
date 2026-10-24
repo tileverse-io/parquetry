@@ -104,6 +104,23 @@ public final class CpCmd implements Callable<Integer> {
                     + "columns.")
     private WriteOptions.FloatColumnOrder floatColumnOrder;
 
+    @Option(
+            names = "--geoparquet-metadata",
+            paramLabel = "<version>",
+            converter = GeoParquetMetadataConverter.class,
+            description = "GeoParquet metadata of the copy: dual (native geometry types and a 1.1.0 geo document, "
+                    + "readable by 1.x and 2.0 readers), 2.0 (native types and a 2.0.0 document) or 1.1 (a 1.1.0 "
+                    + "document only). Default: dual.")
+    private WriteOptions.GeoParquetMetadataMode geoParquetMetadata;
+
+    @Option(
+            names = "--bbox-covering",
+            paramLabel = "<mode>",
+            description = "Bbox covering derived for a copy whose source declares none: ${COMPLETION-CANDIDATES}. "
+                    + "Default: AUTO, FLOAT for a CRS84 or EPSG:4326 geometry column and DOUBLE otherwise. A covering "
+                    + "declared by the source over copied columns is kept whatever this flag says.")
+    private WriteOptions.CoveringMode bboxCovering;
+
     @Mixin
     private GlobalOptions options;
 
@@ -243,7 +260,9 @@ public final class CpCmd implements Callable<Integer> {
 
     /**
      * Writer options for the copy. A flag left out keeps the writer's default: the system temporary directory for the
-     * temp dir, the type-defined order for the float column order.
+     * temp dir, the type-defined order for the float column order, dual GeoParquet metadata, an AUTO covering. The
+     * covering flag applies to a derived covering only: a covering declared by the source and kept by the copy is
+     * forwarded as declared.
      */
     private WriteOptions buildWriteOptions(
             ParquetSchema writeSchema, Map<String, String> sourceKeyValue, WriteOptions.RowGroupSize rowGroupSize) {
@@ -260,6 +279,9 @@ public final class CpCmd implements Callable<Integer> {
         if (floatColumnOrder != null) {
             builder.floatColumnOrder(floatColumnOrder);
         }
+        if (geoParquetMetadata != null) {
+            builder.geoParquetMetadata(geoParquetMetadata);
+        }
         for (ColumnPath leaf : writeSchema.leafColumns()) {
             SchemaNode node = writeSchema.find(leaf).orElseThrow();
             SchemaNode.Primitive prim = (SchemaNode.Primitive) node;
@@ -268,7 +290,10 @@ public final class CpCmd implements Callable<Integer> {
             }
         }
         forwardOpaqueMetadata(builder, sourceKeyValue);
-        collectGeometryColumns(builder, writeSchema, sourceKeyValue);
+        boolean coveringForwarded = collectGeometryColumns(builder, writeSchema, sourceKeyValue);
+        if (bboxCovering != null && !coveringForwarded) {
+            builder.bboxCovering(bboxCovering);
+        }
         return builder.build();
     }
 
@@ -287,6 +312,23 @@ public final class CpCmd implements Callable<Integer> {
 
     /** Maximum rows the copy appender buffers per batch; also bounds where a row-count target seals a row group. */
     private static final int MAX_COPY_BATCH_ROWS = 8192;
+
+    /** Maps the {@code --geoparquet-metadata} values {@code dual}, {@code 2.0} and {@code 1.1} to a metadata mode. */
+    static final class GeoParquetMetadataConverter
+            implements CommandLine.ITypeConverter<WriteOptions.GeoParquetMetadataMode> {
+
+        @Override
+        public WriteOptions.GeoParquetMetadataMode convert(String value) {
+            return switch (value.toLowerCase(Locale.ROOT)) {
+                case "dual" -> WriteOptions.GeoParquetMetadataMode.DUAL_V1_1_AND_V2_0;
+                case "2.0" -> WriteOptions.GeoParquetMetadataMode.V2_0_ONLY;
+                case "1.1" -> WriteOptions.GeoParquetMetadataMode.V1_1_ONLY;
+                default ->
+                    throw new CommandLine.TypeConversionException(
+                            "expected dual, 2.0 or 1.1 for --geoparquet-metadata but was '" + value + "'");
+            };
+        }
+    }
 
     /** Parses {@code --row-group-bytes} values like {@code 256MB} into an uncompressed byte count. */
     static final class ByteSizeConverter implements CommandLine.ITypeConverter<Long> {
@@ -359,13 +401,16 @@ public final class CpCmd implements Callable<Integer> {
      * geometry types are derived from the rows actually written (which a filter or projection may narrow), and a
      * geometry column dropped by the projection must leave no dangling entry behind. The primary column's bbox covering
      * declaration is the one part of the block forwarded as-is, see {@link #forwardCovering}.
+     *
+     * @return whether the source's bbox covering declaration was forwarded to the copy
      */
-    private static void collectGeometryColumns(
+    private static boolean collectGeometryColumns(
             WriteOptions.Builder builder, ParquetSchema writeSchema, Map<String, String> sourceKeyValue) {
         String geoJson = sourceKeyValue.get(GEO_METADATA_KEY);
         if (geoJson == null) {
-            return;
+            return false;
         }
+        boolean coveringForwarded = false;
         GeoParquetMetadata geo = GeoParquetMetadata.parse(geoJson);
         for (Map.Entry<String, GeoColumn> column : geo.columns().entrySet()) {
             String columnName = column.getKey();
@@ -374,9 +419,10 @@ public final class CpCmd implements Callable<Integer> {
             }
             declareCrs(builder, columnName, column.getValue().crs());
             if (columnName.equals(geo.primaryColumn())) {
-                forwardCovering(builder, writeSchema, columnName, column.getValue());
+                coveringForwarded = forwardCovering(builder, writeSchema, columnName, column.getValue());
             }
         }
+        return coveringForwarded;
     }
 
     /**
@@ -400,16 +446,18 @@ public final class CpCmd implements Callable<Integer> {
      * and the writer's default covering policy applies to the copy. The writer declares one covering per file, hence
      * only the primary geometry column's declaration is forwarded. Only the four planar extrema are forwarded; a
      * source's {@code zmin} and {@code zmax} covering paths are not declared on the copy.
+     *
+     * @return whether the declaration was forwarded
      */
-    private static void forwardCovering(
+    private static boolean forwardCovering(
             WriteOptions.Builder builder, ParquetSchema writeSchema, String columnName, GeoColumn column) {
         Optional<BboxCovering> covering = column.covering().map(Covering::bbox);
         if (covering.isEmpty()) {
-            return;
+            return false;
         }
         BboxCovering bbox = covering.orElseThrow();
         if (!coveringLeavesCopied(writeSchema, bbox)) {
-            return;
+            return false;
         }
         builder.existingBboxCovering(
                 columnName,
@@ -417,6 +465,7 @@ public final class CpCmd implements Callable<Integer> {
                 bbox.ymin().dot(),
                 bbox.xmax().dot(),
                 bbox.ymax().dot());
+        return true;
     }
 
     /**

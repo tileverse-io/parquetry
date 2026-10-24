@@ -120,6 +120,13 @@ destination has its own connection options mirroring the source ones, prefixed `
 different stores in one command. The writer's working files go to the system temporary directory; `--temp-dir <dir>`
 points them elsewhere, for example when that volume is small or read-only.
 
+Two flags shape the GeoParquet metadata of the copy. `--geoparquet-metadata <version>` picks `dual` (native geometry
+types and a 1.1.0 geo document, readable by 1.x and 2.0 readers, the default), `2.0` (native types and a 2.0.0
+document) or `1.1` (a 1.1.0 document only). `--bbox-covering <mode>` decides the `bbox` covering derived for a copy
+whose source declares none: `auto` (the default: FLOAT leaves for a CRS84 or EPSG:4326 geometry column, DOUBLE
+otherwise), `float`, `double` or `none`. A covering declared by the source over copied columns is kept whatever the
+flag says.
+
 The write path currently handles flat columns (primitives, including WKB geometry); copying a file whose schema
 contains nested list/map/struct or Variant columns is not yet supported and fails with a clear error.
 
