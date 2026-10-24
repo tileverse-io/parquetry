@@ -92,6 +92,30 @@ class GeoMetadataWriterTest {
         assertThat(json.orElseThrow()).contains("\"version\":\"1.1.0\"");
     }
 
+    // A copy of a 2.0 file as 1.1 must not keep the native type: a 1.1-only reader would take it for a 2.0 file.
+    @Test
+    void v1OnlyModeDropsAnExistingLogicalType() {
+        WriteOptions options = WriteOptions.builder()
+                .geoParquetMetadata(GeoParquetMetadataMode.V1_1_ONLY)
+                .crsEpsg("geometry", 4326)
+                .build();
+        SchemaNode.Primitive annotated = new SchemaNode.Primitive(
+                "geometry",
+                Repetition.REQUIRED,
+                PrimitiveKind.BYTE_ARRAY,
+                OptionalInt.empty(),
+                Optional.of(new LogicalType.Geometry(Optional.empty())),
+                -1);
+        ParquetSchema schema = flatSchema(annotated, requiredInt32("id"));
+        GeoMetadataWriter writer = new GeoMetadataWriter(options);
+
+        ParquetSchema written = writer.applyV2LogicalTypes(schema);
+
+        SchemaNode.Primitive geomLeaf =
+                (SchemaNode.Primitive) written.find(ColumnPath.of("geometry")).orElseThrow();
+        assertThat(geomLeaf.logicalType()).isEmpty();
+    }
+
     @Test
     void v2OnlyModeEmitsLogicalTypesAndA20GeoDocument() {
         WriteOptions options = WriteOptions.builder()

@@ -158,4 +158,14 @@ class SchemaTest {
         ParquetSchema augmented = FLAT.withAppendedGroup(bbox);
         assertThat(augmented.find(ColumnPath.of("bbox", "xmin"))).isPresent();
     }
+
+    @Test
+    void withoutLogicalTypesClearsTheListedLeaves() {
+        ParquetSchema stripped = FLAT.withoutLogicalTypes(Set.of(ColumnPath.of("country")));
+
+        SchemaNode.Primitive country =
+                (SchemaNode.Primitive) stripped.find(ColumnPath.of("country")).orElseThrow();
+        assertThat(country.logicalType()).isEmpty();
+        assertThat(stripped.find(ColumnPath.of("year"))).isEqualTo(FLAT.find(ColumnPath.of("year")));
+    }
 }

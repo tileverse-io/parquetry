@@ -341,13 +341,34 @@ public record ParquetSchema(SchemaNode.Group root) {
         if (overrides.isEmpty()) {
             return this;
         }
-        return new ParquetSchema(applyLogicalTypes(root, new ArrayList<>(), overrides, true));
+        java.util.Map<ColumnPath, Optional<io.tileverse.parquetry.format.LogicalType>> changes =
+                new java.util.HashMap<>();
+        overrides.forEach((path, type) -> changes.put(path, Optional.of(type)));
+        return new ParquetSchema(applyLogicalTypes(root, new ArrayList<>(), changes, true));
     }
 
+    /**
+     * Returns a copy of this schema with no logical-type annotation on the leaves listed in {@code paths}. Leaves not
+     * listed are returned unchanged. A writer uses it to drop a native {@code Geometry} annotation from a column
+     * described by GeoParquet 1.1 metadata alone.
+     */
+    public ParquetSchema withoutLogicalTypes(Set<ColumnPath> paths) {
+        if (paths.isEmpty()) {
+            return this;
+        }
+        java.util.Map<ColumnPath, Optional<io.tileverse.parquetry.format.LogicalType>> changes =
+                new java.util.HashMap<>();
+        for (ColumnPath path : paths) {
+            changes.put(path, Optional.empty());
+        }
+        return new ParquetSchema(applyLogicalTypes(root, new ArrayList<>(), changes, true));
+    }
+
+    /** Rebuilds {@code group} with each leaf in {@code changes} given the listed annotation, empty meaning none. */
     private static SchemaNode.Group applyLogicalTypes(
             SchemaNode.Group group,
             List<String> prefix,
-            java.util.Map<ColumnPath, io.tileverse.parquetry.format.LogicalType> overrides,
+            java.util.Map<ColumnPath, Optional<io.tileverse.parquetry.format.LogicalType>> changes,
             boolean isRoot) {
         List<String> groupPath = new ArrayList<>(prefix);
         if (!isRoot) {
@@ -359,20 +380,15 @@ public record ParquetSchema(SchemaNode.Group root) {
                 case SchemaNode.Primitive p -> {
                     List<String> childPath = new ArrayList<>(groupPath);
                     childPath.add(p.name());
-                    io.tileverse.parquetry.format.LogicalType override = overrides.get(ColumnPath.of(childPath));
-                    if (override != null) {
+                    Optional<io.tileverse.parquetry.format.LogicalType> change = changes.get(ColumnPath.of(childPath));
+                    if (change != null) {
                         children.add(new SchemaNode.Primitive(
-                                p.name(),
-                                p.repetition(),
-                                p.kind(),
-                                p.typeLength(),
-                                Optional.of(override),
-                                p.fieldId()));
+                                p.name(), p.repetition(), p.kind(), p.typeLength(), change, p.fieldId()));
                     } else {
                         children.add(p);
                     }
                 }
-                case SchemaNode.Group g -> children.add(applyLogicalTypes(g, groupPath, overrides, false));
+                case SchemaNode.Group g -> children.add(applyLogicalTypes(g, groupPath, changes, false));
             }
         }
         return new SchemaNode.Group(group.name(), group.repetition(), children, group.logicalType(), group.fieldId());

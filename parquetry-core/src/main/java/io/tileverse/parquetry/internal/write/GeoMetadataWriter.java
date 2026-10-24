@@ -18,6 +18,7 @@ package io.tileverse.parquetry.internal.write;
 import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -85,21 +86,23 @@ public final class GeoMetadataWriter {
     }
 
     /**
-     * Returns a schema with {@link LogicalType.Geometry} applied to every column path configured in
-     * {@link WriteOptions#crs()}.
-     *
-     * <p>Returns the input schema unchanged when {@link WriteOptions#geoParquetMetadata()} is
-     * {@link GeoParquetMetadataMode#V1_1_ONLY} or no geometry columns are configured: the v1.1 KV blob holds the CRS on
-     * its own, and emitting redundant logical types would mislead a v1-only reader into thinking the file is a v2
-     * native GeoParquet.
+     * Returns a schema with {@link LogicalType.Geometry} applied to the column paths configured in
+     * {@link WriteOptions#crs()}, or with no logical type on them under {@link GeoParquetMetadataMode#V1_1_ONLY}: the
+     * 1.1 geo document holds the CRS on its own, and a native annotation would make a 1.1-only reader take the file for
+     * a 2.0 one. The annotation is dropped there even when the input schema has it, as a schema read from a 2.0 file
+     * does. Returns the input schema unchanged when no geometry column is configured.
      */
     public ParquetSchema applyV2LogicalTypes(@NonNull ParquetSchema schema) {
-        if (options.geoParquetMetadata() == GeoParquetMetadataMode.V1_1_ONLY) {
-            return schema;
-        }
         Map<String, ColumnCrs> crsConfig = options.crs();
         if (crsConfig.isEmpty()) {
             return schema;
+        }
+        if (options.geoParquetMetadata() == GeoParquetMetadataMode.V1_1_ONLY) {
+            Set<ColumnPath> configured = new LinkedHashSet<>();
+            for (String dotted : crsConfig.keySet()) {
+                configured.add(parseDotted(dotted));
+            }
+            return schema.withoutLogicalTypes(configured);
         }
         Map<ColumnPath, LogicalType> overrides = LinkedHashMap.newLinkedHashMap(crsConfig.size());
         for (Map.Entry<String, ColumnCrs> entry : crsConfig.entrySet()) {
