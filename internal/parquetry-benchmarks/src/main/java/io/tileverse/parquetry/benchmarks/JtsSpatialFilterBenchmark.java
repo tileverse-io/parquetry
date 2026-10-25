@@ -417,6 +417,7 @@ public class JtsSpatialFilterBenchmark {
         WriteOptions options = WriteOptions.builder()
                 .tempDir(workDir)
                 .geoParquetMetadata(GeoParquetMetadataMode.V2_0_ONLY)
+                .bboxCovering(WriteOptions.CoveringMode.NONE)
                 .crsEpsg(GEOMETRY_NAME, 4326)
                 .rowGroupSize(RowGroupSize.rows(rowsPerGroup))
                 .encodingPolicy("id", WriteOptions.EncodingPolicy.FORCE_PLAIN)

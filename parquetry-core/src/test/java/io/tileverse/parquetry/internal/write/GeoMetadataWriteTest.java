@@ -34,6 +34,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.WriteOptions;
+import io.tileverse.parquetry.data.WriteOptions.CoveringMode;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.format.FileMetaData;
@@ -136,10 +137,36 @@ class GeoMetadataWriteTest {
         assertThat(geoJson).contains("\"version\":\"2.0.0\"");
         GeoParquetMetadata parsed = GeoParquetMetadata.parse(geoJson);
         assertThat(parsed).isInstanceOf(GeoParquetMetadata.V2.class);
-        assertThat(parsed.columns().get("geometry").covering()).isEmpty();
+        assertThat(parsed.columns().get("geometry").covering())
+                .as("the default covering applies under V2_0_ONLY too")
+                .isPresent();
 
         SchemaElement geometryElement = footerElementByName(footer, "geometry");
         assertThat(geometryElement.logicalType().orElseThrow()).isInstanceOf(LogicalType.Geometry.class);
+    }
+
+    @Test
+    void v2OnlyCoveringLandsInTheFooter() throws Exception {
+        ParquetSchema schema = flatSchema(requiredBinary("geometry"));
+        WriteOptions options = options()
+                .geoParquetMetadata(GeoParquetMetadataMode.V2_0_ONLY)
+                .crsEpsg("geometry", 4326)
+                .bboxCovering(CoveringMode.AUTO)
+                .build();
+        Path file = tempDir.resolve("v2-covering.parquet");
+        writePointFile(file, schema, options, 1.0, 2.0);
+
+        FileMetaData footer = readFooter(file);
+        GeoParquetMetadata parsed = GeoParquetMetadata.parse(geoJsonOrThrow(footer));
+        assertThat(parsed).isInstanceOf(GeoParquetMetadata.V2.class);
+        BboxCovering covering =
+                parsed.columns().get("geometry").covering().orElseThrow().bbox();
+        assertThat(covering.xmin()).isEqualTo(ColumnPath.of("bbox", "xmin"));
+        List<String> elementNames =
+                footer.schema().stream().map(SchemaElement::name).toList();
+        assertThat(elementNames).contains("bbox", "xmin", "ymin", "xmax", "ymax");
+        assertThat(footerElementByName(footer, "geometry").logicalType().orElseThrow())
+                .isInstanceOf(LogicalType.Geometry.class);
     }
 
     @Test

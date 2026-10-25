@@ -55,6 +55,7 @@ import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.ColumnOrder;
 import io.tileverse.parquetry.format.FileMetaData;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.Statistics;
@@ -608,12 +609,34 @@ class CpCmdTest {
     }
 
     private static BboxCovering coveringOf(Path file) throws Exception {
+        return geoOf(file).columns().get("geometry").covering().orElseThrow().bbox();
+    }
+
+    private static GeoParquetMetadata geoOf(Path file) throws Exception {
         try (Storage storage = StorageFactory.open(file.getParent().toUri());
                 RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
             ParquetSource source = ParquetSource.open(ByteRangeSource.of(reader));
-            GeoParquetMetadata geo =
-                    GeoParquetMetadata.parse(source.keyValueMetadata().get("geo"));
-            return geo.columns().get("geometry").covering().orElseThrow().bbox();
+            return GeoParquetMetadata.parse(source.keyValueMetadata().get("geo"));
+        }
+    }
+
+    private static SchemaNode.Primitive leafOf(Path file, ColumnPath path) throws Exception {
+        try (Storage storage = StorageFactory.open(file.getParent().toUri());
+                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
+            ParquetSource source = ParquetSource.open(ByteRangeSource.of(reader));
+            return (SchemaNode.Primitive) source.schema().find(path).orElseThrow();
+        }
+    }
+
+    /** The logical type written in the footer for {@code leaf}, before the reader derives one from the geo document. */
+    private static Optional<LogicalType> footerLogicalType(Path file, String leaf) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            FileMetaData footer = ParquetFormat.readFooter(source);
+            return footer.schema().stream()
+                    .filter(element -> leaf.equals(element.name()))
+                    .findFirst()
+                    .orElseThrow()
+                    .logicalType();
         }
     }
 
@@ -700,6 +723,87 @@ class CpCmdTest {
                 .execute("cp", src.toString(), dst.toString(), "--float-column-order", "alphabetical");
 
         assertThat(code).isEqualTo(CliExitCode.USAGE);
+    }
+
+    @Test
+    void geoparquetMetadataFlagWritesA20Document(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("geo-cities.parquet");
+        Path dst = dir.resolve("v2.parquet");
+        Fixtures.writeGeoCities(src);
+
+        int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString(), "--geoparquet-metadata", "2.0");
+
+        assertThat(code).isZero();
+        GeoParquetMetadata geo = geoOf(dst);
+        assertThat(geo.version()).isEqualTo("2.0.0");
+        assertThat(geo.columns().get("geometry").covering())
+                .as("the source covering is kept")
+                .isPresent();
+        assertThat(footerLogicalType(dst, "geometry")).containsInstanceOf(LogicalType.Geometry.class);
+    }
+
+    @Test
+    void geoparquetMetadata11WritesNoLogicalType(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("geo-cities.parquet");
+        Path dst = dir.resolve("v11.parquet");
+        Fixtures.writeGeoCities(src);
+
+        int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString(), "--geoparquet-metadata", "1.1");
+
+        assertThat(code).isZero();
+        assertThat(geoOf(dst).version()).isEqualTo("1.1.0");
+        assertThat(footerLogicalType(dst, "geometry")).isEmpty();
+    }
+
+    @Test
+    void rejectsAnUnknownGeoparquetMetadata(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("geo-cities.parquet");
+        Path dst = dir.resolve("dst.parquet");
+        Fixtures.writeGeoCities(src);
+
+        int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString(), "--geoparquet-metadata", "3.0");
+
+        assertThat(code).isEqualTo(CliExitCode.USAGE);
+    }
+
+    @Test
+    void bboxCoveringNoneDerivesNoCovering(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("geo-cities.parquet");
+        Path dst = dir.resolve("no-covering.parquet");
+        Fixtures.writeGeoCities(src);
+
+        int code = Par.newCommandLine()
+                .execute("cp", src.toString(), dst.toString(), "--columns", "id,geometry", "--bbox-covering", "none");
+
+        assertThat(code).isZero();
+        assertThat(leafPaths(dst)).containsExactly("id", "geometry");
+        assertThat(geoOf(dst).columns().get("geometry").covering()).isEmpty();
+    }
+
+    @Test
+    void bboxCoveringDoubleDerivesDoubleLeaves(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("geo-cities.parquet");
+        Path dst = dir.resolve("double-covering.parquet");
+        Fixtures.writeGeoCities(src);
+
+        int code = Par.newCommandLine()
+                .execute("cp", src.toString(), dst.toString(), "--columns", "id,geometry", "--bbox-covering", "double");
+
+        assertThat(code).isZero();
+        assertThat(leafOf(dst, ColumnPath.of("bbox", "xmin")).kind()).isEqualTo(PrimitiveKind.DOUBLE);
+    }
+
+    // The flag decides the covering derived for the copy; a covering declared by the source is kept.
+    @Test
+    void bboxCoveringNoneKeepsASourceCovering(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("geo-cities.parquet");
+        Path dst = dir.resolve("kept-covering.parquet");
+        Fixtures.writeGeoCities(src);
+
+        int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString(), "--bbox-covering", "none");
+
+        assertThat(code).isZero();
+        assertThat(coveringOf(dst).xmin()).isEqualTo(ColumnPath.of("bbox", "xmin"));
     }
 
     /** Writes two rows of a single FLOAT column holding NaN alone. */

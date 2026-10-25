@@ -34,6 +34,7 @@ import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
+import io.tileverse.parquetry.data.WriteOptions.CoveringMode;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.filter.Bbox;
@@ -55,9 +56,9 @@ import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.testsupport.Wkb;
 
 /**
- * A parquetry-written GeoParquet file has native per-row-group geometry bounds (no covering columns). A surviving
- * {@link Predicate.Spatial} leaf must therefore eliminate the row groups whose union bounding box proves no row can
- * match, at {@link Tier#SPATIAL}.
+ * A parquetry-written GeoParquet 2.0 file has native per-row-group geometry bounds. Written without a covering, a
+ * surviving {@link Predicate.Spatial} leaf must eliminate the row groups whose union bounding box proves no row can
+ * match, at {@link Tier#SPATIAL}. Written with a covering, the covering columns prune first.
  *
  * <p>The fixture writes four row groups, each clustered in a distinct square region: rg0 around [0..10], rg1 around
  * [100..110], rg2 around [200..210], rg3 around [300..310].
@@ -128,9 +129,28 @@ class SpatialRowGroupPruningTest {
                 .isEqualTo(3);
     }
 
+    // The covering of a 2.0 document lowers the spatial leaf onto the bbox columns, which the STATS tier prunes.
+    @Test
+    void coveringOfA20FilePrunesRowGroups() throws Exception {
+        Path file = writeFourClusteredRowGroups(Optional.of(CoveringMode.DOUBLE));
+
+        ReadOptions options = ReadOptions.DEFAULTS;
+        Predicate predicate = Pred.col("geometry").bboxIntersects(Bbox.of2d(0, 0, 10, 10));
+
+        List<PruningDecision> decisions = planDecisions(file, predicate, options);
+        List<Integer> ids = readIds(file, predicate, options);
+
+        assertThat(eliminations(decisions, Tier.STATS)).isEqualTo(3);
+        assertThat(ids).containsExactlyInAnyOrder(0, 1, 2, 3);
+    }
+
     private static long spatialEliminations(List<PruningDecision> decisions) {
+        return eliminations(decisions, Tier.SPATIAL);
+    }
+
+    private static long eliminations(List<PruningDecision> decisions, Tier tier) {
         return decisions.stream()
-                .filter(d -> d.tier() == Tier.SPATIAL)
+                .filter(d -> d.tier() == tier)
                 .filter(d -> d instanceof PruningDecision.Eliminated)
                 .count();
     }
@@ -161,14 +181,20 @@ class SpatialRowGroupPruningTest {
         };
     }
 
+    /** The native path: a 2.0 file with no covering columns, the covering declined explicitly. */
     private Path writeFourClusteredRowGroups() throws Exception {
+        return writeFourClusteredRowGroups(Optional.of(CoveringMode.NONE));
+    }
+
+    private Path writeFourClusteredRowGroups(Optional<CoveringMode> covering) throws Exception {
         ParquetSchema schema = flatSchema(requiredBinary("geometry"), requiredInt32("id"));
-        WriteOptions options = WriteOptions.builder()
+        WriteOptions.Builder builder = WriteOptions.builder()
                 .tempDir(tempDir)
                 .geoParquetMetadata(GeoParquetMetadataMode.V2_0_ONLY)
                 .crsEpsg("geometry", 4326)
-                .rowGroupSize(RowGroupSize.rows(ROWS_PER_GROUP))
-                .build();
+                .rowGroupSize(RowGroupSize.rows(ROWS_PER_GROUP));
+        covering.ifPresent(builder::bboxCovering);
+        WriteOptions options = builder.build();
         Path file = tempDir.resolve("clustered.parquet");
         try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
             writeCluster(writer, schema, 0, 0.0);

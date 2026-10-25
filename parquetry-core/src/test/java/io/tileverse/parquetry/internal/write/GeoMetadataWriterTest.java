@@ -92,6 +92,30 @@ class GeoMetadataWriterTest {
         assertThat(json.orElseThrow()).contains("\"version\":\"1.1.0\"");
     }
 
+    // A copy of a 2.0 file as 1.1 must not keep the native type: a 1.1-only reader would take it for a 2.0 file.
+    @Test
+    void v1OnlyModeDropsAnExistingLogicalType() {
+        WriteOptions options = WriteOptions.builder()
+                .geoParquetMetadata(GeoParquetMetadataMode.V1_1_ONLY)
+                .crsEpsg("geometry", 4326)
+                .build();
+        SchemaNode.Primitive annotated = new SchemaNode.Primitive(
+                "geometry",
+                Repetition.REQUIRED,
+                PrimitiveKind.BYTE_ARRAY,
+                OptionalInt.empty(),
+                Optional.of(new LogicalType.Geometry(Optional.empty())),
+                -1);
+        ParquetSchema schema = flatSchema(annotated, requiredInt32("id"));
+        GeoMetadataWriter writer = new GeoMetadataWriter(options);
+
+        ParquetSchema written = writer.applyV2LogicalTypes(schema);
+
+        SchemaNode.Primitive geomLeaf =
+                (SchemaNode.Primitive) written.find(ColumnPath.of("geometry")).orElseThrow();
+        assertThat(geomLeaf.logicalType()).isEmpty();
+    }
+
     @Test
     void v2OnlyModeEmitsLogicalTypesAndA20GeoDocument() {
         WriteOptions options = WriteOptions.builder()
@@ -117,9 +141,30 @@ class GeoMetadataWriterTest {
         assertThat(col.geometryTypes()).containsExactly("Polygon");
         assertThat(col.bbox()).isPresent();
         assertThat(col.crs().projjson().orElseThrow()).isInstanceOf(GeographicCRS.class);
-        assertThat(col.covering())
-                .as("2.0 column metadata has no covering field")
-                .isEmpty();
+        assertThat(col.covering()).as("no covering was planned").isEmpty();
+    }
+
+    @Test
+    void v2DocumentDeclaresTheCovering() {
+        WriteOptions options = WriteOptions.builder()
+                .geoParquetMetadata(GeoParquetMetadataMode.V2_0_ONLY)
+                .crsEpsg("geometry", 4326)
+                .bboxCovering(CoveringMode.FLOAT)
+                .build();
+        ParquetSchema schema = flatSchema(requiredBinary("geometry"));
+        GeoMetadataWriter writer = new GeoMetadataWriter(options);
+        ParquetSchema logical = writer.applyV2LogicalTypes(schema);
+        BboxCoveringPlan plan = BboxCoveringPlan.resolve(options, logical, writer);
+
+        Optional<String> json =
+                writer.geoJsonPayload(plan.writtenSchema(), summaries("geometry", polygonSummary()), Optional.of(plan));
+
+        GeoParquetMetadata parsed = GeoParquetMetadata.parse(json.orElseThrow());
+        assertThat(parsed).isInstanceOf(GeoParquetMetadata.V2.class);
+        BboxCovering covering =
+                parsed.columns().get("geometry").covering().orElseThrow().bbox();
+        assertThat(covering.xmin()).isEqualTo(ColumnPath.of("bbox", "xmin"));
+        assertThat(covering.ymax()).isEqualTo(ColumnPath.of("bbox", "ymax"));
     }
 
     @Test

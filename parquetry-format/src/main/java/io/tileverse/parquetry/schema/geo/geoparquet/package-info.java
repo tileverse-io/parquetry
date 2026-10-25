@@ -18,7 +18,7 @@
  * ({@link io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata.V1_0},
  * {@link io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata.V1_1},
  * {@link io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata.V2}) cover the live GeoParquet spec versions
- * 1.0, 1.1 (and 1.1+p1), and 2.0-dev / 2.0.
+ * 1.0, 1.1 (and 1.1+p1), and 2.0.
  *
  * <h2>Forward compatibility</h2>
  *

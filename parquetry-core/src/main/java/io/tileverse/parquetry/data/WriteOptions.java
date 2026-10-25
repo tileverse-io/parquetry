@@ -71,10 +71,9 @@ import lombok.NonNull;
  * @param tempDir working directory for column-chunk temp files
  * @param writeObserver write-observability callback target; defaults to {@link WriteObserver#NONE}
  * @param writeObserverCadenceRows row cadence between {@link WriteObserver#onRowsWritten(long)} callbacks
- * @param bboxCovering explicit request for GeoParquet 1.1 {@code bbox} covering columns; empty leaves the choice to the
- *     metadata mode at open time
- * @param existingBboxCovering a bbox covering already in the schema, declared in the GeoParquet 1.1 metadata without
- *     deriving columns; empty when none is declared
+ * @param bboxCovering explicit request for GeoParquet {@code bbox} covering columns; empty means AUTO at open time
+ * @param existingBboxCovering a bbox covering already in the schema, declared in the geo metadata without deriving
+ *     columns; empty when none is declared
  * @param floatColumnOrder order of the statistics of the FLOAT, DOUBLE and FLOAT16 columns
  */
 public record WriteOptions(
@@ -143,7 +142,7 @@ public record WriteOptions(
         if (parquetVersion == ParquetVersion.V1_1 && geoParquetMetadata != GeoParquetMetadataMode.V1_1_ONLY) {
             geoParquetMetadata = GeoParquetMetadataMode.V1_1_ONLY;
         }
-        rejectIncoherentCovering(bboxCovering, existingBboxCovering, geoParquetMetadata);
+        rejectAmbiguousCovering(bboxCovering, existingBboxCovering);
         compression = unmodifiableSnapshot(compression);
         encodingPolicies = unmodifiableSnapshot(encodingPolicies);
         bloomFilters = unmodifiableSnapshot(bloomFilters);
@@ -154,30 +153,15 @@ public record WriteOptions(
     }
 
     /**
-     * Rejects the covering settings that a GeoParquet 2.0 document cannot express, and the combination of a declared
-     * covering with an explicit covering mode. Takes the geo metadata mode as the constructor coerced it.
+     * Rejects a declared covering next to a covering-mode request: the two would leave the covering of the geometry
+     * column ambiguous. The GeoParquet 1.1 and 2.0 documents both declare a covering, in the same shape, and no
+     * metadata mode rules one out.
      */
-    private static void rejectIncoherentCovering(
-            Optional<CoveringMode> bboxCovering,
-            Optional<ExistingBboxCovering> existingBboxCovering,
-            GeoParquetMetadataMode geoParquetMetadata) {
-        // bbox covering columns are declared in the GeoParquet 1.1 column metadata; a 2.0 geo document has no
-        // covering field and leaves nowhere to declare them.
-        if (bboxCovering.isPresent()
-                && bboxCovering.orElseThrow() != CoveringMode.NONE
-                && geoParquetMetadata == GeoParquetMetadataMode.V2_0_ONLY) {
-            throw new IllegalArgumentException(
-                    "bbox covering is declared in GeoParquet 1.1 metadata and a 2.0 geo document has no covering field; V2_0_ONLY cannot declare one - use DUAL or V1_1_ONLY");
-        }
-        // A declared covering next to a covering-mode request leaves the geometry column's covering ambiguous.
+    private static void rejectAmbiguousCovering(
+            Optional<CoveringMode> bboxCovering, Optional<ExistingBboxCovering> existingBboxCovering) {
         if (existingBboxCovering.isPresent() && bboxCovering.isPresent()) {
             throw new IllegalArgumentException(
                     "existingBboxCovering declares covering columns already in the schema and bboxCovering is set; set one or the other");
-        }
-        // The declaration lives in the GeoParquet 1.1 column metadata, and a 2.0 geo document has no covering field.
-        if (existingBboxCovering.isPresent() && geoParquetMetadata == GeoParquetMetadataMode.V2_0_ONLY) {
-            throw new IllegalArgumentException(
-                    "an existing bbox covering is declared in GeoParquet 1.1 metadata and a 2.0 geo document has no covering field; V2_0_ONLY cannot declare one - use DUAL or V1_1_ONLY");
         }
     }
 
@@ -217,7 +201,7 @@ public record WriteOptions(
      * <ul>
      *   <li>{@link #DUAL_V1_1_AND_V2_0} writes both for maximum compatibility, the default in V2 page mode.
      *   <li>{@link #V2_0_ONLY} writes the native logical types and per-row-group geospatial statistics plus a
-     *       GeoParquet 2.0 {@code "geo"} document (version 2.0.0, no covering).
+     *       GeoParquet 2.0 {@code "geo"} document (version 2.0.0).
      *   <li>{@link #V1_1_ONLY} writes only the legacy GeoParquet 1.1 {@code "geo"} JSON metadata block; this is the
      *       only coherent mode under {@link ParquetVersion#V1_1}.
      * </ul>
@@ -229,10 +213,10 @@ public record WriteOptions(
     }
 
     /**
-     * Whether the writer generates GeoParquet 1.1 {@code bbox} covering columns for the primary geometry column, and at
-     * what precision. An unset {@link WriteOptions#bboxCovering()} resolves by metadata mode at open time: AUTO when
-     * the file emits 1.1 metadata (DUAL or V1_1_ONLY), NONE under V2_0_ONLY. AUTO picks FLOAT for a CRS84/EPSG:4326
-     * geometry column and DOUBLE otherwise.
+     * Whether the writer generates GeoParquet {@code bbox} covering columns for the primary geometry column, and at
+     * what precision. The covering is declared in the geo document of any version. An unset
+     * {@link WriteOptions#bboxCovering()} resolves to AUTO at open time, in any metadata mode. AUTO picks FLOAT for a
+     * CRS84/EPSG:4326 geometry column and DOUBLE otherwise.
      */
     public enum CoveringMode {
         NONE,
@@ -243,10 +227,10 @@ public record WriteOptions(
 
     /**
      * A {@code bbox} covering already present in the schema: the geometry column described by the covering and the four
-     * FLOAT or DOUBLE leaves holding each row's xmin, ymin, xmax and ymax. The writer declares it in the GeoParquet 1.1
-     * metadata as-is and derives no covering columns. The four leaves must hold each row's minimum and maximum x and y
-     * for the geometry in {@code geometryColumn}; a declaration over leaves that do not hold those bounds makes readers
-     * prune away matching rows. Every path is a dotted column path, e.g. {@code "bbox.xmin"}.
+     * FLOAT or DOUBLE leaves holding each row's xmin, ymin, xmax and ymax. The writer declares it in the geo metadata
+     * as-is and derives no covering columns. The four leaves must hold each row's minimum and maximum x and y for the
+     * geometry in {@code geometryColumn}; a declaration over leaves that do not hold those bounds makes readers prune
+     * away matching rows. Every path is a dotted column path, e.g. {@code "bbox.xmin"}.
      *
      * @param geometryColumn dotted path of the geometry column described by the covering
      * @param xmin dotted path of the leaf holding each row's minimum x
@@ -608,8 +592,8 @@ public record WriteOptions(
         }
 
         /**
-         * Requests GeoParquet 1.1 {@code bbox} covering columns for the primary geometry column at the given precision.
-         * Leaving this unset lets the metadata mode decide at open time.
+         * Requests GeoParquet {@code bbox} covering columns for the primary geometry column at the given precision.
+         * Leaving this unset means AUTO: a covering for the primary geometry column of a geo write.
          */
         public Builder bboxCovering(@NonNull CoveringMode mode) {
             this.bboxCovering = Optional.of(mode);
@@ -617,10 +601,10 @@ public record WriteOptions(
         }
 
         /**
-         * Declares a bbox covering already present in the schema for {@code geometryColumn}: the GeoParquet 1.1
-         * metadata names the four leaves and the writer derives no covering columns. The four leaves must hold each
-         * row's minimum and maximum x and y for the geometry in {@code geometryColumn}; a declaration over leaves that
-         * do not hold those bounds makes readers prune away matching rows. Every argument is a dotted column path.
+         * Declares a bbox covering already present in the schema for {@code geometryColumn}: the geo metadata names the
+         * four leaves and the writer derives no covering columns. The four leaves must hold each row's minimum and
+         * maximum x and y for the geometry in {@code geometryColumn}; a declaration over leaves that do not hold those
+         * bounds makes readers prune away matching rows. Every argument is a dotted column path.
          */
         public Builder existingBboxCovering(
                 @NonNull String geometryColumn,

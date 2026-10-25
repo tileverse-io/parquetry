@@ -38,15 +38,15 @@ class WriteOptionsCoveringTest {
         assertThat(options.bboxCovering()).contains(CoveringMode.FLOAT);
     }
 
+    // GeoParquet 2.0 declares a bbox covering with the same object as 1.1.
     @Test
-    void explicitCoveringUnderV2OnlyIsRejected() {
-        WriteOptions.Builder builder = WriteOptions.builder()
+    void explicitCoveringUnderV2OnlyIsKept() {
+        WriteOptions options = WriteOptions.builder()
                 .geoParquetMetadata(GeoParquetMetadataMode.V2_0_ONLY)
-                .bboxCovering(CoveringMode.AUTO);
+                .bboxCovering(CoveringMode.AUTO)
+                .build();
 
-        assertThatThrownBy(builder::build)
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("V2_0_ONLY");
+        assertThat(options.bboxCovering()).contains(CoveringMode.AUTO);
     }
 
     @Test
@@ -85,13 +85,12 @@ class WriteOptionsCoveringTest {
     }
 
     @Test
-    void existingCoveringUnderV2OnlyIsRejected() {
-        WriteOptions.Builder builder = WriteOptions.builder()
+    void existingCoveringUnderV2OnlyIsKept() {
+        WriteOptions options = WriteOptions.builder()
                 .geoParquetMetadata(GeoParquetMetadataMode.V2_0_ONLY)
-                .existingBboxCovering("geometry", "bbox.xmin", "bbox.ymin", "bbox.xmax", "bbox.ymax");
+                .existingBboxCovering("geometry", "bbox.xmin", "bbox.ymin", "bbox.xmax", "bbox.ymax")
+                .build();
 
-        assertThatThrownBy(builder::build)
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("V2_0_ONLY");
+        assertThat(options.existingBboxCovering()).isPresent();
     }
 }
