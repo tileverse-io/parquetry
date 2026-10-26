@@ -156,7 +156,7 @@ class ParquetRuntimeTest {
         ResourceLimits fake =
                 ResourceLimits.fixed(1L << 30, 8L << 30, 4, Path.of(System.getProperty("java.io.tmpdir")));
         ParquetRuntime runtime = ParquetRuntime.builder().resourceLimits(fake).build();
-        assertThat(runtime.fetchBudget().capacity()).as("0.1 of 1 GiB").isEqualTo((long) (0.1 * (1L << 30)));
+        assertThat(runtime.fetchBudget().capacity()).as("0.2 of 1 GiB").isEqualTo((long) (0.2 * (1L << 30)));
         assertThat(runtime.diskBudget().capacity()).as("0.5 of 8 GiB").isEqualTo((long) (0.5 * (8L << 30)));
     }
 

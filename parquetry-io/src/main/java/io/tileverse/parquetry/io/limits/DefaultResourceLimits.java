@@ -57,7 +57,17 @@ final class DefaultResourceLimits implements ResourceLimits {
         if (memoryOverride > 0) {
             return memoryOverride;
         }
-        return containerMemoryBytes();
+        return nativeAllowance(containerMemoryBytes(), Runtime.getRuntime().maxMemory());
+    }
+
+    /**
+     * The memory left for native buffers once the heap has taken its share: the container limit minus the maximum heap.
+     * The heap grows to its maximum under load whatever its live set, hence the budgets derived from this figure must
+     * not count that memory a second time. A heap set close to the container limit leaves an eighth of the container:
+     * the budgets stay positive, and the rest spills to disk.
+     */
+    static long nativeAllowance(long containerBytes, long maxHeapBytes) {
+        return Math.max(containerBytes - maxHeapBytes, containerBytes / 8);
     }
 
     @Override

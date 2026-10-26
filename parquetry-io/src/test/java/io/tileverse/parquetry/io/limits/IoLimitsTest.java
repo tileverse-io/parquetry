@@ -30,18 +30,18 @@ class IoLimitsTest {
     void appliesFractionsToRawFacts() {
         ResourceLimits fake = ResourceLimits.fixed(10L << 30, 100L << 30, 8, DIR);
         IoLimits limits = IoLimits.from(fake);
-        assertThat(limits.maxOffHeapBytes()).as("0.1 of 10 GiB").isEqualTo((long) (0.1 * (10L << 30)));
+        assertThat(limits.maxOffHeapBytes()).as("0.2 of 10 GiB").isEqualTo((long) (0.2 * (10L << 30)));
         assertThat(limits.maxSpillBytes()).as("0.5 of 100 GiB").isEqualTo((long) (0.5 * (100L << 30)));
         assertThat(limits.spillDir()).isEqualTo(DIR);
     }
 
     @Test
-    void derivesDecodeBudgetAtTwentyFivePercentOfMemory() {
+    void decodeCapIsHalfOfMemory() {
         ResourceLimits limits = ResourceLimits.fixed(2_000_000_000L, 100_000_000_000L, 8, Path.of("/tmp"));
         IoLimits ioLimits = IoLimits.from(limits);
         assertThat(ioLimits.maxDecodeBytes())
-                .as("decode ceiling is 25% of available memory")
-                .isEqualTo(500_000_000L);
+                .as("decode ceiling is half of the memory beside the heap")
+                .isEqualTo(1_000_000_000L);
     }
 
     @Test

@@ -48,6 +48,17 @@ class ResourceLimitsTest {
         assertThat(fake.spillDir()).isEqualTo(dir);
     }
 
+    @Test
+    void allowanceIsContainerMinusHeap() {
+        assertThat(DefaultResourceLimits.nativeAllowance(4L << 30, 2L << 30)).isEqualTo(2L << 30);
+    }
+
+    // a heap set to the whole container still leaves the budgets an eighth of it
+    @Test
+    void allowanceKeepsAnEighthFloor() {
+        assertThat(DefaultResourceLimits.nativeAllowance(4L << 30, 4L << 30)).isEqualTo(512L << 20);
+    }
+
     private static final String KEY = "parquetry.io.maxOffHeap";
 
     @ParameterizedTest
