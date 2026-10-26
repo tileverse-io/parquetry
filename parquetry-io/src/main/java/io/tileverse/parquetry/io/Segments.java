@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.io;
 
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 
@@ -46,5 +47,16 @@ public final class Segments {
             return MemorySegment.NULL;
         }
         return source.isReadOnly() ? source : source.asReadOnly();
+    }
+
+    /**
+     * Allocates {@code byteSize} zeroed native bytes owned by {@code arena}. On Linux and macOS a request of 64 KiB or
+     * more is an anonymous memory mapping, unmapped when the arena closes. A smaller request, and any request on
+     * another platform, comes from malloc. The segment pool allocates its backings this way. Use it for a large
+     * short-lived buffer such as a decompressed dictionary page: memory freed to malloc stays in the allocator's
+     * per-thread arenas, a mapping leaves the process at once.
+     */
+    public static MemorySegment allocateNative(long byteSize, Arena arena) {
+        return MappedMemory.allocate(byteSize, arena);
     }
 }

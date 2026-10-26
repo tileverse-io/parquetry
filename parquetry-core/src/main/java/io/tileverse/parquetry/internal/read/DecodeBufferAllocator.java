@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.internal.read;
 
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -55,6 +56,11 @@ public final class DecodeBufferAllocator {
             return borrowRam(size);
         }
         return spillStore.map(size);
+    }
+
+    /** The arena of one decompressed page. Its buffers are pooled and return to the pool when the page closes. */
+    Arena newPageArena() {
+        return new PooledPageArena(segmentPool);
     }
 
     private SegmentPool.Pooled borrowRam(long size) {

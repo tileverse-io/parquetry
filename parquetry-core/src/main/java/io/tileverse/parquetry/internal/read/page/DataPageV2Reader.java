@@ -99,7 +99,11 @@ public final class DataPageV2Reader implements DataPageReader {
             return valueBytes;
         }
         if (compressed) {
-            codec.decompress(valuesSlice, valueBytes);
+            int written = codec.decompress(valuesSlice, valueBytes);
+            if (written != uncompressedSize) {
+                throw new MalformedFileException(
+                        "V2 page values decompressed to " + written + " bytes, header declares " + uncompressedSize);
+            }
         } else {
             requireStoredValueBytes(valuesSlice, uncompressedSize);
             valueBytes.copyFrom(valuesSlice.asSlice(0L, uncompressedSize));

@@ -951,7 +951,7 @@ final class BatchColumnReader {
      * there, which is not a malformed file.
      */
     private boolean tryLoadNextPage() {
-        Arena arena = Arena.ofConfined();
+        Arena arena = decodeBufferAllocator.newPageArena();
         try {
             DecodedPage page = readNextDataPage(arena);
             if (page == null) {
