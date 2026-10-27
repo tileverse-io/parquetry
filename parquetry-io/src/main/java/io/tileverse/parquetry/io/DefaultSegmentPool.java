@@ -52,12 +52,19 @@ import java.util.concurrent.locks.ReentrantLock;
  * deterministically. A return over the cap evicting the incoming backing keeps a freak oversized request from pinning
  * memory: it is allocated, used, then freed on return rather than parked.
  *
+ * <p>{@code maxTotalBytes} limits retention by the pool's whole footprint, the borrowed and the retained bytes
+ * together. The class caps bound what sits idle; the ceiling decides whether a return is retained at all: only while
+ * the total stays within it. A borrow is never refused, and the footprint never exceeds the larger of the ceiling and
+ * the bytes in flight. The default pool sets the ceiling to what the fetch and off-heap decode budgets allow in flight;
+ * retention then fills what those budgets leave idle instead of adding to them.
+ *
  * <p>Every backing comes from an explicitly-closed {@link Arena}, never a GC-managed {@link Arena#ofAuto() auto} arena.
  * Auto-arena segments are reserved against {@code -XX:MaxDirectMemorySize} (they free on garbage collection, which the
  * JVM must drive under direct-memory pressure); explicitly-closed arenas are not. Sourcing the pool from explicit
  * arenas keeps the streaming working set off that ceiling, which would otherwise default to {@code -Xmx} and starve a
  * concurrent reader. A per-backing arena (rather than one pool-wide arena) is what lets a single evicted backing free
- * on its own.
+ * on its own. A large backing is an anonymous mapping from {@link MappedMemory}, unmapped when freed. Memory freed to
+ * malloc stays in the allocator's arenas instead, and the process keeps growing.
  *
  * <p>Capacities are rounded up to {@code blockSize}, mapping requests of slightly different sizes onto one shared
  * capacity they can reuse from one another.
@@ -90,6 +97,7 @@ final class DefaultSegmentPool implements SegmentPool {
                 options.largeBufferThreshold(),
                 options.maxPooledBytes(),
                 options.maxLargePooledBytes(),
+                options.maxTotalBytes(),
                 options.idleRetentionNanos(),
                 options.blockSize());
         pool.startIdleSweep();
@@ -105,8 +113,16 @@ final class DefaultSegmentPool implements SegmentPool {
     /** How long a retained backing may sit idle before the sweep frees it; zero disables idle decay. */
     private final long idleRetentionNanos;
 
-    /** Guards both size classes' free lists and retained-byte counters; borrows and returns mutate them. */
+    /**
+     * The retention limit on the pool's whole footprint, borrowed and retained bytes together; see {@link #giveBack}.
+     */
+    private final long maxTotalBytes;
+
+    /** Guards both size classes' free lists, their retained-byte counters and {@link #borrowedBytes}. */
     private final ReentrantLock lock = new ReentrantLock();
+
+    /** Total capacity of the backings borrowed and not yet returned. Guarded by {@link #lock}. */
+    private long borrowedBytes;
 
     /** Reuse pool for buffers at or below {@link #largeBufferThreshold}. */
     private final SizeClass smallClass;
@@ -135,6 +151,16 @@ final class DefaultSegmentPool implements SegmentPool {
             long maxLargePooledBytes,
             long idleRetentionNanos,
             int blockSize) {
+        this(largeBufferThreshold, maxPooledBytes, maxLargePooledBytes, Long.MAX_VALUE, idleRetentionNanos, blockSize);
+    }
+
+    DefaultSegmentPool(
+            long largeBufferThreshold,
+            long maxPooledBytes,
+            long maxLargePooledBytes,
+            long maxTotalBytes,
+            long idleRetentionNanos,
+            int blockSize) {
         if (largeBufferThreshold <= 0) {
             throw new IllegalArgumentException("largeBufferThreshold must be > 0, got " + largeBufferThreshold);
         }
@@ -144,6 +170,9 @@ final class DefaultSegmentPool implements SegmentPool {
         if (maxLargePooledBytes < 0) {
             throw new IllegalArgumentException("maxLargePooledBytes must be >= 0, got " + maxLargePooledBytes);
         }
+        if (maxTotalBytes < 0) {
+            throw new IllegalArgumentException("maxTotalBytes must be >= 0, got " + maxTotalBytes);
+        }
         if (idleRetentionNanos < 0) {
             throw new IllegalArgumentException("idleRetentionNanos must be >= 0, got " + idleRetentionNanos);
         }
@@ -151,6 +180,7 @@ final class DefaultSegmentPool implements SegmentPool {
             throw new IllegalArgumentException("blockSize must be > 0, got " + blockSize);
         }
         this.largeBufferThreshold = largeBufferThreshold;
+        this.maxTotalBytes = maxTotalBytes;
         this.blockSize = blockSize;
         this.idleRetentionNanos = idleRetentionNanos;
         this.smallClass = new SizeClass(maxPooledBytes);
@@ -166,9 +196,9 @@ final class DefaultSegmentPool implements SegmentPool {
         }
         long capacity = roundUpToBlockSize(byteSize);
         SizeClass sizeClass = capacity > largeBufferThreshold ? largeClass : smallClass;
-        Backing backing = takeFit(sizeClass, capacity);
+        Backing backing = claimBacking(sizeClass, capacity);
         if (backing == null) {
-            backing = allocateBacking(capacity);
+            backing = allocateClaimedCapacity(capacity);
         }
         MemorySegment view = backing.view(byteSize);
         outstandingBorrows.incrementAndGet();
@@ -182,7 +212,8 @@ final class DefaultSegmentPool implements SegmentPool {
         try {
             int freeSegments = smallClass.size() + largeClass.size();
             long retainedBytes = smallClass.retainedBytes() + largeClass.retainedBytes();
-            return new PoolStats(outstandingBorrows.get(), totalBorrows.get(), freeSegments, retainedBytes);
+            return new PoolStats(
+                    outstandingBorrows.get(), totalBorrows.get(), freeSegments, retainedBytes, borrowedBytes);
         } finally {
             lock.unlock();
         }
@@ -232,13 +263,25 @@ final class DefaultSegmentPool implements SegmentPool {
         boolean retained;
         lock.lock();
         try {
-            retained = sizeClass.offer(backing, nowNanos);
+            borrowedBytes -= size;
+            retained = fitsUnderCeiling(size) && sizeClass.offer(backing, nowNanos);
         } finally {
             lock.unlock();
         }
         if (!retained) {
             backing.close();
         }
+    }
+
+    /**
+     * Whether retaining a returned backing of {@code size} bytes keeps the pool's whole footprint, borrowed and
+     * retained together, within {@link #maxTotalBytes}. A return moves bytes from borrowed to retained and leaves the
+     * total as it was. A pool working inside its ceiling therefore retains each return. Only borrows beyond the ceiling
+     * make later returns free their memory, until the total is back under it. Caller holds {@link #lock}.
+     */
+    private boolean fitsUnderCeiling(long size) {
+        long retainedBytes = smallClass.retainedBytes() + largeClass.retainedBytes();
+        return borrowedBytes + retainedBytes + size <= maxTotalBytes;
     }
 
     /**
@@ -298,19 +341,44 @@ final class DefaultSegmentPool implements SegmentPool {
         return stale;
     }
 
-    private Backing takeFit(SizeClass sizeClass, long capacity) {
+    /**
+     * Takes the smallest retained backing that fits {@code capacity}, or {@code null} when the caller must allocate a
+     * fresh one. Either way the bytes count as borrowed from here on: the backing's own size when one is reused, the
+     * requested capacity when one is about to be allocated.
+     */
+    private Backing claimBacking(SizeClass sizeClass, long capacity) {
         lock.lock();
         try {
-            return sizeClass.takeFit(capacity);
+            Backing fit = sizeClass.takeFit(capacity);
+            borrowedBytes += fit != null ? fit.byteSize() : capacity;
+            return fit;
         } finally {
             lock.unlock();
         }
     }
 
-    private static Backing allocateBacking(long capacity) {
-        Arena arena = Arena.ofShared();
-        MemorySegment segment = arena.allocate(capacity);
-        return new Backing(arena, segment);
+    /** Allocates a fresh backing of a capacity already counted as borrowed, uncounting it when the allocation fails. */
+    private Backing allocateClaimedCapacity(long capacity) {
+        boolean allocated = false;
+        try {
+            Arena arena = Arena.ofShared();
+            MemorySegment segment = MappedMemory.allocate(capacity, arena);
+            allocated = true;
+            return new Backing(arena, segment);
+        } finally {
+            if (!allocated) {
+                unclaimCapacity(capacity);
+            }
+        }
+    }
+
+    private void unclaimCapacity(long capacity) {
+        lock.lock();
+        try {
+            borrowedBytes -= capacity;
+        } finally {
+            lock.unlock();
+        }
     }
 
     private static void freeAll(List<Backing> backings) {

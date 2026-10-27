@@ -36,6 +36,7 @@ import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.internal.read.page.DictionaryDecoder;
 import io.tileverse.parquetry.internal.read.page.MemorySegmentInputStream;
+import io.tileverse.parquetry.io.Segments;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.LevelMaxima;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -236,7 +237,7 @@ final class ColumnChunkSlicer {
         PrimitiveKind kind = primitiveKindOf(meta.type());
         OptionalInt typeLength = typeLengthFor(kind, path, fileSchema);
         try (Arena arena = Arena.ofConfined()) {
-            MemorySegment dst = arena.allocate(uncompressedSize);
+            MemorySegment dst = Segments.allocateNative(uncompressedSize, arena);
             codec.decompress(compressedPayload, dst);
             return DictionaryDecoder.read(dst, kind, dictHeader.numValues(), typeLength);
         } catch (ParquetFormatException e) {

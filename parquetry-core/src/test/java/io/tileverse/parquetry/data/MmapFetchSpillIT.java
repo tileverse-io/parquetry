@@ -69,8 +69,8 @@ class MmapFetchSpillIT {
                 .build();
 
         assertThat(pinnedRuntime.fetchBudget().capacity())
-                .as("a 10-byte memory derives a 1-byte fetch budget, below any real row-group range")
-                .isEqualTo(1L);
+                .as("a 10-byte memory derives a 2-byte fetch budget, below any real row-group range")
+                .isEqualTo(2L);
         assertThat(pinnedRuntime.diskBudget().capacity())
                 .as("an 8 GiB disk derives a 4 GiB disk budget, ample for the spill")
                 .isEqualTo(AMPLE_DISK_BYTES / 2);

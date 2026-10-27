@@ -249,15 +249,16 @@ class BatchColumnReaderTest {
         assertThat(first.getInt(2)).isEqualTo(22);
 
         // The next currentPageDefLevels call is what loads page 2. The def-level scratch's buffer already fits page
-        // 2's levels and draws nothing from the pool; the load's single borrow is the pooled page-values segment an
-        // unmasked nullable INT32 page decodes its values into. A delta of exactly one pins the scratch reuse.
+        // 2's levels and draws nothing from the pool; the load borrows the page's decompressed buffer and the pooled
+        // page-values segment of an unmasked nullable INT32 page. A delta of exactly two pins the scratch reuse.
         long borrowsBeforePageTwoLoad = pool.stats().totalBorrows();
         assertThat(intsOf(reader.currentPageDefLevels()))
                 .as("page 2 decoded into the reused scratch")
                 .containsExactly(1, 0, 1, 1);
         assertThat(pool.stats().totalBorrows())
-                .as("loading page 2 reuses the def-level scratch buffer; only the page-values segment is borrowed")
-                .isEqualTo(borrowsBeforePageTwoLoad + 1);
+                .as("loading page 2 reuses the def-level scratch buffer; only the page buffer and the page-values"
+                        + " segment are borrowed")
+                .isEqualTo(borrowsBeforePageTwoLoad + 2);
         IntVector second = (IntVector) reader.readBatch(10, new ArrayList<>());
         assertThat(second.size()).isEqualTo(4);
         assertThat(second.getInt(0)).isEqualTo(33);
@@ -350,7 +351,7 @@ class BatchColumnReaderTest {
     /**
      * An all-valid flat optional page collapses its origin validity to the bitmap-free representation and returns the
      * pooled bitmap immediately instead of pinning it until page-advance. Mid-page (one 2-row batch consumed of 5) the
-     * only outstanding borrow is the batch's value buffer.
+     * outstanding borrows are the batch's value buffer and the live page's decompressed buffer.
      */
     @Test
     void allValidOptionalPageReleasesItsOriginBitmapImmediately() throws IOException {
@@ -367,8 +368,9 @@ class BatchColumnReaderTest {
         assertThat(vec.getInt(0)).isEqualTo(1);
         assertThat(vec.getInt(1)).isEqualTo(2);
         assertThat(pool.stats().outstandingBorrows())
-                .as("mid-page: only the batch's value buffer; the all-valid origin bitmap went straight back")
-                .isEqualTo(1);
+                .as("mid-page: the batch's value buffer and the page buffer; the all-valid origin bitmap went"
+                        + " straight back")
+                .isEqualTo(2);
     }
 
     // --- test 4: hasMore false after all pages consumed ---

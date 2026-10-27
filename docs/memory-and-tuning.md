@@ -1,121 +1,153 @@
 # Memory and tuning in parquetry
 
-How a read bounds its memory, the two dials that bound it, and how to size them
+How a read bounds its memory, the dials that bound it, and how to size them
 against a container limit. Read [The parquetry read path](read-path.md) first for
 the fetch and decode stages these dials act on.
 
-The guiding rule: **a read is bounded by two budgets, one off-heap and one
-on-heap, and both auto-scale from a single fraction of the container limit.** The
-default target is a GeoServer pod with 1-2 GB for parquetry, not "load the file."
+The guiding rule: **a read is bounded by budgets scaled from the memory left
+beside the heap by the container, and the native buffers under those budgets
+leave the process the moment they are freed.** The second half holds where the
+pool maps its buffers, on Linux and macOS with native access allowed (section
+2); on malloc, freed memory may stay with the process. The default target is a
+server process with 1-2 GB for the reader, not "load the file."
 
 ---
 
-## 1. The two budgets
+## 1. The budgets
 
-A read holds memory in two places, and each has its own cap.
+A read holds memory in three places, and each has its own cap.
 
 | Budget | Bounds | Counted against | Default |
 |--------|--------|-----------------|---------|
-| `FetchBudget` | off-heap bytes a read may speculatively prefetch for column-chunk fetches | the container limit, invisible to `-Xmx` | `0.1` of `min(maxHeap, MaxDirectMemorySize)` |
-| `DecodeBudget` | on-heap bytes a read may hold in speculatively decoded batches | `-Xmx` (the JVM heap) | `0.25` of `Runtime.maxMemory()` |
+| `FetchBudget` | off-heap bytes held by column-chunk fetches, in flight and prefetched | the container limit, invisible to `-Xmx` | a fifth of the memory beside the heap |
+| off-heap `DecodeBudget` | off-heap bytes held by decoded values kept in native segments | the container limit | half of the memory beside the heap |
+| on-heap `DecodeBudget` | heap bytes a read may hold in speculatively decoded batches | `-Xmx` (the JVM heap) | `0.25` of `Runtime.maxMemory()` |
 
-Both are shared process-wide: regardless of how many concurrent reads run, total
-speculative fetch memory stays under one `FetchBudget` and total speculative decode
-memory under one `DecodeBudget`. Both are set on `ReadOptions`:
+"The memory beside the heap" is the container limit minus the maximum heap
+(`ResourceLimits.availableMemoryBytes()`). The heap grows to its maximum under
+load whatever its live set, and the budgets must not count that memory a second
+time. With the heap at half the container, as `-XX:MaxRAMPercentage=50` sets it,
+the fetch cap is a tenth of the container and the off-heap decode cap a quarter.
+The environment variable `PARQUETRY_IO_MAX_OFFHEAP` (or the system property
+`parquetry.io.maxOffHeap`) replaces the figure the budgets derive from.
+
+The budgets belong to the `ParquetRuntime`. Readers opened with the default
+runtime share one set: however many concurrent reads run through it, the totals
+stay under one cap each. A reader opened with its own runtime gets its own
+native budgets, and their sum across runtimes is the deployer's to keep inside
+the container. A runtime sets them explicitly:
 
 ```java
-ReadOptions options = ReadOptions.builder()
+ParquetRuntime runtime = ParquetRuntime.builder()
+        .fetchBudget(FetchBudget.ofBytes(256L << 20))
+        .offHeapDecodeBudget(DecodeBudget.ofBytes(512L << 20))
         .decodeBudget(DecodeBudget.ofMaxMemoryFraction(0.25))
-        .fetchBudget(FetchBudget.ofMaxMemoryFraction(0.1))
         .build();
 ```
 
-Only speculative work reserves against either budget. The in-order current row
-group (the one the consumer is reading) always makes progress and never reserves,
-which is what prevents a budget too small for a single batch from deadlocking a
-read. See the [read path](read-path.md#5-fetch-and-decode) for the promotion rule
-that releases a parked decode-ahead worker when its row group becomes current.
+A mandatory buffer, one the current row group needs to make progress, never
+waits: a native segment while its budget has room, a memory-mapped temp file
+when it has none (see [native memory and spill](native-memory-and-spill.md)).
+When the disk budget has no room either, the read fails with an
+`IllegalStateException` instead of parking. Only speculative work parks on a
+full budget. That is what keeps a budget too small for a single row group from
+deadlocking a read.
 
 ---
 
-## 2. Why the off-heap default is conservative
+## 2. Where the native memory comes from
 
 Off-heap growth is what drives container OOM-kills: it counts against the pod's
-memory limit but is invisible to `-Xmx`. The JVM cannot reclaim it under heap
-pressure, and the kernel kills the process before any `OutOfMemoryError` is thrown.
-The `FetchBudget` default is therefore a small fraction (`0.1`) of
-`min(maxHeap, MaxDirectMemorySize)` - large enough to overlap fetch with decode,
-small enough that prefetch alone cannot push the process past its limit.
+memory limit but is invisible to `-Xmx`, and the kernel kills the process before
+any `OutOfMemoryError` is thrown. Two things keep parquetry's native footprint
+equal to what it holds:
 
-`DecodeBudget` is heap-visible: decoded batches live inside `-Xmx`, where the JVM
-manages them. Its default (`0.25` of `Runtime.maxMemory()`) leaves the rest of the
-heap for the consumer's working set. `Runtime.maxMemory()` reflects the container
-limit, which lets the fraction auto-scale per pod.
+- The fetch buffers, the decompressed pages and the native decode buffers all
+  come from one `SegmentPool`. The pool retains returned buffers under byte caps
+  sized to the working set of a loaded server (a fifth of the memory beside the
+  heap for the large class, a tenth for the small one) and frees what sits idle
+  for a minute. A borrow is never refused. The pool's ceiling, equal to what the
+  two native budgets allow in flight, limits retention instead: a returned
+  buffer is kept only while borrowed plus retained bytes stay within it, hence
+  the pool's footprint never exceeds the larger of the ceiling and the bytes in
+  flight. Retention fills what the budgets leave idle instead of adding to them.
+- A pool buffer of 64 KiB or more is an anonymous memory mapping, not a malloc
+  allocation, on Linux and macOS. Memory freed to glibc's malloc does not leave
+  the process: the freed chunk stays parked in the arena of the thread that
+  allocated it, and a server with many threads keeps up to eight arenas per host
+  CPU, each with its own high-water mark. Under 32 concurrent reads the memory
+  kept that way exceeded the memory in use. A mapping is unmapped when its
+  buffer is freed, and the pages go back to the kernel at once.
+
+The mappings need native access: run with `--enable-native-access=ALL-UNNAMED`.
+Without it the JDK prints a warning at the first mapping, and a JVM started with
+`--illegal-native-access=deny` falls back to malloc. Mapped memory does not
+appear in the JVM's native memory tracking (`jcmd <pid> VM.native_memory`);
+`SegmentPool.getDefault().stats()` reports what the pool retains. The system
+property `parquetry.io.mappedBackings=false` keeps the buffers on malloc.
 
 ---
 
-## 3. The adaptive fraction pattern
-
-Prefer `ofMaxMemoryFraction(...)` over a per-pod fixed byte cap. One fraction
-policy auto-scales across heterogeneous pods, because both budgets derive their
-basis from the running JVM's limit:
-
-| Pod | Heap | `DecodeBudget` at `0.25` | `FetchBudget` at `0.1` |
-|-----|------|--------------------------|------------------------|
-| WMS | 4-6 GB | ~1-1.5 GB | ~0.4-0.6 GB |
-| WFS | 2-4 GB | ~0.5-1 GB | ~0.2-0.4 GB |
-| WebUI | 1-2 GB | ~0.25-0.5 GB | ~0.1-0.2 GB |
-
-A fixed `ofBytes(...)` cap exists for the case where a deployment wants an explicit
-ceiling regardless of the JVM limit, but it must be re-tuned per pod size; the
-fraction policy does not.
-
----
-
-## 4. Sizing against a container limit
+## 3. Sizing against a container limit
 
 Peak process memory is approximately:
 
 ```
-maxHeap (-Xmx, includes the on-heap DecodeBudget)
-  + FetchBudget (off-heap)
-  + retained segment pool (off-heap)
-  + JVM native baseline
+maxHeap (-Xmx; the heap grows to it under load)
+  + the pool's memory, in flight and retained (at most FetchBudget + off-heap DecodeBudget)
+  + decompressed pages (one per projected column of each row group being decoded)
+  + JVM native baseline (metaspace, code cache, GC structures, thread stacks)
 ```
 
-To stay under a pod limit, keep `maxHeap + off-heap + margin <= pod limit`:
+The pool's ceiling is the two budgets' total, and what the pool retains between
+bursts counts inside it, not on top. The decompressed pages are borrowed from
+the pool without a budget reservation: a read decoding `n` row groups ahead
+holds up to `n` pages per projected column, each the file's page size, usually
+about a megabyte. With `-XX:MaxRAMPercentage=50` the first term is half the
+container and the pool takes at most 35% of it before fetches and decodes spill
+to disk. About 15% is left for the pages, the JVM baseline and the page cache.
+Measured with 32 concurrent bbox reads of a 3 GB file in a 2 GB container with
+a 1200 MB heap: 0.77 GB of anonymous memory at the peak, against 1.34 GB with
+the buffers on malloc, at a higher read rate.
 
-- Set `-Xmx` below the pod limit by the off-heap budget plus the native baseline
-  plus a safety margin. The off-heap term is `FetchBudget` plus the retained
-  segment pool; the native baseline is the JVM's own footprint (metaspace, thread
-  stacks, GC structures).
-- `DecodeBudget` is inside `-Xmx` and does not add to the formula beyond `-Xmx`;
-  it bounds how much of the heap speculative decode-ahead may occupy, leaving the
-  remainder for the consumer.
+- A heap set above half the container shrinks the budgets with the memory left
+  beside it. A heap set close to the container limit leaves them an eighth of
+  the container, and most fetches then go to the spill files: slow, not dead.
+- The on-heap `DecodeBudget` is inside `-Xmx` and does not add to the formula; it
+  bounds how much of the heap speculative decode-ahead may occupy.
 - The heap scratch retained by parquetry's tileverse `ByteBufferPool` provider
   (the merge scratch of batched reads, a PMTiles reader's buffers) is also inside
   `-Xmx`: at most 32 MiB between borrows, released after 30 s idle.
-- `FetchBudget` adds to the off-heap term directly. Raising it improves
-  fetch/decode overlap on high-latency byte sources (S3) at the cost of off-heap
-  headroom.
 
-A read that cannot fit one row group's working set inside `-Xmx` will still fail
-with an `OutOfMemoryError` regardless of `DecodeBudget`: the budget bounds
-speculative decode-ahead, not the mandatory current row group. Wide projections
-over large geometry columns are the case to watch; raise `-Xmx` or narrow the
-projection rather than the budget.
+A read that cannot fit one row group's working set inside `-Xmx` still fails
+with an `OutOfMemoryError`: the budgets bound speculative work and native
+buffers, not the heap of the mandatory current row group. Wide projections over
+large geometry columns are the case to watch; raise `-Xmx` or narrow the
+projection rather than the budgets.
+
+Settings beside parquetry's own that matter in a container:
+
+- `-XX:TrimNativeHeapInterval=<ms>` has the JVM return what is freed to malloc
+  by other native users (zlib, the font engine, the networking stack). It does
+  not hold the peak of a burst down: under load the arenas refill within the
+  interval.
+- `MALLOC_ARENA_MAX` bounds glibc's arenas for the whole process, at a cost for
+  other allocator-heavy libraries in the same JVM.
+- `-Djdk.nio.maxCachedBufferSize` caps the temporary direct buffer kept per
+  thread by the JDK for channel reads into heap buffers.
 
 ---
 
-## 5. Where to look
+## 4. Where to look
 
 | Concern | Start in |
 |---------|----------|
-| Read tunables | `data/ReadOptions.java` |
-| Off-heap fetch budget | `data/read/FetchBudget.java` |
-| On-heap decode budget | `data/read/DecodeBudget.java` |
-| Decode-ahead + promotion | `data/read/ParallelDecodeCoordinator.java`, `data/read/StreamingBatchSource.java` |
-| Prefetch | `data/read/RowGroupPrefetcher.java` |
+| Budgets and their defaults | `runtime/ParquetRuntime.java`, `io/limits/IoLimits.java` |
+| Off-heap fetch budget | `runtime/FetchBudget.java` |
+| Decode budgets | `runtime/DecodeBudget.java` |
+| The pool and its memory | `io/SegmentPool.java`, `io/DefaultSegmentPool.java`, `io/MappedMemory.java` |
+| Decode-ahead + promotion | `internal/read/ParallelDecodeCoordinator.java`, `internal/read/StreamingBatchSource.java` |
+| Prefetch | `internal/read/RowGroupPrefetcher.java` |
 
 ---
 

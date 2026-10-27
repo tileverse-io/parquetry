@@ -86,7 +86,11 @@ public final class DataPageV1Reader implements DataPageReader {
                     "V1 page uncompressedPageSize must be non-negative, got " + uncompressedSize);
         }
         MemorySegment payload = pageArena.allocate(uncompressedSize);
-        codec.decompress(compressedPagePayload, payload);
+        int written = codec.decompress(compressedPagePayload, payload);
+        if (written != uncompressedSize) {
+            throw new MalformedFileException(
+                    "V1 page decompressed to " + written + " bytes, header declares " + uncompressedSize);
+        }
         return payload;
     }
 

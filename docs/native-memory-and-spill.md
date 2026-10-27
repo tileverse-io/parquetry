@@ -42,36 +42,49 @@ gigabytes of native memory at once. That term is the subject of sections 3 and 4
 
 ---
 
-## 2. The pool must not ratchet — *Implemented*
+## 2. The pool holds the working set, and its memory leaves the process when freed - *Implemented*
 
-`SegmentPool` is a reuse cache, not a memory bound. Its job is to avoid
-re-allocating native segments across fetches; the high-water cap belongs to
-`FetchBudget`, not the pool. But a naive reuse cache quietly inflates the
-resident baseline of a months-long pod.
+`SegmentPool` is a reuse cache. It serves the fetch buffers, the decompressed
+pages and the native decode buffers of concurrent reads without allocating per
+use; the high-water caps belong to `FetchBudget` and the off-heap `DecodeBudget`,
+not to the pool. Two things about its memory are easy to get wrong, and a
+long-running process pays for both.
 
-The trap, in the default pool: borrowed segments are request-sized, and a
-fixed-count free list that retains "the largest segment seen" plus a
-smallest-large-enough reuse policy converges to **the N biggest buffers it ever
-saw, pinned for the JVM lifetime** - one heavy burst permanently inflates the
-baseline. Native memory held by an auto arena frees only through garbage
-collection, and that collection runs on heap pressure. This memory is off-heap,
-beyond the reach of that pressure, and is effectively never reclaimed.
+**Retention.** A reuse cache keeping "the largest segment seen" converges to the
+N biggest buffers seen so far, pinned for the JVM lifetime. The pool therefore
+splits retention by size and caps each class by bytes, not by count: small
+buffers (rounded capacity at most 4 MB: pages, decode buffers) under one cap,
+large ones (row-group fetch buffers) under another, each sized from the memory
+beside the heap to keep the working set of a loaded server pooled. A return
+that would breach its cap frees the buffer at once, and a background reaper
+frees what sits idle for a minute. A cap below the working set is the other
+failure: the pool then frees and allocates on nearly each borrow and return,
+and under 32 concurrent reads it did that eight thousand times a second.
 
-The pool therefore splits retention by size:
+The caps bound what sits idle, not what the pool holds. A ceiling on the pool's
+total, borrowed and retained bytes together, is set to what the fetch and
+off-heap decode budgets allow in flight. A return never raises that total. A
+pool working inside its ceiling therefore retains each return, and only borrows
+beyond the budgets, such as the decompressed pages, make later returns free
+their memory until the total is back under it. Retention never adds to the
+figure already accounted for by the budgets; it fills whatever they leave idle.
 
-- **Small buffers** (rounded capacity at most a threshold) are pooled and reused,
-  with total retained bytes capped (`maxPooledBytes`), not capped by count. A
-  return that would breach the byte cap is dropped and becomes
-  garbage-collectable.
-- **Large buffers** (above the threshold) are never pooled. Each is allocated in
-  its own shared arena and freed **deterministically** when the borrower closes,
-  with no dependency on garbage collection. The borrow/return lifecycle already
-  closes every buffer at row-group end; nothing above the pool changes.
+**Where the bytes come from.** A buffer freed to glibc's malloc does not leave
+the process. glibc keeps the freed chunk in the arena of the thread that
+allocated it, allows up to eight arenas per CPU of the host (the container's
+CPU limit does not count), and raises its mmap threshold as large chunks are
+freed. Multi-megabyte buffers then come from those arenas instead of mappings. Each
+arena keeps its own high-water mark, and `malloc_trim` cannot shrink an arena's
+top below a threshold raised by the same churn to tens of megabytes. Measured
+with 32 concurrent bbox reads of a 3 GB file in a 2 GB container: the memory
+tracked by the JVM stayed near 0.6 GB while the process held 1.34 GB of
+anonymous memory, and a trim of the native heap after the reads returned
+0.3 GB at once. A pool buffer of 64 KiB or more is therefore an anonymous
+memory mapping (`MappedMemory`, reachable as `Segments.allocateNative`),
+unmapped the moment it is freed, on Linux and macOS; smaller buffers and other
+platforms stay on malloc. The same reads then peaked at 0.77 GB.
 
-The result: retained native memory is bounded by a small byte cap, and a burst of
-large fetches leaves nothing pinned once the reads that needed them finish.
-
-See `parquetry-io/.../io/DefaultSegmentPool.java`.
+See `parquetry-io/.../io/DefaultSegmentPool.java` and `.../io/MappedMemory.java`.
 
 ---
 

@@ -18,14 +18,17 @@ package io.tileverse.parquetry.io.limits;
 import java.nio.file.Path;
 
 /**
- * The derived caps the read path honors, computed from a {@link ResourceLimits} by applying conservative fractions.
- * This is the one place those fractions live; the budgets that consume the caps own no sizing of their own.
+ * The caps honored by the read path, derived from a {@link ResourceLimits} by applying fractions to the memory left
+ * beside the heap: a fifth of it for the column-chunk fetches in flight, half of it for off-heap decode buffers, and
+ * half of the usable disk for spill. With the heap at half the container, the usual setting, the memory caps come to a
+ * tenth and a quarter of the container. This is the one place those fractions live; the budgets consuming the caps own
+ * no sizing of their own.
  */
 public record IoLimits(long maxOffHeapBytes, long maxSpillBytes, long maxDecodeBytes, Path spillDir) {
 
-    private static final double OFF_HEAP_FRACTION = 0.1;
+    private static final double OFF_HEAP_FRACTION = 0.2;
     private static final double SPILL_FRACTION = 0.5;
-    private static final double DECODE_FRACTION = 0.25;
+    private static final double DECODE_FRACTION = 0.5;
 
     public IoLimits {
         if (maxOffHeapBytes <= 0) {

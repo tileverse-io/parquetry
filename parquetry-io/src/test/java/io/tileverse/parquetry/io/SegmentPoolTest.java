@@ -18,19 +18,27 @@ package io.tileverse.parquetry.io;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.lang.ref.WeakReference;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+
+import io.tileverse.parquetry.io.limits.IoLimits;
+import io.tileverse.parquetry.io.limits.ResourceLimits;
 
 class SegmentPoolTest {
 
@@ -105,6 +113,8 @@ class SegmentPoolTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new SegmentPool.Options(1024, 1024, -1, 0, 8192))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new SegmentPool.Options(1024, 1024, 1024, -1, 0, 8192))
+                .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new SegmentPool.Options(1024, 1024, 1024, -1, 8192))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new SegmentPool.Options(1024, 1024, 1024, 0, 0))
@@ -119,6 +129,10 @@ class SegmentPoolTest {
         assertThat(elastic.maxLargePooledBytes()).isBetween(64L << 20, 1024L << 20);
         assertThat(elastic.idleRetentionNanos()).isEqualTo(TimeUnit.SECONDS.toNanos(60));
         assertThat(elastic.blockSize()).isEqualTo(8192);
+        IoLimits limits = IoLimits.from(ResourceLimits.getDefault());
+        assertThat(elastic.maxTotalBytes())
+                .as("the ceiling is what the fetch and off-heap decode budgets allow in flight")
+                .isEqualTo(limits.maxOffHeapBytes() + limits.maxDecodeBytes());
     }
 
     @Test
@@ -149,15 +163,19 @@ class SegmentPoolTest {
     @Test
     void statsTrackTheBorrowLifecycle() {
         SegmentPool pool = SegmentPool.create();
-        assertThat(pool.stats()).isEqualTo(new SegmentPool.PoolStats(0, 0, 0, 0));
+        assertThat(pool.stats()).isEqualTo(new SegmentPool.PoolStats(0, 0, 0, 0, 0));
 
         SegmentPool.Pooled pooled = pool.borrow(64);
         assertThat(pool.stats().outstandingBorrows()).isEqualTo(1);
         assertThat(pool.stats().totalBorrows()).isEqualTo(1);
+        assertThat(pool.stats().borrowedBytes())
+                .as("the rounded capacity of the borrow")
+                .isEqualTo(8192);
 
         pooled.close();
         assertThat(pool.stats().outstandingBorrows()).isZero();
         assertThat(pool.stats().totalBorrows()).isEqualTo(1);
+        assertThat(pool.stats().borrowedBytes()).isZero();
 
         pooled.close();
         assertThat(pool.stats().outstandingBorrows())
@@ -335,6 +353,24 @@ class SegmentPoolTest {
         }
 
         @Test
+        void totalCeilingFreesTheOverflow() {
+            long megabyte = 1L << 20;
+            SegmentPool pool = SegmentPool.create(
+                    new SegmentPool.Options(8192, 16 * megabyte, 16 * megabyte, 2 * megabyte, 0, 8192));
+            List<SegmentPool.Pooled> held = new ArrayList<>();
+            for (int i = 0; i < 3; i++) {
+                held.add(pool.borrow(megabyte));
+            }
+            for (SegmentPool.Pooled pooled : held) {
+                pooled.close();
+            }
+            assertThat(pool.stats().retainedBytes())
+                    .as("the first return exceeds the ceiling and is freed, the next two fit")
+                    .isEqualTo(2 * megabyte);
+            assertThat(pool.stats().freeSegments()).isEqualTo(2);
+        }
+
+        @Test
         void closeIsIdempotentForARetainedBuffer() {
             DefaultSegmentPool pool = new DefaultSegmentPool(1024, 1 << 20, 1 << 20, 1024);
             SegmentPool.Pooled pooled = pool.borrow(8192);
@@ -397,6 +433,80 @@ class SegmentPoolTest {
                 System.gc();
             }
             return ref.get() == null;
+        }
+    }
+
+    // the borrow shape kept by glibc in its arenas: threads, sizes below one freed earlier, a live buffer between two
+    @Test
+    void freedBackingsLeaveTheProcess() {
+        Path status = Path.of("/proc/self/status");
+        assumeTrue(Files.isReadable(status), "needs the Linux /proc/self/status");
+        assumeTrue(MappedMemory.mapsLargeBackings(), "needs mapped backings");
+        DefaultSegmentPool pool = new DefaultSegmentPool(4L << 20, 0L, 0L, 8192);
+        int threads = 8;
+        long[] megabytes = {4, 5, 6, 7, 8, 9, 10, 11};
+        List<SegmentPool.Pooled> pinned = Collections.synchronizedList(new ArrayList<>());
+        long before = rssAnonKb(status);
+        runOnPlatformThreads(threads, () -> {
+            SegmentPool.Pooled first = pool.borrow(12L << 20);
+            touchEveryPage(first.segment());
+            first.close();
+            for (long mb : megabytes) {
+                SegmentPool.Pooled large = pool.borrow(mb << 20);
+                touchEveryPage(large.segment());
+                pinned.add(pool.borrow(8192));
+                large.close();
+            }
+        });
+        long after = rssAnonKb(status);
+        pinned.forEach(SegmentPool.Pooled::close);
+        long returnedMb = threads * (4 + 5 + 6 + 7 + 8 + 9 + 10 + 11);
+        assertThat((after - before) >> 10)
+                .as("anonymous RSS growth in MB after returning %d MB", returnedMb)
+                .isLessThan(64);
+    }
+
+    private static long rssAnonKb(Path status) {
+        try {
+            for (String line : Files.readAllLines(status)) {
+                if (line.startsWith("RssAnon:")) {
+                    return Long.parseLong(line.replaceAll("[^0-9]", ""));
+                }
+            }
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+        throw new IllegalStateException("no RssAnon line in " + status);
+    }
+
+    private static void touchEveryPage(MemorySegment segment) {
+        for (long offset = 0; offset < segment.byteSize(); offset += 4096) {
+            segment.set(ValueLayout.JAVA_BYTE, offset, (byte) 1);
+        }
+    }
+
+    private static void runOnPlatformThreads(int count, Runnable body) {
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        List<Thread> threads = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            threads.add(Thread.ofPlatform().start(() -> {
+                try {
+                    body.run();
+                } catch (Throwable t) {
+                    failure.compareAndSet(null, t);
+                }
+            }));
+        }
+        for (Thread thread : threads) {
+            try {
+                thread.join();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(e);
+            }
+        }
+        if (failure.get() != null) {
+            throw new AssertionError("a worker failed", failure.get());
         }
     }
 }
