@@ -120,15 +120,19 @@ class BboxCoveringPlanTest {
     }
 
     private static ParquetSchema geoSchemaWithExtent(PrimitiveKind extentKind) {
+        return geoSchemaWithExtent(extentKind, Repetition.OPTIONAL, "xmin", "ymin", "xmax", "ymax");
+    }
+
+    /** An optional geometry column and an {@code extent} struct with one leaf per name, in the given order. */
+    private static ParquetSchema geoSchemaWithExtent(
+            PrimitiveKind extentKind, Repetition extentRepetition, String... leafNames) {
         SchemaNode.Primitive geometry = new SchemaNode.Primitive(
                 "geometry", Repetition.OPTIONAL, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
-        List<SchemaNode> extentLeaves = List.of(
-                extentLeaf("xmin", extentKind),
-                extentLeaf("ymin", extentKind),
-                extentLeaf("xmax", extentKind),
-                extentLeaf("ymax", extentKind));
-        SchemaNode.Group extent =
-                new SchemaNode.Group("extent", Repetition.REQUIRED, extentLeaves, Optional.empty(), -1);
+        List<SchemaNode> extentLeaves = new ArrayList<>();
+        for (String name : leafNames) {
+            extentLeaves.add(extentLeaf(name, extentKind));
+        }
+        SchemaNode.Group extent = new SchemaNode.Group("extent", extentRepetition, extentLeaves, Optional.empty(), -1);
         SchemaNode.Group root =
                 new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(geometry, extent), Optional.empty(), -1);
         return new ParquetSchema(root);
@@ -200,7 +204,42 @@ class BboxCoveringPlanTest {
 
         assertThatThrownBy(() -> resolve(options, schema))
                 .isInstanceOf(ParquetWriteException.class)
-                .hasMessageContaining("extent.xmin");
+                .hasMessageContaining("no 'extent' column");
+    }
+
+    @Test
+    void existingCoveringIsReordered() {
+        ParquetSchema schema =
+                geoSchemaWithExtent(PrimitiveKind.FLOAT, Repetition.OPTIONAL, "xmin", "xmax", "ymin", "ymax");
+
+        BboxCoveringPlan plan = resolve(existingExtentCovering().build(), schema);
+
+        assertThat(plan.active()).isTrue();
+        assertThat(plan.writtenSchema()).isEqualTo(geoSchemaWithExtent(PrimitiveKind.FLOAT));
+    }
+
+    @Test
+    void existingRepetitionMustMatch() {
+        ParquetSchema schema =
+                geoSchemaWithExtent(PrimitiveKind.FLOAT, Repetition.REQUIRED, "xmin", "ymin", "xmax", "ymax");
+        WriteOptions options = existingExtentCovering().build();
+
+        assertThatThrownBy(() -> resolve(options, schema))
+                .isInstanceOf(ParquetWriteException.class)
+                .hasMessageContaining("'extent' column is REQUIRED");
+    }
+
+    // GeoParquet requires the covering paths to name the fields of one top-level struct.
+    @Test
+    void existingOverFlatColumnsThrows() {
+        ParquetSchema schema = geoSchemaWithExtent(PrimitiveKind.FLOAT);
+        WriteOptions options = geoOptions()
+                .existingBboxCovering("geometry", "extent.xmin", "extent.ymin", "extent.xmax", "geometry")
+                .build();
+
+        assertThatThrownBy(() -> resolve(options, schema))
+                .isInstanceOf(ParquetWriteException.class)
+                .hasMessageContaining("one top-level struct");
     }
 
     @Test
@@ -263,8 +302,28 @@ class BboxCoveringPlanTest {
     }
 
     @Test
-    void extraBboxFieldIsSkipped() {
+    void autoDeclares3dBboxStruct() {
+        ParquetSchema schema = geoSchemaWithBbox("xmin", "xmax", "ymin", "ymax", "zmin", "zmax");
+
+        BboxCoveringPlan plan = resolve(geoOptions().build(), schema);
+
+        assertThat(plan.active()).isTrue();
+        assertThat(plan.writtenSchema()).isEqualTo(geoSchemaWithBbox("xmin", "ymin", "zmin", "xmax", "ymax", "zmax"));
+        assertThat(plan.xmax()).isEqualTo(ColumnPath.of("bbox", "xmax"));
+    }
+
+    @Test
+    void loneZminIsSkipped() {
         ParquetSchema schema = geoSchemaWithBbox("xmin", "ymin", "xmax", "ymax", "zmin");
+
+        BboxCoveringPlan plan = resolve(geoOptions().build(), schema);
+
+        assertThat(plan.active()).isFalse();
+    }
+
+    @Test
+    void extraBboxFieldIsSkipped() {
+        ParquetSchema schema = geoSchemaWithBbox("xmin", "ymin", "xmax", "ymax", "area");
 
         BboxCoveringPlan plan = resolve(geoOptions().build(), schema);
 

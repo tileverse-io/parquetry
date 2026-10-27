@@ -20,7 +20,6 @@ import java.io.PrintWriter;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -124,8 +123,8 @@ public final class CpCmd implements Callable<Integer> {
                     + "AUTO. AUTO declares a bbox struct of the source as the covering, such as the one written by "
                     + "DuckDB, with its fields in the GeoParquet order, and derives one otherwise: FLOAT for a CRS84 "
                     + "or EPSG:4326 geometry column, DOUBLE for "
-                    + "other CRSs. A covering declared by the source over copied columns is kept whatever this flag "
-                    + "says.")
+                    + "other CRSs. A covering declared by the source is kept whatever this flag says, when the copy "
+                    + "holds its struct and the struct follows the same rules.")
     private WriteOptions.CoveringMode bboxCovering;
 
     @Mixin
@@ -272,8 +271,8 @@ public final class CpCmd implements Callable<Integer> {
      * Writer options for the copy. A flag left out keeps the writer's default: the system temporary directory for the
      * temp dir, the type-defined order for the float column order, dual GeoParquet metadata, an AUTO covering. The
      * covering flag applies when the source declares no covering: a covering declared by the source and kept by the
-     * copy is forwarded as declared. An AUTO flag is left unset, like an absent one: the writer then skips a covering
-     * it cannot add instead of failing the copy.
+     * copy is forwarded, see {@link #forwardCovering}. An AUTO flag is left unset, like an absent one: the writer then
+     * skips a covering it cannot add instead of failing the copy.
      */
     private WriteOptions buildWriteOptions(
             ParquetSchema writeSchema, Map<String, String> sourceKeyValue, WriteOptions.RowGroupSize rowGroupSize) {
@@ -301,13 +300,27 @@ public final class CpCmd implements Callable<Integer> {
             }
         }
         forwardOpaqueMetadata(builder, sourceKeyValue);
-        boolean coveringForwarded = collectGeometryColumns(builder, writeSchema, sourceKeyValue);
-        if (bboxCovering != null && bboxCovering != WriteOptions.CoveringMode.AUTO && !coveringForwarded) {
+        SourceCovering sourceCovering = collectGeometryColumns(builder, writeSchema, sourceKeyValue);
+        if (bboxCovering != null && bboxCovering != WriteOptions.CoveringMode.AUTO && !sourceCovering.kept()) {
             builder.bboxCovering(bboxCovering);
         }
         WriteOptions writeOptions = builder.build();
-        reportUnusableBboxColumn(writeOptions, writeSchema);
+        reportCoveringProblem(sourceCovering, writeOptions, writeSchema);
         return writeOptions;
+    }
+
+    /**
+     * Tells the user why the copy drops the bbox covering declared by the source, or else why a geo copy with an AUTO
+     * covering declares none.
+     */
+    private void reportCoveringProblem(
+            SourceCovering sourceCovering, WriteOptions writeOptions, ParquetSchema writeSchema) {
+        Optional<String> dropReason = sourceCovering.dropReason();
+        if (dropReason.isPresent()) {
+            printWarning("the copy drops the bbox covering declared by the source: " + dropReason.orElseThrow());
+            return;
+        }
+        reportUnusableBboxColumn(writeOptions, writeSchema);
     }
 
     /**
@@ -324,11 +337,16 @@ public final class CpCmd implements Callable<Integer> {
         if (!autoCovering || !hasBboxColumn || geometryColumn.isEmpty()) {
             return;
         }
-        Optional<String> defect = BoundingBoxColumn.defect(writeSchema, geometryColumn.orElseThrow());
+        Optional<String> defect =
+                BoundingBoxColumn.defect(writeSchema, BoundingBoxColumn.NAME, geometryColumn.orElseThrow());
         if (defect.isPresent()) {
-            PrintWriter err = spec.commandLine().getErr();
-            err.println("par: the copy declares no bbox covering: " + defect.orElseThrow());
+            printWarning("the copy declares no bbox covering: " + defect.orElseThrow());
         }
+    }
+
+    private void printWarning(String message) {
+        PrintWriter err = spec.commandLine().getErr();
+        err.println("par: " + message);
     }
 
     /** The first geometry column of the copy in schema order, the column given a covering by the writer. */
@@ -442,17 +460,17 @@ public final class CpCmd implements Callable<Integer> {
      * GeoParquet footer block for the output. The block must be regenerated rather than copied: its bounding box and
      * geometry types are derived from the rows actually written (which a filter or projection may narrow), and a
      * geometry column dropped by the projection must leave no dangling entry behind. The primary column's bbox covering
-     * declaration is the one part of the block forwarded as-is, see {@link #forwardCovering}.
+     * declaration is the one part of the block forwarded, see {@link #forwardCovering}.
      *
-     * @return whether the source's bbox covering declaration was forwarded to the copy
+     * @return what became of the source's bbox covering declaration
      */
-    private static boolean collectGeometryColumns(
+    private static SourceCovering collectGeometryColumns(
             WriteOptions.Builder builder, ParquetSchema writeSchema, Map<String, String> sourceKeyValue) {
         String geoJson = sourceKeyValue.get(GEO_METADATA_KEY);
         if (geoJson == null) {
-            return false;
+            return SourceCovering.none();
         }
-        boolean coveringForwarded = false;
+        SourceCovering sourceCovering = SourceCovering.none();
         GeoParquetMetadata geo = GeoParquetMetadata.parse(geoJson);
         for (Map.Entry<String, GeoColumn> column : geo.columns().entrySet()) {
             String columnName = column.getKey();
@@ -461,10 +479,10 @@ public final class CpCmd implements Callable<Integer> {
             }
             declareCrs(builder, columnName, column.getValue().crs());
             if (columnName.equals(geo.primaryColumn())) {
-                coveringForwarded = forwardCovering(builder, writeSchema, columnName, column.getValue());
+                sourceCovering = forwardCovering(builder, writeSchema, columnName, column.getValue());
             }
         }
-        return coveringForwarded;
+        return sourceCovering;
     }
 
     /**
@@ -481,56 +499,72 @@ public final class CpCmd implements Callable<Integer> {
     }
 
     /**
-     * Keeps the source's bbox covering declaration for {@code columnName} when the copy still holds all four covering
-     * leaves as FLOAT or DOUBLE columns. The leaves themselves are copied like any other column; only the declaration
-     * needs forwarding, and a declared covering stops the writer from deriving a second one. When a projection drops
-     * one of the leaves, or the source declares its covering over a column of another type, no declaration is forwarded
-     * and the writer's default covering policy applies to the copy. The writer declares one covering per file, hence
-     * only the primary geometry column's declaration is forwarded. Only the four planar extrema are forwarded; a
-     * source's {@code zmin} and {@code zmax} covering paths are not declared on the copy.
+     * Keeps the source's bbox covering declaration for {@code columnName} when the copy can declare it too, see
+     * {@link #sourceCovering}. The struct is copied like any other column; only the declaration needs forwarding, and a
+     * declared covering stops the writer from deriving a second one. The writer declares one covering per file, hence
+     * only the primary geometry column's declaration is forwarded. Only the four planar paths are forwarded, the keys
+     * defined by GeoParquet 1.1. A struct with {@code zmin} and {@code zmax} fields keeps them.
      *
-     * @return whether the declaration was forwarded
+     * @return what became of the declaration
      */
-    private static boolean forwardCovering(
+    private static SourceCovering forwardCovering(
             WriteOptions.Builder builder, ParquetSchema writeSchema, String columnName, GeoColumn column) {
         Optional<BboxCovering> covering = column.covering().map(Covering::bbox);
         if (covering.isEmpty()) {
-            return false;
+            return SourceCovering.none();
         }
         BboxCovering bbox = covering.orElseThrow();
-        if (!coveringLeavesCopied(writeSchema, bbox)) {
-            return false;
+        SourceCovering outcome = sourceCovering(writeSchema, bbox, ColumnPath.parse(columnName));
+        if (outcome.kept()) {
+            builder.existingBboxCovering(
+                    columnName,
+                    bbox.xmin().dot(),
+                    bbox.ymin().dot(),
+                    bbox.xmax().dot(),
+                    bbox.ymax().dot());
         }
-        builder.existingBboxCovering(
-                columnName,
-                bbox.xmin().dot(),
-                bbox.ymin().dot(),
-                bbox.xmax().dot(),
-                bbox.ymax().dot());
-        return true;
+        return outcome;
     }
 
     /**
-     * Tells whether the copy holds every leaf of {@code covering} as a column accepted by the writer for a covering
-     * declaration: each of the four paths must resolve in {@code writeSchema} to a FLOAT or DOUBLE leaf. Both a
-     * projection that drops one of the leaves and a source declaration over a column of another type answer false,
-     * which leaves the copy to the writer's default covering policy instead of aborting the write.
+     * Whether the copy can keep {@code covering}, the source's declaration for {@code geometryColumn}. Its paths must
+     * name the fields of one top-level struct, and that struct of the copy must meet the {@link BoundingBoxColumn}
+     * rules. A struct with its fields out of the spec order is kept, and the writer reorders the fields. A projection
+     * that drops the whole struct leaves nothing to declare. Any other problem drops the declaration with a reason. In
+     * both cases the copy follows the covering flag instead.
      */
-    static boolean coveringLeavesCopied(ParquetSchema writeSchema, BboxCovering covering) {
-        List<ColumnPath> leaves = List.of(covering.xmin(), covering.ymin(), covering.xmax(), covering.ymax());
-        return leaves.stream().allMatch(leaf -> isFloatingPointLeaf(writeSchema, leaf));
+    static SourceCovering sourceCovering(ParquetSchema writeSchema, BboxCovering covering, ColumnPath geometryColumn) {
+        Optional<String> struct = BoundingBoxColumn.columnNamedBy(covering);
+        if (struct.isEmpty()) {
+            return SourceCovering.drop("its paths do not name the fields xmin, ymin, xmax and ymax of one struct");
+        }
+        String name = struct.orElseThrow();
+        if (writeSchema.find(ColumnPath.of(name)).isEmpty()) {
+            return SourceCovering.none();
+        }
+        Optional<String> defect = BoundingBoxColumn.defect(writeSchema, name, geometryColumn);
+        if (defect.isPresent()) {
+            return SourceCovering.drop(defect.orElseThrow());
+        }
+        return SourceCovering.keep();
     }
 
-    private static boolean isFloatingPointLeaf(ParquetSchema writeSchema, ColumnPath path) {
-        Optional<SchemaNode> node = writeSchema.find(path);
-        if (node.isEmpty()) {
-            return false;
+    /**
+     * What became of the source's bbox covering declaration: kept by the copy, absent, or dropped for a reason told to
+     * the user.
+     */
+    record SourceCovering(boolean kept, Optional<String> dropReason) {
+        static SourceCovering none() {
+            return new SourceCovering(false, Optional.empty());
         }
-        if (!(node.orElseThrow() instanceof SchemaNode.Primitive leaf)) {
-            return false;
+
+        static SourceCovering keep() {
+            return new SourceCovering(true, Optional.empty());
         }
-        PrimitiveKind kind = leaf.kind();
-        return kind == PrimitiveKind.FLOAT || kind == PrimitiveKind.DOUBLE;
+
+        static SourceCovering drop(String reason) {
+            return new SourceCovering(false, Optional.of(reason));
+        }
     }
 
     private static boolean survivesProjection(ParquetSchema writeSchema, String columnName) {

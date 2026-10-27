@@ -540,50 +540,60 @@ class CpCmdTest {
     }
 
     /**
-     * The condition under which a source declaration reaches the copy: every covering leaf must be in the written
-     * schema as a FLOAT or DOUBLE column. The writer rejects a declaration over anything else at open time, and cp
-     * falls back to the default covering policy rather than failing the copy over it.
+     * When a source declaration reaches the copy: its struct must be in the copy and follow the bounding box column
+     * rules. A struct out of the spec order is kept, and the writer reorders its fields. A struct dropped by the
+     * projection leaves nothing to report.
      */
     @ParameterizedTest(name = "{0}")
-    @MethodSource("coveringLeafCases")
-    void aCoveringIsForwardedOnlyOverNumericLeavesPresentInTheCopy(
-            String caseName, ParquetSchema writeSchema, boolean forwarded) {
-        BboxCovering covering = new BboxCovering(
-                ColumnPath.of("bbox", "xmin"),
-                ColumnPath.of("bbox", "xmax"),
-                ColumnPath.of("bbox", "ymin"),
-                ColumnPath.of("bbox", "ymax"),
-                Optional.empty(),
-                Optional.empty());
+    @MethodSource("sourceCoveringCases")
+    void sourceCoveringIsChecked(String caseName, ParquetSchema writeSchema, boolean kept, boolean reported) {
+        CpCmd.SourceCovering outcome =
+                CpCmd.sourceCovering(writeSchema, BboxCovering.conventional(), ColumnPath.of("geometry"));
 
-        assertThat(CpCmd.coveringLeavesCopied(writeSchema, covering)).isEqualTo(forwarded);
+        assertThat(outcome.kept()).isEqualTo(kept);
+        assertThat(outcome.dropReason().isPresent())
+                .as("a reason told to the user")
+                .isEqualTo(reported);
     }
 
-    private static Stream<Arguments> coveringLeafCases() {
-        List<String> allLeaves = List.of("xmin", "xmax", "ymin", "ymax");
-        List<String> withoutYmax = List.of("xmin", "xmax", "ymin");
+    private static Stream<Arguments> sourceCoveringCases() {
+        List<String> specOrder = List.of("xmin", "ymin", "xmax", "ymax");
+        List<String> duckDbOrder = List.of("xmin", "xmax", "ymin", "ymax");
+        List<String> withoutYmax = List.of("xmin", "ymin", "xmax");
         List<PrimitiveKind> allFloat =
                 List.of(PrimitiveKind.FLOAT, PrimitiveKind.FLOAT, PrimitiveKind.FLOAT, PrimitiveKind.FLOAT);
         List<PrimitiveKind> ymaxIsInt =
                 List.of(PrimitiveKind.FLOAT, PrimitiveKind.FLOAT, PrimitiveKind.FLOAT, PrimitiveKind.INT32);
         return Stream.of(
-                Arguments.of("four FLOAT leaves", bboxSchema(allLeaves, allFloat), true),
-                Arguments.of("ymax dropped by the projection", bboxSchema(withoutYmax, allFloat.subList(0, 3)), false),
-                Arguments.of("ymax declared over an INT32 column", bboxSchema(allLeaves, ymaxIsInt), false));
+                Arguments.of("four FLOAT fields", bboxSchema(specOrder, allFloat), true, false),
+                Arguments.of("fields in the DuckDB order", bboxSchema(duckDbOrder, allFloat), true, false),
+                Arguments.of("ymax dropped by the projection", bboxSchema(withoutYmax, allFloat), false, true),
+                Arguments.of("ymax declared over an INT32 column", bboxSchema(specOrder, ymaxIsInt), false, true),
+                Arguments.of("struct dropped by the projection", bboxSchema(List.of(), allFloat), false, false));
     }
 
     /**
-     * Builds a schema whose REQUIRED {@code bbox} group holds one leaf per name, typed by the kind at the same index.
+     * Builds a schema with a REQUIRED {@code geometry} column and, unless {@code fieldNames} is empty, a REQUIRED
+     * {@code bbox} group holding one field per name, typed by the kind at the same index.
      */
-    private static ParquetSchema bboxSchema(List<String> leafNames, List<PrimitiveKind> kinds) {
-        List<SchemaNode> leaves = new ArrayList<>();
-        for (int i = 0; i < leafNames.size(); i++) {
-            leaves.add(new SchemaNode.Primitive(
-                    leafNames.get(i), Repetition.REQUIRED, kinds.get(i), OptionalInt.empty(), Optional.empty(), -1));
+    private static ParquetSchema bboxSchema(List<String> fieldNames, List<PrimitiveKind> kinds) {
+        List<SchemaNode> columns = new ArrayList<>();
+        columns.add(new SchemaNode.Primitive(
+                "geometry", Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1));
+        if (!fieldNames.isEmpty()) {
+            List<SchemaNode> fields = new ArrayList<>();
+            for (int i = 0; i < fieldNames.size(); i++) {
+                fields.add(new SchemaNode.Primitive(
+                        fieldNames.get(i),
+                        Repetition.REQUIRED,
+                        kinds.get(i),
+                        OptionalInt.empty(),
+                        Optional.empty(),
+                        -1));
+            }
+            columns.add(new SchemaNode.Group("bbox", Repetition.REQUIRED, fields, Optional.empty(), -1));
         }
-        SchemaNode.Group bbox = new SchemaNode.Group("bbox", Repetition.REQUIRED, leaves, Optional.empty(), -1);
-        SchemaNode.Group root =
-                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(bbox), Optional.empty(), -1);
+        SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, columns, Optional.empty(), -1);
         return new ParquetSchema(root);
     }
 
@@ -910,6 +920,46 @@ class CpCmdTest {
         assertThat(code).isZero();
         assertThat(geoOf(dst).columns().get("geometry").covering()).isEmpty();
         assertThat(err.toString()).isEmpty();
+    }
+
+    // The source, written by pyarrow, declares its covering over bbox fields in the order xmin, xmax, ymin, ymax.
+    @Test
+    void copyKeepsDeclaredCovering(@TempDir Path dir) throws Exception {
+        Path src = TestCorpus.extractFile("parquetry/geo/buildings-gp110-bbox-covering.parquet", dir);
+        Path dst = dir.resolve("kept.parquet");
+
+        StringWriter err = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setErr(new PrintWriter(err));
+        int code = cmd.execute("cp", src.toString(), dst.toString());
+
+        assertThat(code).isZero();
+        assertThat(err.toString()).isEmpty();
+        assertThat(coveringOf(dst)).isEqualTo(BboxCovering.conventional());
+        assertThat(leafPaths(dst))
+                .as("the bbox fields in the spec order")
+                .endsWith("bbox.xmin", "bbox.ymin", "bbox.xmax", "bbox.ymax");
+        assertThat(bboxRows(dst)).isEqualTo(bboxRows(src));
+    }
+
+    @Test
+    void droppedCoveringIsReported(@TempDir Path dir) throws Exception {
+        Path src = dir.resolve("geo-cities-extent.parquet");
+        Path dst = dir.resolve("copy.parquet");
+        Fixtures.writeGeoCitiesWithExtentCovering(src);
+        String columns = "id,geometry,extent.xmin,extent.ymin,extent.xmax";
+
+        StringWriter err = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setErr(new PrintWriter(err));
+        int code = cmd.execute("cp", src.toString(), dst.toString(), "--columns", columns);
+
+        assertThat(code).isZero();
+        assertThat(err.toString())
+                .contains("drops the bbox covering declared by the source: the 'extent' column has no field 'ymax'");
+        assertThat(coveringOf(dst))
+                .as("the copy derives its own covering instead")
+                .isEqualTo(BboxCovering.conventional());
     }
 
     /** Writes two rows of a single FLOAT column holding NaN alone. */
