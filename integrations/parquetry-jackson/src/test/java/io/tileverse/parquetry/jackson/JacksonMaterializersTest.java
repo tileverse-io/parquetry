@@ -23,7 +23,6 @@ import static io.tileverse.parquetry.jackson.JacksonRecords.validBits;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayOutputStream;
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
@@ -53,7 +52,7 @@ class JacksonMaterializersTest {
         Map<ColumnPath, ColumnVector> columns = Map.of(
                 ColumnPath.of("id"), IntVector.materialized(new int[] {1}, present),
                 ColumnPath.of("name"), BinaryVector.materialized(new MemorySegment[] {utf8("Rosario")}, present));
-        return new DefaultParquetRecordBatch(schema, columns, 1, Arena.ofConfined());
+        return new DefaultParquetRecordBatch(schema, columns, 1);
     }
 
     @Test

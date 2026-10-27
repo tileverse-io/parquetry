@@ -16,10 +16,9 @@
 package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.lang.foreign.Arena;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.jupiter.api.Test;
 
@@ -29,10 +28,8 @@ class DecodedRowGroupTest {
 
     @Test
     void emitsBatchesInOrder() {
-        Arena arena0 = Arena.ofConfined();
-        Arena arena1 = Arena.ofConfined();
-        ParquetRecordBatch b0 = batch(arena0);
-        ParquetRecordBatch b1 = batch(arena1);
+        ParquetRecordBatch b0 = TestBatches.emptyBatch();
+        ParquetRecordBatch b1 = TestBatches.emptyBatch();
         DecodedRowGroup rowGroup =
                 new DecodedRowGroup(new InlineBatchSource(new ListRowGroupDriver(List.of(b0, b1))), true);
 
@@ -47,42 +44,39 @@ class DecodedRowGroupTest {
 
     @Test
     void closeClosesOnlyUnemittedBatches() {
-        Arena arenaEmitted = Arena.ofConfined();
-        Arena arenaUnemitted = Arena.ofConfined();
-        ParquetRecordBatch emitted = batch(arenaEmitted);
-        ParquetRecordBatch unemitted = batch(arenaUnemitted);
+        AtomicBoolean emittedClosed = new AtomicBoolean();
+        AtomicBoolean unemittedClosed = new AtomicBoolean();
+        ParquetRecordBatch emitted = TestBatches.emptyBatch(emittedClosed);
+        ParquetRecordBatch unemitted = TestBatches.emptyBatch(unemittedClosed);
         DecodedRowGroup rowGroup =
                 new DecodedRowGroup(new InlineBatchSource(new ListRowGroupDriver(List.of(emitted, unemitted))), true);
 
         rowGroup.next(); // emit the first; the consumer now owns it
         rowGroup.close();
 
-        // The unemitted batch's arena must be closed by DecodedRowGroup.close().
-        assertThatThrownBy(() -> arenaUnemitted.allocate(8)).isInstanceOf(IllegalStateException.class);
-
-        // The emitted batch's arena must still be open - its consumer owns it.
-        assertThat(arenaEmitted.allocate(8)).isNotNull();
+        assertThat(unemittedClosed.get())
+                .as("the unemitted batch is closed by close()")
+                .isTrue();
+        assertThat(emittedClosed.get())
+                .as("the emitted batch is owned by its consumer")
+                .isFalse();
 
         emitted.close();
     }
 
     @Test
     void closeIsIdempotent() {
-        Arena arena = Arena.ofConfined();
-        ParquetRecordBatch only = batch(arena);
+        AtomicBoolean closed = new AtomicBoolean();
+        ParquetRecordBatch only = TestBatches.emptyBatch(closed);
         DecodedRowGroup rowGroup =
                 new DecodedRowGroup(new InlineBatchSource(new ListRowGroupDriver(List.of(only))), true);
         rowGroup.close();
         rowGroup.close();
-        // Arena must be closed exactly once (idempotent close does not throw).
-        assertThatThrownBy(() -> arena.allocate(8)).isInstanceOf(IllegalStateException.class);
+        assertThat(closed.get()).isTrue();
     }
 
     // ------------------------------------------------------------------
     // Helpers
     // ------------------------------------------------------------------
 
-    private static ParquetRecordBatch batch(Arena arena) {
-        return TestBatches.emptyBatch(arena);
-    }
 }

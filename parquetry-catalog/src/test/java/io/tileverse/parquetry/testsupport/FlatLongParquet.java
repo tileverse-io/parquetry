@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.testsupport;
 
-import java.lang.foreign.Arena;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.BitSet;
@@ -98,7 +97,7 @@ public final class FlatLongParquet {
         }
         Validity validity = Validity.of(validBits, rows);
         Map<ColumnPath, ColumnVector> columns = Map.of(ColumnPath.of(column), LongVector.materialized(longs, validity));
-        return new DefaultParquetRecordBatch(schema, columns, rows, Arena.ofShared());
+        return new DefaultParquetRecordBatch(schema, columns, rows);
     }
 
     private static ParquetSchema flatInt64Schema(String column) {

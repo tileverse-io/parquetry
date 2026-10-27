@@ -18,7 +18,6 @@ package io.tileverse.parquetry.arrow.ipc;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.OutputStream;
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
@@ -167,7 +166,7 @@ class DuckDbCorpusRoundTripIT {
         columns.put(ID, IntVector.materialized(ids, allValid));
         columns.put(INT_COL, IntVector.materialized(intCols, allValid));
         columns.put(STRING_COL, BinaryVector.materialized(strings, allValid));
-        return new DefaultParquetRecordBatch(projectedSchema, columns, rowCount, Arena.ofShared());
+        return new DefaultParquetRecordBatch(projectedSchema, columns, rowCount);
     }
 
     private List<Row> consumeRegisteredArrowStream(Pipe pipe, DuckDBConnection conn) throws Exception {

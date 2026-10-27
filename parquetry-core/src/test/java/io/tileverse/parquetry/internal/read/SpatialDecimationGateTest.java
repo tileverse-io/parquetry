@@ -18,7 +18,6 @@ package io.tileverse.parquetry.internal.read;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -101,7 +100,7 @@ class SpatialDecimationGateTest {
         }
         BinaryVector vector = BinaryVector.materialized(values, validity(validityBits));
         Map<ColumnPath, ColumnVector> columns = Map.of(GEOM, vector);
-        return new DefaultParquetRecordBatch(singleColumnSchema(GEOM), columns, points.length, Arena.ofConfined());
+        return new DefaultParquetRecordBatch(singleColumnSchema(GEOM), columns, points.length);
     }
 
     private static MemorySegment wkbPoint(double x, double y) {

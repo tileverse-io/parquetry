@@ -19,7 +19,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.sql.DriverManager;
@@ -113,7 +112,7 @@ class DuckDbRegisterArrowStreamIT {
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of("id"), LongVector.materialized(new long[] {1L, 2L, 3L}, validity));
         columns.put(ColumnPath.of("name"), BinaryVector.materialized(utf8Segments("alpha", "beta", "gamma"), validity));
-        return new DefaultParquetRecordBatch(schema, columns, 3, Arena.ofShared());
+        return new DefaultParquetRecordBatch(schema, columns, 3);
     }
 
     private static MemorySegment[] utf8Segments(String... values) {

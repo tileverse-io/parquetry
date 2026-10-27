@@ -20,7 +20,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -210,7 +209,7 @@ class RoundTripNestedTest {
         SchemaNode.Group variant = variantGroup("v");
         SchemaNode.Group list = listGroup("vs", variant);
         ParquetSchema schema = schema(list);
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, Map.of(), 0, Arena.ofShared());
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, Map.of(), 0);
         Stream<ParquetRecordBatch> batches = Stream.of(batch);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         Optional<GeoParquetMetadata> noGeo = Optional.empty();
@@ -229,7 +228,7 @@ class RoundTripNestedTest {
             throws Exception {
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of(columnName), vector);
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, rowCount, Arena.ofShared());
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, rowCount);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ArrowIpcWriter.write(schema, Optional.empty(), Stream.of(batch), out);
 

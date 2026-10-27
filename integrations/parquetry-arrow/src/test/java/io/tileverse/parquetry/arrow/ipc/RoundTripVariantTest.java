@@ -19,7 +19,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.util.LinkedHashMap;
@@ -135,7 +134,7 @@ class RoundTripVariantTest {
             throws Exception {
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of(columnName), vector);
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, rowCount, Arena.ofShared());
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, rowCount);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ArrowIpcWriter.write(schema, Optional.empty(), Stream.of(batch), out);
 

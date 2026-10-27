@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.columnar;
 
-import java.lang.foreign.Arena;
 import java.util.BitSet;
 import java.util.List;
 import java.util.Map;
@@ -40,24 +39,21 @@ final class BatchFixture {
     static ParquetRecordBatch intColumn(ColumnPath col, int[] values, String validityBits) {
         Validity validity = validity(validityBits);
         Map<ColumnPath, ColumnVector> columns = Map.of(col, IntVector.materialized(values, validity));
-        return new DefaultParquetRecordBatch(
-                singleColumnSchema(col, PrimitiveKind.INT32), columns, values.length, Arena.ofConfined());
+        return new DefaultParquetRecordBatch(singleColumnSchema(col, PrimitiveKind.INT32), columns, values.length);
     }
 
     /** Builds a one-column batch whose single {@link FloatVector} holds {@code values}, all of them non-null. */
     static ParquetRecordBatch floatColumn(ColumnPath col, float[] values) {
         Validity validity = validity("1".repeat(values.length));
         Map<ColumnPath, ColumnVector> columns = Map.of(col, FloatVector.materialized(values, validity));
-        return new DefaultParquetRecordBatch(
-                singleColumnSchema(col, PrimitiveKind.FLOAT), columns, values.length, Arena.ofConfined());
+        return new DefaultParquetRecordBatch(singleColumnSchema(col, PrimitiveKind.FLOAT), columns, values.length);
     }
 
     /** Builds a one-column batch whose single {@link DoubleVector} holds {@code values}, all of them non-null. */
     static ParquetRecordBatch doubleColumn(ColumnPath col, double[] values) {
         Validity validity = validity("1".repeat(values.length));
         Map<ColumnPath, ColumnVector> columns = Map.of(col, DoubleVector.materialized(values, validity));
-        return new DefaultParquetRecordBatch(
-                singleColumnSchema(col, PrimitiveKind.DOUBLE), columns, values.length, Arena.ofConfined());
+        return new DefaultParquetRecordBatch(singleColumnSchema(col, PrimitiveKind.DOUBLE), columns, values.length);
     }
 
     private static Validity validity(String validityBits) {

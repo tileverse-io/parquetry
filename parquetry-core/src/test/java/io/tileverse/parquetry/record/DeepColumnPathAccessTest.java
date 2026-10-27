@@ -18,7 +18,6 @@ package io.tileverse.parquetry.record;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.lang.foreign.Arena;
 import java.util.BitSet;
 import java.util.List;
 import java.util.Map;
@@ -143,7 +142,7 @@ class DeepColumnPathAccessTest {
         BitSet outerValid = new BitSet();
         outerValid.set(1);
         StructVector outer = new StructVector(Map.of(ColumnPath.of("inner"), inner), Validity.of(outerValid, 2), 2);
-        return new DefaultParquetRecordBatch(deepSchema(), Map.of(TOP, idVec, OUTER, outer), 2, Arena.ofConfined());
+        return new DefaultParquetRecordBatch(deepSchema(), Map.of(TOP, idVec, OUTER, outer), 2);
     }
 
     /**
@@ -157,7 +156,7 @@ class DeepColumnPathAccessTest {
         StructVector inner = new StructVector(Map.of(ColumnPath.of("xmin"), xminVec), Validity.allValid(1), 1);
         Validity outerValidity = outerNull ? Validity.of(new BitSet(), 1) : Validity.allValid(1);
         StructVector outer = new StructVector(Map.of(ColumnPath.of("inner"), inner), outerValidity, 1);
-        return new DefaultParquetRecordBatch(deepSchema(), Map.of(TOP, idVec, OUTER, outer), 1, Arena.ofConfined());
+        return new DefaultParquetRecordBatch(deepSchema(), Map.of(TOP, idVec, OUTER, outer), 1);
     }
 
     private static ParquetSchema deepSchema() {

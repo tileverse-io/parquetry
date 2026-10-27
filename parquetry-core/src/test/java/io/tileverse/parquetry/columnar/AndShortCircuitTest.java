@@ -17,7 +17,6 @@ package io.tileverse.parquetry.columnar;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.BitSet;
 import java.util.LinkedHashMap;
@@ -120,7 +119,7 @@ class AndShortCircuitTest {
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ID, id);
         columns.put(GEOM, geom);
-        return new DefaultParquetRecordBatch(schema(), columns, rows, Arena.ofConfined());
+        return new DefaultParquetRecordBatch(schema(), columns, rows);
     }
 
     private static ParquetSchema schema() {

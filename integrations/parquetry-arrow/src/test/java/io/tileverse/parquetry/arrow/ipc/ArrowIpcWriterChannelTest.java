@@ -19,7 +19,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -158,6 +157,6 @@ class ArrowIpcWriterChannelTest {
         columns.put(
                 ColumnPath.of("name"),
                 BinaryVector.dictionary(new MemorySegment[] {red, green}, indices, nameValidity));
-        return new DefaultParquetRecordBatch(schema, columns, 4, Arena.ofShared());
+        return new DefaultParquetRecordBatch(schema, columns, 4);
     }
 }

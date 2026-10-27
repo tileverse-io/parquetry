@@ -17,7 +17,6 @@ package io.tileverse.parquetry.record;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.lang.management.ManagementFactory;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -100,7 +99,7 @@ class RowColumnsAllocationTest {
             offsets[i] = i;
         }
         ListVector items = new ListVector(offsets, element, Validity.allValid(ROWS), ROWS);
-        return new DefaultParquetRecordBatch(listOfStructSchema(), Map.of(ITEMS, items), ROWS, Arena.ofConfined());
+        return new DefaultParquetRecordBatch(listOfStructSchema(), Map.of(ITEMS, items), ROWS);
     }
 
     private static ParquetSchema listOfStructSchema() {
@@ -158,7 +157,7 @@ class RowColumnsAllocationTest {
             children.put(ColumnPath.of(corner), DoubleVector.materialized(new double[ROWS], Validity.allValid(ROWS)));
         }
         StructVector bbox = new StructVector(children, Validity.allValid(ROWS), ROWS);
-        return new DefaultParquetRecordBatch(bboxSchema(), Map.of(BBOX, bbox), ROWS, Arena.ofConfined());
+        return new DefaultParquetRecordBatch(bboxSchema(), Map.of(BBOX, bbox), ROWS);
     }
 
     private static ParquetSchema bboxSchema() {

@@ -19,7 +19,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -101,7 +100,7 @@ class RoundTripTypesTest {
             ParquetSchema schema, String columnName, ColumnVector column, int rowCount) {
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of(columnName), column);
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, rowCount, Arena.ofShared());
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, rowCount);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ArrowIpcWriter.write(schema, Optional.empty(), Stream.of(batch), out);
         return out.toByteArray();
@@ -142,7 +141,7 @@ class RoundTripTypesTest {
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of("f"), FloatVector.materialized(new float[] {1.5f, 2.25f, 4.75f}, validity));
         columns.put(ColumnPath.of("d"), DoubleVector.materialized(new double[] {1.5, 2.25, 4.75}, validity));
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 3, Arena.ofShared());
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 3);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ArrowIpcWriter.write(schema, Optional.empty(), Stream.of(batch), out);
 
@@ -334,7 +333,7 @@ class RoundTripTypesTest {
         columns.put(
                 ColumnPath.of("ts"),
                 LongVector.materialized(new long[] {1_700_000_000_000_000L, 1_700_000_001_000_000L}, validity));
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 2, Arena.ofShared());
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 2);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ArrowIpcWriter.write(schema, Optional.empty(), Stream.of(batch), out);
 
@@ -378,7 +377,7 @@ class RoundTripTypesTest {
                 io.tileverse.parquetry.columnar.IntVector.materialized(new int[] {-1, 7}, validity));
         // 0xFFFFFFFFFFFFFFFF as a signed long is -1; an unsigned reader must see 18446744073709551615.
         columns.put(ColumnPath.of("u64"), LongVector.materialized(new long[] {-1L, 7L}, validity));
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 2, Arena.ofShared());
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 2);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ArrowIpcWriter.write(schema, Optional.empty(), Stream.of(batch), out);
 
@@ -408,7 +407,7 @@ class RoundTripTypesTest {
         firstColumns.put(
                 ColumnPath.of("count"),
                 io.tileverse.parquetry.columnar.IntVector.materialized(new int[] {10, 20}, firstValidity));
-        ParquetRecordBatch firstBatch = new DefaultParquetRecordBatch(schema, firstColumns, 2, Arena.ofShared());
+        ParquetRecordBatch firstBatch = new DefaultParquetRecordBatch(schema, firstColumns, 2);
 
         BitSet secondValidBits = new BitSet();
         secondValidBits.set(0, 3);
@@ -417,7 +416,7 @@ class RoundTripTypesTest {
         secondColumns.put(
                 ColumnPath.of("count"),
                 io.tileverse.parquetry.columnar.IntVector.materialized(new int[] {30, 40, 50}, secondValidity));
-        ParquetRecordBatch secondBatch = new DefaultParquetRecordBatch(schema, secondColumns, 3, Arena.ofShared());
+        ParquetRecordBatch secondBatch = new DefaultParquetRecordBatch(schema, secondColumns, 3);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ArrowIpcWriter.write(schema, Optional.empty(), Stream.of(firstBatch, secondBatch), out);
@@ -511,7 +510,7 @@ class RoundTripTypesTest {
                                 BigInteger.valueOf(98765).toByteArray(),
                                 BigInteger.valueOf(-1).toByteArray()),
                         validity));
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 2, Arena.ofShared());
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 2);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ArrowIpcWriter.write(schema, Optional.empty(), Stream.of(batch), out);
 

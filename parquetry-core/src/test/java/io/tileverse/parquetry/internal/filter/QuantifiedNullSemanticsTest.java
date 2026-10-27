@@ -17,7 +17,6 @@ package io.tileverse.parquetry.internal.filter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -239,8 +238,7 @@ class QuantifiedNullSemanticsTest {
                 new StructVector(Map.of(ColumnPath.of("locality"), localityVector), Validity.allValid(count), count);
         int[] offsets = {0, count};
         ListVector addresses = new ListVector(offsets, element, Validity.allValid(1), 1);
-        ParquetRecordBatch batch =
-                new DefaultParquetRecordBatch(addressesSchema(), Map.of(ADDRESSES, addresses), 1, Arena.ofConfined());
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(addressesSchema(), Map.of(ADDRESSES, addresses), 1);
         return batch.materialize(0);
     }
 

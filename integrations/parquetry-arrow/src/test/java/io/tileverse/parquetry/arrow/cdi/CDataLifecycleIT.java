@@ -89,7 +89,7 @@ class CDataLifecycleIT {
     private static ParquetRecordBatch smallBatch(ParquetSchema schema, int batch) {
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of("id"), LongVector.materialized(new long[] {batch}, Validity.allValid(1)));
-        return new DefaultParquetRecordBatch(schema, columns, 1, Arena.ofShared());
+        return new DefaultParquetRecordBatch(schema, columns, 1);
     }
 
     private static ParquetSchema idSchema() {

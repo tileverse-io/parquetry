@@ -17,7 +17,6 @@ package io.tileverse.parquetry.columnar;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -36,7 +35,7 @@ class BatchMaterializerTest {
     void defaultBatchMaterializerReturnsBatchAsIs() {
         BatchMaterializer<ParquetRecordBatch> m = BatchMaterializer.defaultBatch();
         ParquetSchema schema = minimalSchema();
-        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, Map.of(), 0, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, Map.of(), 0)) {
             assertThat(m.materialize(schema, batch)).isSameAs(batch);
         }
     }

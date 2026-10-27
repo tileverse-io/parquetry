@@ -18,7 +18,6 @@ package io.tileverse.parquetry.record;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.util.BitSet;
@@ -101,7 +100,7 @@ class DefaultParquetRecordTest {
                         present));
         columns.put(NULL_COL, IntVector.materialized(new int[] {0}, Validity.of(new BitSet(), 1)));
 
-        batch = new DefaultParquetRecordBatch(schema, columns, 1, Arena.ofConfined());
+        batch = new DefaultParquetRecordBatch(schema, columns, 1);
         row = batch.materialize(0);
     }
 

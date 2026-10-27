@@ -17,7 +17,6 @@ package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.util.BitSet;
 import java.util.List;
 import java.util.Map;
@@ -82,7 +81,7 @@ class TwoLevelListAssemblyTest {
                 .as("row 2 list is empty")
                 .isZero();
 
-        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 3, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 3)) {
             assertThat(batch.materialize(0).get(ColumnPath.of("nums")))
                     .as("row 0 reads back as [10, 20]")
                     .isEqualTo(List.of(10, 20));

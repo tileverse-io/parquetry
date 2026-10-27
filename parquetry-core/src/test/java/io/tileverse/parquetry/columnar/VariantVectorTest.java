@@ -52,7 +52,7 @@ class VariantVectorTest {
 
             ParquetSchema schema = variantSchema();
             Map<ColumnPath, ColumnVector> columns = Map.of(VARIANT_COLUMN, variantVec);
-            try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1, Arena.ofConfined())) {
+            try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1)) {
                 ParquetRecord row = batch.materialize(0);
                 Object cell = row.get(VARIANT_COLUMN);
                 assertThat(cell).as("variant cell type").isInstanceOf(Variant.class);
@@ -69,7 +69,7 @@ class VariantVectorTest {
 
             ParquetSchema schema = variantSchema();
             Map<ColumnPath, ColumnVector> columns = Map.of(VARIANT_COLUMN, variantVec);
-            try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1, Arena.ofConfined())) {
+            try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1)) {
                 ParquetRecord row = batch.materialize(0);
                 assertThat(row.get(VARIANT_COLUMN))
                         .as("cleared validity yields null")
@@ -91,14 +91,15 @@ class VariantVectorTest {
 
             Variant live;
             Variant detached;
-            try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1, arena)) {
+            try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1)) {
                 ParquetRecord row = batch.materialize(0);
                 live = (Variant) row.get(VARIANT_COLUMN);
                 detached = live.detach();
             }
+            arena.close();
 
             assertThat(detached.getField("n").getInt())
-                    .as("detached copy navigates after the batch arena is closed")
+                    .as("detached copy navigates after the source arena is closed")
                     .isEqualTo(42);
             // The binary leaves consolidate into a heap backing buffer at construction, decoupling them from any
             // decode arena, which is why a variant read still succeeds once that arena is closed.

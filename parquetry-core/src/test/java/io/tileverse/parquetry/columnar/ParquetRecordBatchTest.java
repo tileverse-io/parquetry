@@ -18,7 +18,6 @@ package io.tileverse.parquetry.columnar;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.lang.foreign.Arena;
 import java.util.BitSet;
 import java.util.List;
 import java.util.Map;
@@ -39,36 +38,34 @@ import io.tileverse.parquetry.schema.SchemaNode;
 class ParquetRecordBatchTest {
 
     @Test
-    void closeReleasesArena() {
-        Arena arena = Arena.ofConfined();
-        arena.allocate(8);
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 0, arena);
+    void closeReleasesOwnedBuffers() {
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 0);
+        AtomicInteger closes = new AtomicInteger();
+        batch.registerBuffer(closes::incrementAndGet);
 
         batch.close();
 
-        // Arena is closed: a subsequent allocate must throw.
-        assertThatThrownBy(() -> arena.allocate(8)).isInstanceOf(IllegalStateException.class);
+        assertThat(closes.get()).isEqualTo(1);
     }
 
     @Test
     void doubleCloseIsNoOp() {
-        Arena arena = Arena.ofConfined();
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 0, arena);
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 0);
+        AtomicInteger closes = new AtomicInteger();
+        batch.registerBuffer(closes::incrementAndGet);
         batch.close();
         batch.close();
-        // If close() is idempotent the arena must be closed after the first call and remain closed.
-        assertThatThrownBy(() -> arena.allocate(8)).isInstanceOf(IllegalStateException.class);
+        assertThat(closes.get()).as("an owned buffer is closed once").isEqualTo(1);
     }
 
     @Test
     void columnsAccessorReturnsLookup() {
-        Arena arena = Arena.ofConfined();
         ColumnPath aPath = ColumnPath.of("a");
         BitSet validity = new BitSet(2);
         validity.set(0, 2);
         Map<ColumnPath, ColumnVector> cols =
                 Map.of(aPath, IntVector.materialized(new int[] {1, 2}, Validity.of(validity, 2)));
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), cols, 2, arena);
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), cols, 2);
 
         assertThat(batch.columns()).containsKey(aPath);
         assertThat(batch.rowCount()).isEqualTo(2);
@@ -78,13 +75,12 @@ class ParquetRecordBatchTest {
 
     @Test
     void materializeReturnsBatchBackedRecord() {
-        Arena arena = Arena.ofConfined();
         ColumnPath aPath = ColumnPath.of("value");
         BitSet validity = new BitSet(1);
         validity.set(0);
         Map<ColumnPath, ColumnVector> cols =
                 Map.of(aPath, IntVector.materialized(new int[] {42}, Validity.of(validity, 1)));
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), cols, 1, arena);
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), cols, 1);
 
         ParquetRecord row = batch.materialize(0);
         assertThat(row).isNotNull();
@@ -96,8 +92,7 @@ class ParquetRecordBatchTest {
 
     @Test
     void materializeRangeChecksRowIndex() {
-        Arena arena = Arena.ofConfined();
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 2, arena);
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 2);
 
         assertThatThrownBy(() -> batch.materialize(-1)).isInstanceOf(IndexOutOfBoundsException.class);
         assertThatThrownBy(() -> batch.materialize(2)).isInstanceOf(IndexOutOfBoundsException.class);
@@ -107,24 +102,21 @@ class ParquetRecordBatchTest {
 
     @Test
     void negativeRowCountRejected() {
-        Arena arena = Arena.ofConfined();
         ParquetSchema schema = minimalSchema();
         Map<ColumnPath, ColumnVector> cols = Map.of();
-        assertThatThrownBy(() -> new DefaultParquetRecordBatch(schema, cols, -1, arena))
+        assertThatThrownBy(() -> new DefaultParquetRecordBatch(schema, cols, -1))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("rowCount must be >= 0");
-        arena.close();
     }
 
     @Test
     void approximateHeapBytesSumsColumns() {
-        Arena arena = Arena.ofConfined();
         ColumnPath aPath = ColumnPath.of("value");
         BitSet validity = new BitSet(3);
         validity.set(0, 3);
         Map<ColumnPath, ColumnVector> cols =
                 Map.of(aPath, IntVector.materialized(new int[] {1, 2, 3}, Validity.of(validity, 3)));
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), cols, 3, arena);
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), cols, 3);
 
         assertThat(batch.approximateHeapBytes()).isGreaterThanOrEqualTo(12L);
 
@@ -133,8 +125,7 @@ class ParquetRecordBatchTest {
 
     @Test
     void closeRunsReleaseActionExactlyOnce() {
-        Arena arena = Arena.ofConfined();
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 0, arena);
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 0);
         AtomicInteger releases = new AtomicInteger();
         batch.attachReleaseAction(releases::incrementAndGet);
 
@@ -147,25 +138,27 @@ class ParquetRecordBatchTest {
     }
 
     @Test
-    void releaseActionRunsAfterArenaClose() {
-        Arena arena = Arena.ofConfined();
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 0, arena);
-        AtomicBoolean arenaAliveAtRelease = new AtomicBoolean();
-        batch.attachReleaseAction(() -> arenaAliveAtRelease.set(arena.scope().isAlive()));
+    void releaseActionRunsAfterBuffers() {
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 0);
+        AtomicBoolean bufferClosed = new AtomicBoolean();
+        AtomicBoolean bufferClosedAtRelease = new AtomicBoolean();
+        batch.registerBuffer(() -> bufferClosed.set(true));
+        batch.attachReleaseAction(() -> bufferClosedAtRelease.set(bufferClosed.get()));
 
         batch.close();
 
-        assertThat(arenaAliveAtRelease.get())
-                .as("Arena is closed before the release action runs")
-                .isFalse();
+        assertThat(bufferClosedAtRelease.get())
+                .as("the owned buffers are closed before the release action runs")
+                .isTrue();
     }
 
     @Test
-    void closeWithoutReleaseActionStillClosesArena() {
-        Arena arena = Arena.ofConfined();
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 0, arena);
+    void noActionStillClosesBuffers() {
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 0);
+        AtomicBoolean bufferClosed = new AtomicBoolean();
+        batch.registerBuffer(() -> bufferClosed.set(true));
         batch.close();
-        assertThatThrownBy(() -> arena.allocate(8)).isInstanceOf(IllegalStateException.class);
+        assertThat(bufferClosed.get()).isTrue();
     }
 
     /**

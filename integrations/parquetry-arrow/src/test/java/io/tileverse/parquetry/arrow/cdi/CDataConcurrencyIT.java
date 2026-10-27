@@ -86,7 +86,7 @@ class CDataConcurrencyIT {
         }
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of("id"), LongVector.materialized(ids, Validity.allValid(ROWS_PER_BATCH)));
-        return new DefaultParquetRecordBatch(schema, columns, ROWS_PER_BATCH, Arena.ofShared());
+        return new DefaultParquetRecordBatch(schema, columns, ROWS_PER_BATCH);
     }
 
     private static ParquetSchema idSchema() {

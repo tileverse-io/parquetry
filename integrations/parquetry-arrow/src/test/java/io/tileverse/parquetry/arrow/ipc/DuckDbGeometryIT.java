@@ -19,7 +19,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -166,7 +165,7 @@ class DuckDbGeometryIT {
         columns.put(ColumnPath.of("id"), LongVector.materialized(new long[] {1L, 2L}, validity));
         MemorySegment[] geometries = {MemorySegment.ofArray(POINT_ONE), MemorySegment.ofArray(POINT_TWO)};
         columns.put(ColumnPath.of("geom"), BinaryVector.materialized(geometries, validity));
-        return new DefaultParquetRecordBatch(schema, columns, 2, Arena.ofShared());
+        return new DefaultParquetRecordBatch(schema, columns, 2);
     }
 
     private static byte[] wkbPoint(double x, double y) {

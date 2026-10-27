@@ -17,7 +17,6 @@ package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.util.BitSet;
@@ -97,7 +96,7 @@ class ListMapNullVsEmptyTest {
                 .as("row 2 list is populated, validity bit must be set")
                 .isTrue();
 
-        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 3, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 3)) {
             ParquetRecord nullRow = batch.materialize(0);
             assertThat(nullRow.get(ITEMS)).as("row 0 null list reads as null").isNull();
 
@@ -148,7 +147,7 @@ class ListMapNullVsEmptyTest {
                 .as("row 2 map is populated, validity bit must be set")
                 .isTrue();
 
-        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 3, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 3)) {
             ParquetRecord nullRow = batch.materialize(0);
             assertThat(nullRow.get(MAP)).as("row 0 null map reads as null").isNull();
 
@@ -203,7 +202,7 @@ class ListMapNullVsEmptyTest {
                 .as("row 1 list holds one struct element")
                 .isEqualTo(1);
 
-        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 2, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 2)) {
             assertThat(batch.materialize(0).get(ITEMS)).as("row 0 list is null").isNull();
             List<?> row1 = (List<?>) batch.materialize(1).get(ITEMS);
             assertThat(row1).as("row 1 holds one struct element").hasSize(1);

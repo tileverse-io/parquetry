@@ -17,7 +17,6 @@ package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.charset.StandardCharsets;
@@ -91,7 +90,7 @@ class DeepNestingShapesTest {
                 Map.of(keyLeaf, keyDef, valueElement, valueDef),
                 4);
 
-        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 4, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 4)) {
             assertThat(batch.materialize(0).get(col))
                     .as("row 0 outer map is null")
                     .isNull();
@@ -133,7 +132,7 @@ class DeepNestingShapesTest {
         Map<ColumnPath, ColumnVector> assembled = NestedVectorAssembler.assembleNested(
                 schema, Map.of(element, values), Map.of(element, rep), Map.of(element, def), 3);
 
-        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 3, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 3)) {
             List<?> row0 = (List<?>) batch.materialize(0).get(col);
             assertThat(row0).as("row 0 has two inner lists").hasSize(2);
             assertThat((List<?>) row0.get(0)).as("row 0 inner list 0").isEqualTo(List.of(1, 2));
@@ -170,7 +169,7 @@ class DeepNestingShapesTest {
         Map<ColumnPath, ColumnVector> assembled = NestedVectorAssembler.assembleNested(
                 schema, Map.of(tagElement, values), Map.of(tagElement, rep), Map.of(tagElement, def), 1);
 
-        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 1, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 1)) {
             List<?> structs = (List<?>) batch.materialize(0).get(col);
             assertThat(structs).as("row 0 has three struct elements").hasSize(3);
 

@@ -56,8 +56,8 @@ public sealed interface ParquetRecordBatch extends AutoCloseable
     long approximateHeapBytes();
 
     /**
-     * Registers an action to run once when this batch is closed, after its Arena is released. Used to return a decode
-     * budget reservation when the consumer is done with the batch. At most one action is registered per batch.
+     * Registers an action to run once when this batch is closed, after its owned buffers are released. Used to return a
+     * decode budget reservation when the consumer is done with the batch. At most one action is registered per batch.
      */
     void attachReleaseAction(Runnable releaseAction);
 
@@ -69,8 +69,8 @@ public sealed interface ParquetRecordBatch extends AutoCloseable
     void registerBuffer(AutoCloseable buffer);
 
     /**
-     * Releases the batch's owned off-heap buffers and its Arena. Idempotent. Heap-backed vector values remain readable
-     * after close; segment-backed vector values do not.
+     * Releases the batch's owned off-heap buffers. Idempotent. Heap-backed vector values remain readable after close;
+     * segment-backed vector values do not.
      */
     @Override
     void close();
