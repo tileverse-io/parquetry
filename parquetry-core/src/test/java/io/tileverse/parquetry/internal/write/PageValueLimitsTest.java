@@ -92,12 +92,22 @@ class PageValueLimitsTest {
     }
 
     @Test
-    void coveringLeavesTakeTheSharedLimitWhenNoCoveringLimitIsSet() {
+    void unsetCoveringLimitIs1024() {
         WriteOptions options = WriteOptions.builder().pageValueLimit(8_192).build();
 
         PageValueLimits limits = PageValueLimits.of(options, COVERING_LEAVES);
 
-        assertThat(limits.forLeaf(XMIN)).isEqualTo(8_192);
+        assertThat(limits.forLeaf(XMIN)).isEqualTo(WriteOptions.DEFAULT_COVERING_PAGE_VALUE_LIMIT);
+        assertThat(limits.forLeaf(GEOMETRY)).isEqualTo(8_192);
+    }
+
+    @Test
+    void lowerSharedLimitCapsDefault() {
+        WriteOptions options = WriteOptions.builder().pageValueLimit(512).build();
+
+        PageValueLimits limits = PageValueLimits.of(options, COVERING_LEAVES);
+
+        assertThat(limits.forLeaf(XMIN)).isEqualTo(512);
     }
 
     @Test

@@ -66,8 +66,8 @@ import lombok.NonNull;
  * @param pageValueLimits per-column page value limits keyed by dotted column path, each overriding
  *     {@code pageValueLimit} for that leaf alone; unmodifiable
  * @param coveringPageValueLimit page value limit for the bbox covering leaves of a geo write, applied to the leaves
- *     named by the covering, and overridden by an explicit {@code pageValueLimits} entry; empty leaves them on
- *     {@code pageValueLimit}
+ *     named by the covering, and overridden by an explicit {@code pageValueLimits} entry; empty caps them at
+ *     {@link #DEFAULT_COVERING_PAGE_VALUE_LIMIT} values, or at {@code pageValueLimit} when that is lower
  * @param tempDir working directory for column-chunk temp files
  * @param writeObserver write-observability callback target; defaults to {@link WriteObserver#NONE}
  * @param writeObserverCadenceRows row cadence between {@link WriteObserver#onRowsWritten(long)} callbacks
@@ -107,6 +107,12 @@ public record WriteOptions(
      * on top of the accumulated tally. Per-row-group byte counts and buffer sizes stay within an int.
      */
     public static final long MAX_ROW_GROUP_BYTES_LIMIT = (1L << 31) - (1L << 20);
+
+    /**
+     * Page value limit of the bbox covering leaves when the write sets none. A spatial read skips rows by whole
+     * covering pages. Smaller pages narrow a small query box to fewer rows, and make the file slightly larger.
+     */
+    public static final int DEFAULT_COVERING_PAGE_VALUE_LIMIT = 1_024;
 
     public WriteOptions {
         if (pageValueLimit <= 0) {
@@ -513,7 +519,8 @@ public record WriteOptions(
          * Caps the pages of a geo write's bbox covering leaves at {@code n} values. Finer covering pages give a spatial
          * read finer pruning units without re-encoding the geometry column, at the cost of more column-index and
          * offset-index entries for those leaves. An explicit {@link #pageValueLimit(String, int)} entry wins over this
-         * limit.
+         * limit. Without this call the covering leaves take {@link WriteOptions#DEFAULT_COVERING_PAGE_VALUE_LIMIT}, or
+         * the shared limit when that is lower.
          */
         public Builder coveringPageValueLimit(int n) {
             this.coveringPageValueLimit = OptionalInt.of(requirePositive("coveringPageValueLimit", n));

@@ -72,10 +72,12 @@ class CoveringPageValueLimitWriteTest {
     }
 
     @Test
-    void withoutACoveringLimitEveryColumnKeepsOnePage() throws Exception {
+    void defaultSplitsCoveringAt1024() throws Exception {
         Path file = writePoints("covering-default", builder -> builder);
 
-        assertThat(pageCount(file, XMIN)).isEqualTo(1);
+        assertThat(pageCount(file, XMIN))
+                .as("%d rows at the default covering limit", ROWS)
+                .isEqualTo(ROWS / WriteOptions.DEFAULT_COVERING_PAGE_VALUE_LIMIT);
         assertThat(pageCount(file, GEOMETRY)).isEqualTo(1);
     }
 

@@ -92,7 +92,7 @@ public final class CpCmd implements Callable<Integer> {
             paramLabel = "<n>",
             description = "Cap the bbox covering columns at N values a page, leaving the other columns on the "
                     + "writer's default. Finer covering pages give a spatial read finer pruning units, at the cost "
-                    + "of more index entries for those columns.")
+                    + "of more index entries for those columns. Default: 1024.")
     private Integer coveringPageValues;
 
     @Option(
