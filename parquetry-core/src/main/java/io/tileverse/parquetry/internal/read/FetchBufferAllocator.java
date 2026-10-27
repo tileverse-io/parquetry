@@ -16,22 +16,25 @@
 package io.tileverse.parquetry.internal.read;
 
 import java.lang.foreign.MemorySegment;
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.tileverse.parquetry.io.SegmentPool;
+import io.tileverse.parquetry.runtime.BudgetExhaustedException;
 import io.tileverse.parquetry.runtime.FetchBudget;
 
 import lombok.NonNull;
 
 /**
- * The RAM-or-mmap valve for a mandatory fetch buffer. A mandatory fetch is needed for progress and must always get a
- * buffer; it never parks and never returns {@code null}. When the {@link FetchBudget} has room the buffer is a native
- * {@link SegmentPool} segment; otherwise it is a {@link FetchSpillStore} mmap of an on-disk file, which trades RAM for
- * disk while disk has headroom.
+ * The valve of a mandatory fetch buffer. A mandatory fetch is needed for progress and must get a buffer. The buffer is
+ * a native {@link SegmentPool} segment when the {@link FetchBudget} has room, or gets room within the wait allowed for
+ * it; a {@link FetchSpillStore} mapping of an on-disk file when the wait expires; and the fetch fails with
+ * {@link BudgetExhaustedException} when the disk budget is exhausted as well. The wait is bounded, and the fetch holds
+ * no other fetch buffer while it waits; that is what keeps the wait from deadlocking.
  *
  * <p>This valve is always active and independent of the decode-batch spill toggle ({@code spillEnabled} on the
  * runtime). That toggle controls whether already-decoded batches may spill; the current row group's fetch must complete
- * regardless of it, hence the mandatory fetch always takes RAM-or-mmap and never parks.
+ * regardless of it.
  *
  * <p>Speculative prefetch reserves its span up front against the {@link FetchBudget} elsewhere and does not use this
  * allocator.
@@ -41,23 +44,41 @@ public final class FetchBufferAllocator {
     private final SegmentPool segmentPool;
     private final FetchBudget fetchBudget;
     private final FetchSpillStore spillStore;
+    private final Duration mandatoryBufferWait;
 
+    /**
+     * @param mandatoryBufferWait the longest wait of a mandatory fetch for room in the fetch budget before it spills;
+     *     zero spills at once
+     */
     public FetchBufferAllocator(
-            @NonNull SegmentPool segmentPool, @NonNull FetchBudget fetchBudget, @NonNull FetchSpillStore spillStore) {
+            @NonNull SegmentPool segmentPool,
+            @NonNull FetchBudget fetchBudget,
+            @NonNull FetchSpillStore spillStore,
+            @NonNull Duration mandatoryBufferWait) {
         this.segmentPool = segmentPool;
         this.fetchBudget = fetchBudget;
         this.spillStore = spillStore;
+        this.mandatoryBufferWait = mandatoryBufferWait;
     }
 
     /**
-     * Acquires a buffer of exactly {@code size} bytes for a mandatory fetch. Prefers a RAM segment reserved against the
-     * fetch budget; falls back to a disk-backed mmap when the budget has no room. Never returns {@code null}.
+     * Acquires a buffer of exactly {@code size} bytes for a mandatory fetch: a RAM segment when the fetch budget has
+     * room now or within the wait, a disk-backed mapping otherwise. Never returns {@code null}.
+     *
+     * @throws BudgetExhaustedException when the disk budget has no room for the buffer either
      */
     SegmentPool.Pooled acquireMandatory(long size) {
-        if (fetchBudget.tryReserve(size)) {
+        if (fetchBudget.reserve(size, mandatoryBufferWait)) {
             return borrowRam(size);
         }
-        return spillStore.map(size);
+        return spillStore.tryMap(size).orElseThrow(() -> exhausted(size));
+    }
+
+    private BudgetExhaustedException exhausted(long size) {
+        return new BudgetExhaustedException("No room for a mandatory fetch buffer of " + size
+                + " bytes: the fetch budget (capacity " + fetchBudget.capacity() + ", available "
+                + fetchBudget.available() + ") had no room within " + mandatoryBufferWait
+                + ", and the disk budget is exhausted");
     }
 
     private SegmentPool.Pooled borrowRam(long size) {

@@ -19,14 +19,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
+import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -37,6 +40,9 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+
+import io.tileverse.storage.BatchReadResult;
+import io.tileverse.storage.RangeRequest;
 
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ParquetFileWriter;
@@ -125,6 +131,119 @@ class ParallelDecodeCoordinatorTest {
                 assertThat(total)
                         .as("in-order consume completes under a budget too small for any batch")
                         .isEqualTo(4_000L);
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    // decode-ahead yields when the budget is full; the in-order fetch finds the room released by the consumer
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void oneRowGroupBudgetNeverSpills(@TempDir Path tmp) throws Exception {
+        Fixture fixture = Fixture.write(tmp, 4_000);
+        ComputeExecutor pool = ComputeExecutor.ofParallelism(4);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(fixture.file)) {
+            FetchBudget fetch = FetchBudget.ofBytes(fixture.largestRowGroupSpan(source));
+            DiskBudget disk = DiskBudget.ofBytes(1L << 30);
+            ParallelDecodeCoordinator coordinator = fixture.coordinator(
+                    source,
+                    pool,
+                    DecodeBudget.defaultBudget(),
+                    /*decodeAhead*/ 2,
+                    DEFAULT_PREFETCH_DEPTH,
+                    fetch,
+                    new FetchSpillStore(tmp, disk),
+                    Optional.empty());
+            try (coordinator) {
+                assertThat(drainTotalRows(coordinator)).isEqualTo(4_000L);
+            }
+            assertThat(disk.minAvailable()).as("no fetch spilled").isEqualTo(disk.capacity());
+            assertThat(fetch.available()).isEqualTo(fetch.capacity());
+            assertThat(pool.availableSlots())
+                    .as("a yielding decode-ahead returns its slot")
+                    .isEqualTo(pool.parallelism());
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    // a gate skips row group 1 after the prefetcher reserved it: the reservation returns at skip time, not at close
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void skippedPrefetchReleasesItsRoom(@TempDir Path tmp) throws Exception {
+        Fixture fixture = Fixture.write(tmp, 4_000);
+        ComputeExecutor pool = ComputeExecutor.ofParallelism(4);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(fixture.file)) {
+            FetchBudget fetch = FetchBudget.ofBytes(1L << 30);
+            RowGroupGate skipsSecond = position -> position == 1;
+            ParallelDecodeCoordinator coordinator = fixture.coordinator(
+                    source,
+                    pool,
+                    DecodeBudget.defaultBudget(),
+                    /*decodeAhead*/ 0,
+                    /*prefetchDepth*/ 2,
+                    fetch,
+                    new FetchSpillStore(tmp, DiskBudget.ofBytes(1L << 30)),
+                    Optional.of(skipsSecond));
+            long rows = drainTotalRows(coordinator);
+            assertThat(rows).isEqualTo(4_000L - fixture.rowsPerRowGroup().get(1));
+            assertThat(fetch.available()).as("released before close").isEqualTo(fetch.capacity());
+            coordinator.close();
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    // the planner fails on row group 2 while row group 0 is in hand: nothing stays reserved once the read is closed
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void planningFailureLeaksNoRoom(@TempDir Path tmp) throws Exception {
+        Fixture fixture = Fixture.write(tmp, 4_000);
+        ComputeExecutor pool = ComputeExecutor.ofParallelism(4);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(fixture.file)) {
+            FetchBudget fetch = FetchBudget.ofBytes(1L << 30);
+            List<RowGroupSurvivor> survivors = fixture.survivors(source);
+            RowGroupPlans plans = fixture.plannedBy(survivors, failsAt(2));
+            ParallelDecodeCoordinator coordinator = fixture.coordinator(
+                    source,
+                    pool,
+                    DecodeBudget.defaultBudget(),
+                    /*decodeAhead*/ 0,
+                    /*prefetchDepth*/ 2,
+                    survivors,
+                    plans,
+                    fetch,
+                    new FetchSpillStore(tmp, DiskBudget.ofBytes(1L << 30)));
+            assertThatThrownBy(() -> drainTotalRows(coordinator)).hasMessage("plan blew up");
+            coordinator.close();
+            assertThat(fetch.available())
+                    .as("the row group in hand was released")
+                    .isEqualTo(fetch.capacity());
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    // the read of row group 0 is held until the prefetch of row group 1 begins: speculation starts before the read
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void prefetchOverlapsTheFirstFetch(@TempDir Path tmp) throws Exception {
+        Fixture fixture = Fixture.write(tmp, 4_000);
+        ComputeExecutor pool = ComputeExecutor.ofParallelism(4);
+        try (ByteRangeSource file = ByteRangeSource.ofFile(fixture.file)) {
+            ByteRangeSource source = new OverlapProbe(file, fixture.columnChunkSpan(0), fixture.columnChunkSpan(1));
+            ParallelDecodeCoordinator coordinator = fixture.coordinator(
+                    source,
+                    pool,
+                    DecodeBudget.defaultBudget(),
+                    /*decodeAhead*/ 0,
+                    /*prefetchDepth*/ 2,
+                    FetchBudget.ofBytes(1L << 30),
+                    new FetchSpillStore(tmp, DiskBudget.ofBytes(1L << 30)),
+                    Optional.empty());
+            try (coordinator) {
+                assertThat(drainTotalRows(coordinator)).isEqualTo(4_000L);
             }
         } finally {
             pool.shutdownNow();
@@ -244,7 +363,22 @@ class ParallelDecodeCoordinatorTest {
     }
 
     /** A half-open byte span of the file under test. */
-    private record ByteSpan(long start, long end) {}
+    private record ByteSpan(long start, long end) {
+
+        boolean contains(long offset) {
+            return offset >= start && offset < end;
+        }
+    }
+
+    /** A planner that fails on {@code position} and reads the other row groups whole. */
+    private static RowGroupPlanner failsAt(int position) {
+        return planned -> {
+            if (planned == position) {
+                throw new IllegalStateException("plan blew up");
+            }
+            return RowGroupNarrowing.whole();
+        };
+    }
 
     private static DecodedRowGroup failingStreamingRowGroup(ComputeExecutor pool) {
         RowGroupBatchDriver driver = new FailingDriver(new IllegalStateException("decode blew up"));
@@ -323,6 +457,67 @@ class ParallelDecodeCoordinatorTest {
         @Override
         public void close() {
             // nothing to release; this fixture holds no fetch
+        }
+    }
+
+    /**
+     * Holds a read of the {@code first} span until a read of the {@code second} span has begun. A read that fetches the
+     * second row group while the first is still in flight passes through; one that fetches them one after the other
+     * fails after five seconds instead of hanging.
+     */
+    private static final class OverlapProbe implements ByteRangeSource {
+
+        private final ByteRangeSource delegate;
+        private final ByteSpan first;
+        private final ByteSpan second;
+        private final CountDownLatch secondStarted = new CountDownLatch(1);
+
+        private OverlapProbe(ByteRangeSource delegate, ByteSpan first, ByteSpan second) {
+            this.delegate = delegate;
+            this.first = first;
+            this.second = second;
+        }
+
+        @Override
+        public long size() {
+            return delegate.size();
+        }
+
+        @Override
+        public int read(long offset, MemorySegment dst) {
+            observe(offset);
+            return delegate.read(offset, dst);
+        }
+
+        @Override
+        public BatchReadResult readFully(List<RangeRequest> requests) {
+            observe(requests.get(0).range().offset());
+            return delegate.readFully(requests);
+        }
+
+        @Override
+        public void close() {
+            delegate.close();
+        }
+
+        private void observe(long offset) {
+            if (second.contains(offset)) {
+                secondStarted.countDown();
+            } else if (first.contains(offset)) {
+                awaitSecond();
+            }
+        }
+
+        private void awaitSecond() {
+            try {
+                if (!secondStarted.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException(
+                            "the prefetch of row group 1 never began while row group 0 was read");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("interrupted while waiting for the prefetch of row group 1", e);
+            }
         }
     }
 
@@ -412,6 +607,66 @@ class ParallelDecodeCoordinatorTest {
                 List<RowGroupSurvivor> survivors,
                 RowGroupPlans plans) {
             RowGroupPrefetcher prefetcher = prefetcher(source, survivors, plans, prefetchDepth);
+            return build(prefetcher, executor, budget, decodeAhead, survivors, plans, Optional.empty());
+        }
+
+        /**
+         * A coordinator whose prefetcher reserves against {@code fetchBudget} and spills through {@code spillStore}.
+         */
+        @SuppressWarnings("java:S107") // test factory: every parameter is one knob of the coordinator under test
+        ParallelDecodeCoordinator coordinator(
+                ByteRangeSource source,
+                ComputeExecutor executor,
+                DecodeBudget budget,
+                int decodeAhead,
+                int prefetchDepth,
+                FetchBudget fetchBudget,
+                FetchSpillStore spillStore,
+                Optional<RowGroupGate> gate) {
+            List<RowGroupSurvivor> survivors = survivors(source);
+            RowGroupPlans plans = unplannedPlans(survivors);
+            RowGroupPrefetcher prefetcher =
+                    prefetcher(source, survivors, plans, prefetchDepth, fetchBudget, spillStore);
+            return build(prefetcher, executor, budget, decodeAhead, survivors, plans, gate);
+        }
+
+        /** A coordinator over the given survivors and plans, reserving against {@code fetchBudget}. */
+        @SuppressWarnings("java:S107") // test factory: every parameter is one knob of the coordinator under test
+        ParallelDecodeCoordinator coordinator(
+                ByteRangeSource source,
+                ComputeExecutor executor,
+                DecodeBudget budget,
+                int decodeAhead,
+                int prefetchDepth,
+                List<RowGroupSurvivor> survivors,
+                RowGroupPlans plans,
+                FetchBudget fetchBudget,
+                FetchSpillStore spillStore) {
+            RowGroupPrefetcher prefetcher =
+                    prefetcher(source, survivors, plans, prefetchDepth, fetchBudget, spillStore);
+            return build(prefetcher, executor, budget, decodeAhead, survivors, plans, Optional.empty());
+        }
+
+        /** The largest fetch span among the fixture's row groups: a budget of exactly that fits one row group. */
+        long largestRowGroupSpan(ByteRangeSource source) {
+            RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, SegmentPool.create());
+            long largest = 0;
+            for (RowGroupSurvivor survivor : survivors(source)) {
+                largest = Math.max(
+                        largest, fetcher.planFor(survivor, Optional.empty()).spanBytes());
+            }
+            return largest;
+        }
+
+        @SuppressWarnings("java:S107") // test factory: every parameter is one knob of the coordinator under test
+        private ParallelDecodeCoordinator build(
+                RowGroupPrefetcher prefetcher,
+                ComputeExecutor executor,
+                DecodeBudget budget,
+                int decodeAhead,
+                List<RowGroupSurvivor> survivors,
+                RowGroupPlans plans,
+                Optional<RowGroupGate> gate) {
             List<Boolean> recordEvalRequired =
                     survivors.stream().map(RowGroupSurvivor::recordEvalRequired).toList();
             return new ParallelDecodeCoordinator(
@@ -432,7 +687,7 @@ class ParallelDecodeCoordinatorTest {
                     BatchForm.LEVELS,
                     ParallelDecodeCoordinator.DecodeObservation.NONE,
                     List.of(),
-                    Optional.empty());
+                    gate);
         }
 
         List<RowGroupSurvivor> survivors(ByteRangeSource source) {
@@ -463,16 +718,38 @@ class ParallelDecodeCoordinatorTest {
                 ByteRangeSource source, List<RowGroupSurvivor> survivors, RowGroupPlans plans, int prefetchDepth) {
             RowGroupFetcher fetcher =
                     TestFetchers.over(source, schema, schema, SegmentPool.create(), FetchAccumulator.NONE);
+            return prefetcher(survivors, plans, fetcher, FetchBudget.defaultBudget(), prefetchDepth);
+        }
+
+        private RowGroupPrefetcher prefetcher(
+                ByteRangeSource source,
+                List<RowGroupSurvivor> survivors,
+                RowGroupPlans plans,
+                int prefetchDepth,
+                FetchBudget fetchBudget,
+                FetchSpillStore spillStore) {
+            RowGroupFetcher fetcher = TestFetchers.over(
+                    source,
+                    schema,
+                    schema,
+                    SegmentPool.create(),
+                    FetchAccumulator.NONE,
+                    fetchBudget,
+                    spillStore,
+                    Duration.ofSeconds(5));
+            return prefetcher(survivors, plans, fetcher, fetchBudget, prefetchDepth);
+        }
+
+        private static RowGroupPrefetcher prefetcher(
+                List<RowGroupSurvivor> survivors,
+                RowGroupPlans plans,
+                RowGroupFetcher fetcher,
+                FetchBudget fetchBudget,
+                int prefetchDepth) {
             ExecutorService executor = Executors.newThreadPerTaskExecutor(
                     Thread.ofVirtual().name("test-fetch-", 0).factory());
             return new RowGroupPrefetcher(
-                    survivors,
-                    plans,
-                    fetcher,
-                    FetchBudget.defaultBudget(),
-                    executor,
-                    prefetchDepth,
-                    /*maxConcurrent*/ 2);
+                    survivors, plans, fetcher, fetchBudget, executor, prefetchDepth, /*maxConcurrent*/ 2);
         }
 
         private static IndexSectionLoader indexLoader(ByteRangeSource source) {

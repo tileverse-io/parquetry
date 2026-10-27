@@ -20,6 +20,7 @@ import java.io.UncheckedIOException;
 import java.nio.file.FileStore;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BooleanSupplier;
@@ -42,6 +43,8 @@ public final class DiskBudget {
     private final Condition headroomChanged = lock.newCondition();
     private long available;
     private long minAvailable;
+    private final LongAdder reservations = new LongAdder();
+    private final LongAdder refusals = new LongAdder();
 
     private DiskBudget(long capacity) {
         if (capacity <= 0) {
@@ -88,6 +91,7 @@ public final class DiskBudget {
                 consume(bytes);
                 return true;
             }
+            refusals.increment();
             return false;
         } finally {
             lock.unlock();
@@ -106,6 +110,7 @@ public final class DiskBudget {
         try {
             while (available < bytes) {
                 if (giveUp.getAsBoolean()) {
+                    refusals.increment();
                     return false;
                 }
                 headroomChanged.awaitUninterruptibly();
@@ -121,6 +126,7 @@ public final class DiskBudget {
     private void consume(long bytes) {
         available -= bytes;
         minAvailable = Math.min(minAvailable, available);
+        reservations.increment();
     }
 
     /** Returns up to {@code bytes} of headroom and wakes parked reservers, clamped to never exceed {@code capacity}. */
@@ -175,6 +181,20 @@ public final class DiskBudget {
             lock.unlock();
         }
     }
+
+    /** The reservation counters and the low-water mark, in one snapshot. */
+    public Stats stats() {
+        return new Stats(reservations.sum(), refusals.sum(), minAvailable());
+    }
+
+    /**
+     * The counters of a disk budget.
+     *
+     * @param reservations granted reservations, each a buffer or a batch spilled to disk
+     * @param refusals reservations refused for lack of room, each a read that failed or parked
+     * @param minAvailable the lowest {@link #available()} ever reached
+     */
+    public record Stats(long reservations, long refusals, long minAvailable) {}
 
     private static long usableSpace(Path dir) {
         try {

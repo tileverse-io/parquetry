@@ -42,16 +42,27 @@ ParquetRuntime runtime = ParquetRuntime.builder()
         .fetchBudget(FetchBudget.ofBytes(256L << 20))
         .offHeapDecodeBudget(DecodeBudget.ofBytes(512L << 20))
         .decodeBudget(DecodeBudget.ofMaxMemoryFraction(0.25))
+        .mandatoryBufferWait(Duration.ofSeconds(1))
         .build();
 ```
 
-A mandatory buffer, one the current row group needs to make progress, never
-waits: a native segment while its budget has room, a memory-mapped temp file
-when it has none (see [native memory and spill](native-memory-and-spill.md)).
-When the disk budget has no room either, the read fails with an
-`IllegalStateException` instead of parking. Only speculative work parks on a
-full budget. That is what keeps a budget too small for a single row group from
-deadlocking a read.
+A mandatory fetch buffer, the one for a read's current row group, gets a
+native segment while the fetch budget has room. When it has none, the fetch
+waits up to `mandatoryBufferWait` (1 s by default) for other reads to release
+room, in first-come order. The read holds no other fetch buffer while it waits,
+and that is what keeps the wait from deadlocking. When the wait expires, the
+buffer is a memory-mapped temp file (see [native memory and spill](native-memory-and-spill.md)),
+and when the disk budget has no room either, the read fails with a
+`BudgetExhaustedException`. A request larger than the whole budget skips the
+wait and spills at once. A mandatory decode buffer never waits: it is a native
+segment while the off-heap decode budget has room and a mapped file otherwise.
+A speculative fetch, for the prefetch window or for decode-ahead, never waits
+for fetch-budget room and never spills a fetch buffer: it yields while the
+budget is full, and the row group is fetched when the consumer reaches it. The
+decoded batches of a row group decoding ahead follow the decode budget's own
+rule: a batch over that budget spills to disk, or waits for room when spilling
+is off. The counters behind this are `FetchBudget.waitStats()` and
+`DiskBudget.stats()`.
 
 ---
 
@@ -104,8 +115,9 @@ bursts counts inside it, not on top. The decompressed pages are borrowed from
 the pool without a budget reservation: a read decoding `n` row groups ahead
 holds up to `n` pages per projected column, each the file's page size, usually
 about a megabyte. With `-XX:MaxRAMPercentage=50` the first term is half the
-container and the pool takes at most 35% of it before fetches and decodes spill
-to disk. About 15% is left for the pages, the JVM baseline and the page cache.
+container and the pool takes at most 35% of it before fetches queue for room and
+then spill to disk. About 15% is left for the pages, the JVM baseline and the
+page cache.
 Measured with 32 concurrent bbox reads of a 3 GB file in a 2 GB container with
 a 1200 MB heap: 0.77 GB of anonymous memory at the peak, against 1.34 GB with
 the buffers on malloc, at a higher read rate.

@@ -16,13 +16,18 @@
 package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.io.SegmentPool;
+import io.tileverse.parquetry.runtime.BudgetExhaustedException;
 import io.tileverse.parquetry.runtime.DiskBudget;
 import io.tileverse.parquetry.runtime.FetchBudget;
 
@@ -32,8 +37,8 @@ class FetchBufferAllocatorTest {
     void usesRamWhenTheFetchBudgetAllows(@TempDir Path dir) {
         FetchBudget fetch = FetchBudget.ofBytes(1 << 20);
         DiskBudget disk = DiskBudget.ofBytes(1 << 20);
-        FetchBufferAllocator allocator =
-                new FetchBufferAllocator(SegmentPool.getDefault(), fetch, new FetchSpillStore(dir, disk));
+        FetchBufferAllocator allocator = new FetchBufferAllocator(
+                SegmentPool.getDefault(), fetch, new FetchSpillStore(dir, disk), Duration.ZERO);
         long fetchBefore = fetch.available();
         long diskBefore = disk.available();
         try (SegmentPool.Pooled buffer = allocator.acquireMandatory(4096)) {
@@ -48,8 +53,8 @@ class FetchBufferAllocatorTest {
     void releasesRamBudgetOnceOnDoubleClose(@TempDir Path dir) {
         FetchBudget fetch = FetchBudget.ofBytes(1 << 20);
         DiskBudget disk = DiskBudget.ofBytes(1 << 20);
-        FetchBufferAllocator allocator =
-                new FetchBufferAllocator(SegmentPool.getDefault(), fetch, new FetchSpillStore(dir, disk));
+        FetchBufferAllocator allocator = new FetchBufferAllocator(
+                SegmentPool.getDefault(), fetch, new FetchSpillStore(dir, disk), Duration.ZERO);
         long fetchBefore = fetch.available();
         SegmentPool.Pooled buffer = allocator.acquireMandatory(4096);
         buffer.close();
@@ -61,13 +66,91 @@ class FetchBufferAllocatorTest {
     void spillsToMmapWhenTheFetchBudgetIsExhausted(@TempDir Path dir) {
         FetchBudget fetch = FetchBudget.ofBytes(1024); // too small for the request
         DiskBudget disk = DiskBudget.ofBytes(1 << 20);
-        FetchBufferAllocator allocator =
-                new FetchBufferAllocator(SegmentPool.getDefault(), fetch, new FetchSpillStore(dir, disk));
+        FetchBufferAllocator allocator = new FetchBufferAllocator(
+                SegmentPool.getDefault(), fetch, new FetchSpillStore(dir, disk), Duration.ZERO);
         long diskBefore = disk.available();
         try (SegmentPool.Pooled buffer = allocator.acquireMandatory(64 * 1024)) {
             assertThat(buffer.segment().byteSize()).isEqualTo(64 * 1024);
             assertThat(disk.available()).as("spilled to disk").isLessThan(diskBefore);
         }
         assertThat(disk.available()).as("disk released on close").isEqualTo(diskBefore);
+    }
+
+    @Test
+    @Timeout(5)
+    void waitsThenSpills(@TempDir Path dir) {
+        FetchBudget fetch = FetchBudget.ofBytes(64 * 1024);
+        fetch.tryReserve(64 * 1024);
+        DiskBudget disk = DiskBudget.ofBytes(1 << 20);
+        FetchBufferAllocator allocator = new FetchBufferAllocator(
+                SegmentPool.getDefault(), fetch, new FetchSpillStore(dir, disk), Duration.ofMillis(200));
+        long start = System.nanoTime();
+        try (SegmentPool.Pooled buffer = allocator.acquireMandatory(64 * 1024)) {
+            assertThat(buffer.segment().byteSize()).isEqualTo(64 * 1024);
+            assertThat(System.nanoTime() - start).isGreaterThan(TimeUnit.MILLISECONDS.toNanos(150));
+            assertThat(disk.available()).as("spilled after the wait expired").isLessThan(disk.capacity());
+        }
+        assertThat(fetch.waitStats().expired()).isEqualTo(1);
+    }
+
+    @Test
+    @Timeout(5)
+    void getsRamWhenRoomFrees(@TempDir Path dir) throws InterruptedException {
+        FetchBudget fetch = FetchBudget.ofBytes(64 * 1024);
+        DiskBudget disk = DiskBudget.ofBytes(1 << 20);
+        FetchBufferAllocator allocator = new FetchBufferAllocator(
+                SegmentPool.getDefault(), fetch, new FetchSpillStore(dir, disk), Duration.ofSeconds(2));
+        SegmentPool.Pooled held = allocator.acquireMandatory(64 * 1024);
+        Thread caller = Thread.currentThread();
+        Thread releaser = new Thread(() -> {
+            awaitParked(caller);
+            held.close();
+        });
+        releaser.start();
+        try (SegmentPool.Pooled buffer = allocator.acquireMandatory(64 * 1024)) {
+            assertThat(buffer.segment().byteSize()).isEqualTo(64 * 1024);
+            assertThat(disk.available()).as("RAM, not disk").isEqualTo(disk.capacity());
+        }
+        releaser.join();
+        FetchBudget.WaitStats stats = fetch.waitStats();
+        assertThat(stats.waits()).isEqualTo(1);
+        assertThat(stats.expired()).isZero();
+    }
+
+    @Test
+    @Timeout(5)
+    void aboveCapacitySpillsAtOnce(@TempDir Path dir) {
+        FetchBudget fetch = FetchBudget.ofBytes(1024);
+        DiskBudget disk = DiskBudget.ofBytes(1 << 20);
+        FetchBufferAllocator allocator = new FetchBufferAllocator(
+                SegmentPool.getDefault(), fetch, new FetchSpillStore(dir, disk), Duration.ofSeconds(5));
+        long start = System.nanoTime();
+        try (SegmentPool.Pooled buffer = allocator.acquireMandatory(64 * 1024)) {
+            assertThat(buffer.segment().byteSize()).isEqualTo(64 * 1024);
+            assertThat(System.nanoTime() - start).isLessThan(TimeUnit.SECONDS.toNanos(1));
+            assertThat(disk.available()).isLessThan(disk.capacity());
+        }
+    }
+
+    @Test
+    void throwsWhenDiskIsGoneToo(@TempDir Path dir) {
+        FetchBudget fetch = FetchBudget.ofBytes(1024);
+        DiskBudget disk = DiskBudget.ofBytes(1);
+        FetchBufferAllocator allocator = new FetchBufferAllocator(
+                SegmentPool.getDefault(), fetch, new FetchSpillStore(dir, disk), Duration.ZERO);
+        assertThatThrownBy(() -> allocator.acquireMandatory(64 * 1024))
+                .isInstanceOf(BudgetExhaustedException.class)
+                .hasMessageContaining("65536");
+    }
+
+    /** Spins until {@code thread} parks inside its timed wait for budget room, or fails after two seconds. */
+    private static void awaitParked(Thread thread) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (thread.getState() != Thread.State.TIMED_WAITING) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("the caller never parked on the full fetch budget");
+            }
+            Thread.onSpinWait();
+        }
     }
 }

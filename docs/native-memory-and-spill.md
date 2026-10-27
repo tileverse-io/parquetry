@@ -31,13 +31,15 @@ approximately:
 concurrency  x  (current row group's requested bytes)  +  speculative prefetch
 ```
 
-`FetchBudget` bounds only the speculative prefetch term, and a prefetch reserves
-the plan's first-to-last byte span rather than its bytes, which keeps the
-reservation a ceiling on the scratch memory of the byte source as well. The
-current row group's fetch is mandatory for progress and is never bounded, which
-leaves the first term, `concurrency x requested bytes`, with no cap of its own.
-With small row groups it is modest. With the 128 MB+ row groups that Spark,
-DuckDB, and large GeoParquet writers emit, a handful of concurrent reads can hold
+`FetchBudget` bounds both terms. A prefetch reserves the plan's first-to-last
+byte span rather than its bytes, and the reservation is then a ceiling on the
+scratch memory of the byte source as well; a prefetch is refused when the budget
+has no room. The current row group's fetch is mandatory for progress: it reserves
+the same span when the budget has room, waits a bounded time for room otherwise,
+and takes a mapped file when the wait expires (section 3). Without that valve the
+first term, `concurrency x requested bytes`, would have no cap of its own. With
+small row groups it is modest. With the 128 MB+ row groups emitted by Spark,
+DuckDB and large GeoParquet writers, a handful of concurrent reads would hold
 gigabytes of native memory at once. That term is the subject of sections 3 and 4.
 
 ---
@@ -98,25 +100,38 @@ acquiring more (fetch, decompress, decode, release), and a blocking cap on that
 path deadlocks - the in-order work cannot release until it finishes, and it
 cannot finish without the buffer the cap is withholding.
 
-The deadlock-free answer is to make the resource non-blocking: when the RAM
-budget is exhausted, the buffer is backed by a **memory-mapped temp file** instead
-of anonymous native memory. The decompressor reads from a `MemorySegment` either
-way and never branches on RAM-versus-file. The win is reclaimability: file-backed
-pages are clean page cache the kernel can evict under pressure, where anonymous
-native memory is a hard OOM. Spilling is forward progress, never a wait, and a
-path that never waits cannot deadlock.
+The answer has two parts. The resource is never withheld for good: when the RAM
+budget stays exhausted, the buffer is backed by a **memory-mapped temp file**
+instead of anonymous native memory. The decompressor reads from a `MemorySegment`
+either way and never branches on RAM-versus-file. The win is reclaimability:
+file-backed pages are clean page cache the kernel can evict under pressure, where
+anonymous native memory is a hard OOM. And a spill is the last resort, not the
+first: the fetch of a read's current row group waits a bounded time for other
+reads to release room. Under more concurrent reads than the budget holds buffers
+for, a spill per excess fetch turns the reads into a disk storm: on a 4-CPU
+container, four times the budgeted concurrency delivered a fifth of the
+throughput, and eight times a twentieth. Queueing the excess fetches instead
+keeps the throughput of the budgeted concurrency at four times the load, and
+most of it at eight times.
 
-The governing rule, shared with the decode-side spill:
+The governing rule of the fetch side:
 
-> **The in-order critical path always acquires its buffer** - RAM if the budget
-> allows, else a mapped file - and never parks while the disk has headroom. Only
-> *speculative* fetch-ahead and decode-ahead may park, and only when even the
-> disk budget is exhausted.
+> **The in-order fetch waits a bounded time for budget room, holding no other
+> fetch buffer while it waits; then it takes a mapped file; then it fails.**
+> A speculative fetch, for the prefetch window or for decode-ahead, never waits
+> for budget room and never spills: it yields while the budget is full. A
+> mandatory decode buffer never waits either: RAM if its budget allows, else a
+> mapped file, else failure.
 
-Because the in-order path always advances, it always drains and releases, and any
-parked speculative work eventually unparks. One shared disk budget, one spill
-directory, and this one invariant serve both the fetch spill described here and
-the decode-batch spill on the decode side.
+The wait cannot deadlock because the reads holding budget room are consuming a
+row group and release it without needing more fetch budget; a waiting read holds
+none itself. The timeout (`ParquetRuntime.mandatoryBufferWait`, 1 s by default,
+zero for the spill-at-once behaviour) covers a stalled consumer. A request larger
+than the whole budget never waits. When the disk budget is exhausted as well, the
+read fails with `BudgetExhaustedException`: a server turns it into one failed
+request. One shared disk budget and one spill directory serve both the fetch
+spill described here and the decode-batch spill on the decode side; the
+decode-batch spill keeps its own rule, controlled by `spillEnabled` (below).
 
 This is the *reclaimable-overflow* design: the fetch pipeline is left whole, the
 overflow lands on reclaimable page cache, and bounding the in-order working set

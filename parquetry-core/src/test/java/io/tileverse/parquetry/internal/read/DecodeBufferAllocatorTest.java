@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.file.Path;
@@ -24,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.io.SegmentPool;
+import io.tileverse.parquetry.runtime.BudgetExhaustedException;
 import io.tileverse.parquetry.runtime.DecodeBudget;
 import io.tileverse.parquetry.runtime.DiskBudget;
 
@@ -59,5 +61,14 @@ class DecodeBufferAllocatorTest {
                     .as("RAM budget untouched on the mmap path")
                     .isEqualTo(1_000L);
         }
+    }
+
+    @Test
+    void throwsWhenDiskIsGoneToo(@TempDir Path spillDir) {
+        DecodeBufferAllocator allocator = new DecodeBufferAllocator(
+                SegmentPool.getDefault(),
+                DecodeBudget.ofBytes(1_000L),
+                new FetchSpillStore(spillDir, DiskBudget.ofBytes(1)));
+        assertThatThrownBy(() -> allocator.acquireMandatory(64_000L)).isInstanceOf(BudgetExhaustedException.class);
     }
 }

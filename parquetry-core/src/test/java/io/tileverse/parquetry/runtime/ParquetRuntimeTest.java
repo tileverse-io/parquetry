@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.DisplayName;
@@ -170,5 +171,25 @@ class ParquetRuntimeTest {
                 .fetchBudget(explicit)
                 .build();
         assertThat(runtime.fetchBudget()).isSameAs(explicit);
+    }
+
+    @Test
+    void waitDefaultsToOneSecond() {
+        assertThat(ParquetRuntime.builder().build().mandatoryBufferWait()).isEqualTo(Duration.ofSeconds(1));
+    }
+
+    @Test
+    void rejectsNegativeWait() {
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> ParquetRuntime.builder().mandatoryBufferWait(Duration.ofMillis(-1)));
+    }
+
+    @Test
+    void withWaitSwapsOnlyTheDuration() {
+        ParquetRuntime base = ParquetRuntime.builder().build();
+        ParquetRuntime copy = base.withMandatoryBufferWait(Duration.ZERO);
+        assertThat(copy.mandatoryBufferWait()).isEqualTo(Duration.ZERO);
+        assertThat(copy.fetchBudget()).isSameAs(base.fetchBudget());
+        assertThat(copy.prefetchDepth()).isEqualTo(base.prefetchDepth());
     }
 }

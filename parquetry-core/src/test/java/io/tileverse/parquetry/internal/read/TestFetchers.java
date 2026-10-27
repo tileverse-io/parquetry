@@ -19,6 +19,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
@@ -51,10 +52,26 @@ public final class TestFetchers {
             ParquetSchema projectedSchema,
             SegmentPool pool,
             FetchAccumulator accumulator) {
-        FetchBufferAllocator allocator = new FetchBufferAllocator(
-                pool,
-                FetchBudget.ofBytes(AMPLE_FETCH_BUDGET),
-                new FetchSpillStore(spillDir(), DiskBudget.ofBytes(AMPLE_DISK_BUDGET)));
+        FetchSpillStore spillStore = new FetchSpillStore(spillDir(), DiskBudget.ofBytes(AMPLE_DISK_BUDGET));
+        FetchBudget budget = FetchBudget.ofBytes(AMPLE_FETCH_BUDGET);
+        return over(source, fileSchema, projectedSchema, pool, accumulator, budget, spillStore, Duration.ZERO);
+    }
+
+    /**
+     * A fetcher whose mandatory fetches reserve against {@code budget}, wait up to {@code mandatoryBufferWait} for room
+     * and spill through {@code spillStore}.
+     */
+    @SuppressWarnings("java:S107") // test factory: one knob per collaborator of the fetcher under test
+    static RowGroupFetcher over(
+            ByteRangeSource source,
+            ParquetSchema fileSchema,
+            ParquetSchema projectedSchema,
+            SegmentPool pool,
+            FetchAccumulator accumulator,
+            FetchBudget budget,
+            FetchSpillStore spillStore,
+            Duration mandatoryBufferWait) {
+        FetchBufferAllocator allocator = new FetchBufferAllocator(pool, budget, spillStore, mandatoryBufferWait);
         return new RowGroupFetcher(source, fileSchema, projectedSchema, pool, allocator, accumulator);
     }
 
