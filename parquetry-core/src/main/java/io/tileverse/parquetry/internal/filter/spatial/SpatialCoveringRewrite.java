@@ -182,12 +182,9 @@ public final class SpatialCoveringRewrite {
      * exist as primitive columns; the lowered comparisons are then trusted exactly like a declared covering.
      */
     private static Optional<BboxCovering> conventionalBboxCovering(ParquetSchema schema) {
-        ColumnPath xmin = ColumnPath.of("bbox", "xmin");
-        ColumnPath xmax = ColumnPath.of("bbox", "xmax");
-        ColumnPath ymin = ColumnPath.of("bbox", "ymin");
-        ColumnPath ymax = ColumnPath.of("bbox", "ymax");
-        if (allPrimitive(schema, xmin, xmax, ymin, ymax)) {
-            return Optional.of(new BboxCovering(xmin, xmax, ymin, ymax, Optional.empty(), Optional.empty()));
+        BboxCovering c = BboxCovering.conventional();
+        if (allPrimitive(schema, c.xmin(), c.xmax(), c.ymin(), c.ymax())) {
+            return Optional.of(c);
         }
         return Optional.empty();
     }

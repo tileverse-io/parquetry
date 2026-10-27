@@ -76,14 +76,23 @@ class BboxCoveringDeriverTest {
     void nullGeometryYieldsNullCovering() {
         BinaryVector geometry = BinaryVector.materialized(new MemorySegment[] {null}, Validity.of(new BitSet(1), 1));
         StructVector bbox = BboxCoveringDeriver.derive(geometry, 1, true);
-        assertThat(bbox.children().get(ColumnPath.of("xmin")).isNull(0)).isTrue();
+        assertThat(bbox.isNull(0)).as("a row without a geometry has no bbox").isTrue();
     }
 
     @Test
     void emptyGeometryYieldsNullCovering() {
         BinaryVector geometry = singleGeometry("POLYGON EMPTY");
         StructVector bbox = BboxCoveringDeriver.derive(geometry, 1, true);
+        assertThat(bbox.isNull(0)).as("an empty geometry is still a geometry").isFalse();
         assertThat(bbox.children().get(ColumnPath.of("xmin")).isNull(0)).isTrue();
+    }
+
+    @Test
+    void fieldsInSpecOrder() {
+        StructVector bbox = BboxCoveringDeriver.derive(singleGeometry("POINT (1 2)"), 1, false);
+        assertThat(bbox.children().keySet())
+                .extracting(ColumnPath::dot)
+                .containsExactly("xmin", "ymin", "xmax", "ymax");
     }
 
     private static BinaryVector singleGeometry(String wkt) {

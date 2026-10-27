@@ -45,4 +45,20 @@ public record BboxCovering(
         ColumnPath ymin,
         ColumnPath ymax,
         Optional<ColumnPath> zmin,
-        Optional<ColumnPath> zmax) {}
+        Optional<ColumnPath> zmax) {
+
+    /**
+     * The covering formed by a top-level {@code bbox} struct with the leaves {@code xmin}, {@code ymin}, {@code xmax}
+     * and {@code ymax}. DuckDB and other GeoParquet 1.0 writers write this struct without declaring it, and the
+     * parquetry writer derives its covering columns in the same shape.
+     */
+    public static BboxCovering conventional() {
+        return new BboxCovering(
+                ColumnPath.of("bbox", "xmin"),
+                ColumnPath.of("bbox", "xmax"),
+                ColumnPath.of("bbox", "ymin"),
+                ColumnPath.of("bbox", "ymax"),
+                Optional.empty(),
+                Optional.empty());
+    }
+}

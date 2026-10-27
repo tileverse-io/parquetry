@@ -122,10 +122,14 @@ points them elsewhere, for example when that volume is small or read-only.
 
 Two flags shape the GeoParquet metadata of the copy. `--geoparquet-metadata <version>` picks `dual` (native geometry
 types and a 1.1.0 geo document, readable by 1.x and 2.0 readers, the default), `2.0` (native types and a 2.0.0
-document) or `1.1` (a 1.1.0 document only). `--bbox-covering <mode>` decides the `bbox` covering derived for a copy
-whose source declares none: `auto` (the default: FLOAT leaves for a CRS84 or EPSG:4326 geometry column, DOUBLE
-otherwise), `float`, `double` or `none`. A covering declared by the source over copied columns is kept whatever the
-flag says.
+document) or `1.1` (a 1.1.0 document only). `--bbox-covering <mode>` decides the `bbox` covering of a copy whose
+source declares none: `auto`, `float`, `double` or `none`. `auto`, the default, declares a `bbox` struct of the source
+as the covering, such as the one written by DuckDB without a declaration. The struct must have the fields `xmin`,
+`ymin`, `xmax` and `ymax` and no other, all FLOAT or all DOUBLE, and the repetition of the geometry column. The copy
+writes the fields in that order, as required by GeoParquet 1.1. DuckDB writes them as `xmin`, `xmax`, `ymin`, `ymax`.
+Otherwise the copy declares no covering and `par` prints the reason. A source without a `bbox`
+column gets derived covering columns: FLOAT leaves for a CRS84 or EPSG:4326 geometry column, DOUBLE otherwise. A
+covering declared by the source over copied columns is kept whatever the flag says.
 
 The write path currently handles flat columns (primitives, including WKB geometry); copying a file whose schema
 contains nested list/map/struct or Variant columns is not yet supported and fails with a clear error.

@@ -499,7 +499,7 @@ class CpCmdTest {
         assertThat(covering.xmax()).isEqualTo(ColumnPath.of("bbox", "xmax"));
         assertThat(covering.ymax()).isEqualTo(ColumnPath.of("bbox", "ymax"));
         assertThat(leafPaths(dst))
-                .containsExactly("id", "geometry", "bbox.xmin", "bbox.xmax", "bbox.ymin", "bbox.ymax");
+                .containsExactly("id", "geometry", "bbox.xmin", "bbox.ymin", "bbox.xmax", "bbox.ymax");
     }
 
     @Test
@@ -536,7 +536,7 @@ class CpCmdTest {
         BboxCovering covering = coveringOf(dst);
         assertThat(covering.xmin()).isEqualTo(ColumnPath.of("bbox", "xmin"));
         assertThat(leafPaths(dst))
-                .containsExactly("id", "geometry", "bbox.xmin", "bbox.xmax", "bbox.ymin", "bbox.ymax");
+                .containsExactly("id", "geometry", "bbox.xmin", "bbox.ymin", "bbox.xmax", "bbox.ymax");
     }
 
     /**
@@ -606,6 +606,29 @@ class CpCmdTest {
                 return rows.count();
             }
         }
+    }
+
+    /** Each row's bbox as {@code "xmin ymin xmax ymax"}, read by field name. */
+    private static List<String> bboxRows(Path file) throws Exception {
+        List<ColumnPath> fields = Stream.of("xmin", "ymin", "xmax", "ymax")
+                .map(field -> ColumnPath.of("bbox", field))
+                .toList();
+        try (Storage storage = StorageFactory.open(file.getParent().toUri());
+                RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
+            ParquetSource source = ParquetSource.open(ByteRangeSource.of(reader));
+            try (Stream<ParquetRecord> rows =
+                    source.read(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                return rows.map(row -> bboxRow(row, fields)).toList();
+            }
+        }
+    }
+
+    private static String bboxRow(ParquetRecord row, List<ColumnPath> fields) {
+        List<String> values = new ArrayList<>();
+        for (ColumnPath field : fields) {
+            values.add(String.valueOf(row.getDouble(field)));
+        }
+        return String.join(" ", values);
     }
 
     private static BboxCovering coveringOf(Path file) throws Exception {
@@ -804,6 +827,89 @@ class CpCmdTest {
 
         assertThat(code).isZero();
         assertThat(coveringOf(dst).xmin()).isEqualTo(ColumnPath.of("bbox", "xmin"));
+    }
+
+    // The source has a bbox struct, leaves in the order xmax, xmin, ymax, ymin, and declares no covering.
+    @Test
+    void copyDeclaresTheBboxStruct(@TempDir Path dir) throws Exception {
+        Path src = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
+        Path dst = dir.resolve("declared.parquet");
+
+        int code = Par.newCommandLine().execute("cp", src.toString(), dst.toString());
+
+        assertThat(code).isZero();
+        assertThat(geoOf(dst).version()).isEqualTo("1.1.0");
+        BboxCovering covering = coveringOf(dst);
+        assertThat(covering.xmin()).isEqualTo(ColumnPath.of("bbox", "xmin"));
+        assertThat(covering.ymin()).isEqualTo(ColumnPath.of("bbox", "ymin"));
+        assertThat(covering.xmax()).isEqualTo(ColumnPath.of("bbox", "xmax"));
+        assertThat(covering.ymax()).isEqualTo(ColumnPath.of("bbox", "ymax"));
+        assertThat(leafPaths(dst))
+                .as("no column added, the bbox fields in the spec order")
+                .containsExactly(
+                        "pop_est",
+                        "continent",
+                        "name",
+                        "iso_a3",
+                        "gdp_md_est",
+                        "geometry",
+                        "bbox.xmin",
+                        "bbox.ymin",
+                        "bbox.xmax",
+                        "bbox.ymax");
+        assertThat(bboxRows(dst)).isEqualTo(bboxRows(src));
+    }
+
+    @Test
+    void v2CopyDeclaresTheBboxStruct(@TempDir Path dir) throws Exception {
+        Path src = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
+        Path dst = dir.resolve("declared-v2.parquet");
+
+        int code = Par.newCommandLine()
+                .execute(
+                        "cp",
+                        src.toString(),
+                        dst.toString(),
+                        "--geoparquet-metadata",
+                        "2.0",
+                        "--bbox-covering",
+                        "auto");
+
+        assertThat(code).isZero();
+        assertThat(geoOf(dst).version()).isEqualTo("2.0.0");
+        assertThat(coveringOf(dst).ymax()).isEqualTo(ColumnPath.of("bbox", "ymax"));
+    }
+
+    // Projecting away bbox.ymin leaves a struct that cannot be declared as the covering.
+    @Test
+    void incompleteBboxStructIsReported(@TempDir Path dir) throws Exception {
+        Path src = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
+        Path dst = dir.resolve("incomplete.parquet");
+        String columns = "name,geometry,bbox.xmin,bbox.xmax,bbox.ymax";
+
+        StringWriter err = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setErr(new PrintWriter(err));
+        int code = cmd.execute("cp", src.toString(), dst.toString(), "--columns", columns, "--bbox-covering", "auto");
+
+        assertThat(code).isZero();
+        assertThat(geoOf(dst).columns().get("geometry").covering()).isEmpty();
+        assertThat(err.toString()).contains("declares no bbox covering: the 'bbox' column has no field 'ymin'");
+    }
+
+    @Test
+    void noneSkipsTheBboxStruct(@TempDir Path dir) throws Exception {
+        Path src = TestCorpus.extractFile("geoparquet/examples/example.parquet", dir);
+        Path dst = dir.resolve("undeclared.parquet");
+
+        StringWriter err = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setErr(new PrintWriter(err));
+        int code = cmd.execute("cp", src.toString(), dst.toString(), "--bbox-covering", "none");
+
+        assertThat(code).isZero();
+        assertThat(geoOf(dst).columns().get("geometry").covering()).isEmpty();
+        assertThat(err.toString()).isEmpty();
     }
 
     /** Writes two rows of a single FLOAT column holding NaN alone. */
