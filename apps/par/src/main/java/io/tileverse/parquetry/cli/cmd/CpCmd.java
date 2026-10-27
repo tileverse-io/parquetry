@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.cli.cmd;
 
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -49,6 +50,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering;
+import io.tileverse.parquetry.schema.geo.geoparquet.BoundingBoxColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.ColumnCrs;
 import io.tileverse.parquetry.schema.geo.geoparquet.Covering;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
@@ -61,8 +63,10 @@ import picocli.CommandLine;
 import picocli.CommandLine.ArgGroup;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Mixin;
+import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
+import picocli.CommandLine.Spec;
 
 @Command(name = "cp", description = "Read src, apply projection/filter, write a new Parquet file at dst.")
 public final class CpCmd implements Callable<Integer> {
@@ -116,13 +120,19 @@ public final class CpCmd implements Callable<Integer> {
     @Option(
             names = "--bbox-covering",
             paramLabel = "<mode>",
-            description = "Bbox covering derived for a copy whose source declares none: ${COMPLETION-CANDIDATES}. "
-                    + "Default: AUTO, FLOAT for a CRS84 or EPSG:4326 geometry column and DOUBLE otherwise. A covering "
-                    + "declared by the source over copied columns is kept whatever this flag says.")
+            description = "Bbox covering of a copy whose source declares none: ${COMPLETION-CANDIDATES}. Default: "
+                    + "AUTO. AUTO declares a bbox struct of the source as the covering, such as the one written by "
+                    + "DuckDB, with its fields in the GeoParquet order, and derives one otherwise: FLOAT for a CRS84 "
+                    + "or EPSG:4326 geometry column, DOUBLE for "
+                    + "other CRSs. A covering declared by the source over copied columns is kept whatever this flag "
+                    + "says.")
     private WriteOptions.CoveringMode bboxCovering;
 
     @Mixin
     private GlobalOptions options;
+
+    @Spec
+    private CommandSpec spec;
 
     @ArgGroup(validate = false, heading = StorageOptions.HEADING)
     private StorageOptions storage = new StorageOptions();
@@ -261,8 +271,9 @@ public final class CpCmd implements Callable<Integer> {
     /**
      * Writer options for the copy. A flag left out keeps the writer's default: the system temporary directory for the
      * temp dir, the type-defined order for the float column order, dual GeoParquet metadata, an AUTO covering. The
-     * covering flag applies to a derived covering only: a covering declared by the source and kept by the copy is
-     * forwarded as declared.
+     * covering flag applies when the source declares no covering: a covering declared by the source and kept by the
+     * copy is forwarded as declared. An AUTO flag is left unset, like an absent one: the writer then skips a covering
+     * it cannot add instead of failing the copy.
      */
     private WriteOptions buildWriteOptions(
             ParquetSchema writeSchema, Map<String, String> sourceKeyValue, WriteOptions.RowGroupSize rowGroupSize) {
@@ -291,10 +302,41 @@ public final class CpCmd implements Callable<Integer> {
         }
         forwardOpaqueMetadata(builder, sourceKeyValue);
         boolean coveringForwarded = collectGeometryColumns(builder, writeSchema, sourceKeyValue);
-        if (bboxCovering != null && !coveringForwarded) {
+        if (bboxCovering != null && bboxCovering != WriteOptions.CoveringMode.AUTO && !coveringForwarded) {
             builder.bboxCovering(bboxCovering);
         }
-        return builder.build();
+        WriteOptions writeOptions = builder.build();
+        reportUnusableBboxColumn(writeOptions, writeSchema);
+        return writeOptions;
+    }
+
+    /**
+     * Tells the user why a geo copy with an AUTO covering declares none. The writer declares a {@code bbox} column of
+     * the copy as the covering when it meets the {@link BoundingBoxColumn} rules for the first geometry column. The
+     * writer skips any other {@code bbox} column without a word, because a derived covering would clash with it.
+     */
+    private void reportUnusableBboxColumn(WriteOptions writeOptions, ParquetSchema writeSchema) {
+        boolean autoCovering = writeOptions.bboxCovering().isEmpty()
+                && writeOptions.existingBboxCovering().isEmpty();
+        boolean hasBboxColumn =
+                writeSchema.find(ColumnPath.of(BoundingBoxColumn.NAME)).isPresent();
+        Optional<ColumnPath> geometryColumn = firstGeometryColumn(writeOptions, writeSchema);
+        if (!autoCovering || !hasBboxColumn || geometryColumn.isEmpty()) {
+            return;
+        }
+        Optional<String> defect = BoundingBoxColumn.defect(writeSchema, geometryColumn.orElseThrow());
+        if (defect.isPresent()) {
+            PrintWriter err = spec.commandLine().getErr();
+            err.println("par: the copy declares no bbox covering: " + defect.orElseThrow());
+        }
+    }
+
+    /** The first geometry column of the copy in schema order, the column given a covering by the writer. */
+    private static Optional<ColumnPath> firstGeometryColumn(WriteOptions writeOptions, ParquetSchema writeSchema) {
+        Set<String> geometryColumns = writeOptions.crs().keySet();
+        return writeSchema.leafColumns().stream()
+                .filter(leaf -> geometryColumns.contains(leaf.dot()))
+                .findFirst();
     }
 
     /**

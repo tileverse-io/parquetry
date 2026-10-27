@@ -32,9 +32,9 @@ import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
  * Derives a per-row {@code bbox} covering struct from a geometry WKB column: each row becomes that geometry's exact 2D
- * envelope, rounded to the covering precision. A null or empty geometry yields a null covering row. A FLOAT covering
- * rounds each bound OUTWARD (min toward negative infinity, max toward positive infinity) to guarantee the covering
- * always encloses the exact envelope and never drops a match.
+ * envelope, rounded to the covering precision. A null geometry yields a null struct, and an empty geometry a struct of
+ * null fields. A FLOAT covering rounds each bound OUTWARD (min toward negative infinity, max toward positive infinity)
+ * to guarantee the covering always encloses the exact envelope and never drops a match.
  */
 public final class BboxCoveringDeriver {
 
@@ -58,17 +58,24 @@ public final class BboxCoveringDeriver {
     }
 
     /**
-     * Builds the REQUIRED {@code bbox} struct for {@code geometry}; children are OPTIONAL, null for null/empty rows.
+     * Builds the {@code bbox} struct for {@code geometry}, with its fields in the order required by GeoParquet. A row
+     * has a struct exactly when it has a geometry, as the spec requires of a bounding box column.
      */
     public static StructVector derive(BinaryVector geometry, int rowCount, boolean useFloat) {
         double[] xmin = new double[rowCount];
         double[] xmax = new double[rowCount];
         double[] ymin = new double[rowCount];
         double[] ymax = new double[rowCount];
+        BitSet hasGeometry = new BitSet(rowCount);
         BitSet present = new BitSet(rowCount);
         for (int row = 0; row < rowCount; row++) {
-            Bbox envelope = usableEnvelopeOrNull(geometry.get(row));
-            if (envelope == null) {
+            MemorySegment wkb = geometry.get(row);
+            if (wkb == null) {
+                continue;
+            }
+            hasGeometry.set(row);
+            Bbox envelope = WkbEnvelope.compute(wkb);
+            if (isEmptyEnvelope(envelope)) {
                 continue;
             }
             present.set(row);
@@ -80,22 +87,10 @@ public final class BboxCoveringDeriver {
         Validity validity = Validity.of(present, rowCount);
         Map<ColumnPath, ColumnVector> children = new LinkedHashMap<>();
         children.put(XMIN, coveringLeaf(xmin, validity, useFloat, BboxCoveringDeriver::floatFloor));
-        children.put(XMAX, coveringLeaf(xmax, validity, useFloat, BboxCoveringDeriver::floatCeil));
         children.put(YMIN, coveringLeaf(ymin, validity, useFloat, BboxCoveringDeriver::floatFloor));
+        children.put(XMAX, coveringLeaf(xmax, validity, useFloat, BboxCoveringDeriver::floatCeil));
         children.put(YMAX, coveringLeaf(ymax, validity, useFloat, BboxCoveringDeriver::floatCeil));
-        return new StructVector(children, Validity.allValid(rowCount), rowCount);
-    }
-
-    /**
-     * The 2D envelope of one WKB value, or null when the row has nothing to cover: a null geometry, or one whose
-     * envelope is empty.
-     */
-    private static Bbox usableEnvelopeOrNull(MemorySegment wkb) {
-        if (wkb == null) {
-            return null;
-        }
-        Bbox envelope = WkbEnvelope.compute(wkb);
-        return isEmptyEnvelope(envelope) ? null : envelope;
+        return new StructVector(children, Validity.of(hasGeometry, rowCount), rowCount);
     }
 
     /**

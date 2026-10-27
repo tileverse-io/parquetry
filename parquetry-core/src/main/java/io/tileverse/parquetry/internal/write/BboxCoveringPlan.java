@@ -35,15 +35,18 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering;
+import io.tileverse.parquetry.schema.geo.geoparquet.BoundingBoxColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.ColumnCrs;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystem;
 import io.tileverse.parquetry.schema.geo.projjson.CoordinateReferenceSystems;
 
 /**
- * Resolves the bbox covering of a write: either a covering declared over leaves already in the schema, or a derived
- * {@code bbox} group for the primary geometry column at a chosen precision, added to each batch. An unset
- * {@link WriteOptions#bboxCovering()} resolves to AUTO in any metadata mode; a coherence problem is an error for an
- * explicit request and a downgrade to inactive for a defaulted one.
+ * Resolves the bbox covering of a write. The covering is either declared over leaves already in the schema, or derived:
+ * a {@code bbox} group for the primary geometry column at a chosen precision, added to each batch. An AUTO request
+ * declares an existing {@code bbox} struct instead of deriving one. An unset {@link WriteOptions#bboxCovering()}
+ * resolves to AUTO in any metadata mode. A coherence problem is an error for an explicit request and a downgrade to
+ * inactive for a defaulted one.
  */
 public final class BboxCoveringPlan {
 
@@ -74,12 +77,10 @@ public final class BboxCoveringPlan {
         this.useFloat = useFloat;
     }
 
-    private static CoveringPaths derivedPaths() {
-        return new CoveringPaths(
-                ColumnPath.of(BBOX, "xmin"),
-                ColumnPath.of(BBOX, "ymin"),
-                ColumnPath.of(BBOX, "xmax"),
-                ColumnPath.of(BBOX, "ymax"));
+    /** The leaves of the {@code bbox} struct, derived by the plan or declared as found in the schema. */
+    private static CoveringPaths bboxStructPaths() {
+        BboxCovering conventional = BboxCovering.conventional();
+        return new CoveringPaths(conventional.xmin(), conventional.ymin(), conventional.xmax(), conventional.ymax());
     }
 
     public static BboxCoveringPlan resolve(WriteOptions options, ParquetSchema schema, GeoMetadataWriter geoWriter) {
@@ -88,7 +89,7 @@ public final class BboxCoveringPlan {
         if (existing.isPresent()) {
             return declareExisting(existing.orElseThrow(), schema, geometryColumns);
         }
-        return resolveDerived(options, schema, geometryColumns);
+        return resolveRequested(options, schema, geometryColumns);
     }
 
     /**
@@ -129,7 +130,11 @@ public final class BboxCoveringPlan {
         return kind == PrimitiveKind.FLOAT || kind == PrimitiveKind.DOUBLE;
     }
 
-    private static BboxCoveringPlan resolveDerived(
+    /**
+     * Resolves the covering requested by {@link WriteOptions#bboxCovering()}: a derived {@code bbox} group, or the
+     * {@code bbox} column already in the schema.
+     */
+    private static BboxCoveringPlan resolveRequested(
             WriteOptions options, ParquetSchema schema, List<ColumnPath> geometryColumns) {
         Optional<CoveringMode> requested = options.bboxCovering();
         boolean explicit = requested.isPresent() && requested.orElseThrow() != CoveringMode.NONE;
@@ -140,15 +145,44 @@ public final class BboxCoveringPlan {
         if (geometryColumns.isEmpty()) {
             return requireOrDowngrade(explicit, schema, "bbox covering requires a geometry column; none is configured");
         }
-        if (schema.find(ColumnPath.of(BBOX)).isPresent()) {
-            return requireOrDowngrade(
-                    explicit, schema, "cannot derive a bbox covering: the schema already has a column named 'bbox'");
-        }
-
         ColumnPath geometryColumn = geometryColumns.get(0);
+        if (schema.find(ColumnPath.of(BBOX)).isPresent()) {
+            return resolveOverBboxColumn(requested, schema, geometryColumn);
+        }
         boolean useFloat = resolvePrecision(options, requested, geometryColumn);
-        ParquetSchema writtenSchema = schema.withAppendedGroup(coveringGroup(useFloat));
-        return new BboxCoveringPlan(true, true, writtenSchema, geometryColumn, derivedPaths(), useFloat);
+        Repetition repetition = schema.find(geometryColumn).orElseThrow().repetition();
+        ParquetSchema writtenSchema = schema.withAppendedGroup(coveringGroup(useFloat, repetition));
+        return new BboxCoveringPlan(true, true, writtenSchema, geometryColumn, bboxStructPaths(), useFloat);
+    }
+
+    /**
+     * Resolves a covering request over a schema that already has a {@code bbox} column. AUTO declares that column as
+     * the covering when it meets the {@link BoundingBoxColumn} rules, and writes its fields in the order required by
+     * the spec. GeoParquet 1.0 writers such as DuckDB write this struct without declaring it, and DuckDB puts its
+     * fields in another order. FLOAT and DOUBLE ask for derived values, and a derived {@code bbox} would clash with the
+     * existing column.
+     */
+    private static BboxCoveringPlan resolveOverBboxColumn(
+            Optional<CoveringMode> requested, ParquetSchema schema, ColumnPath geometryColumn) {
+        Optional<String> defect = BoundingBoxColumn.defect(schema, geometryColumn);
+        boolean autoRequested = requested.orElse(CoveringMode.AUTO) == CoveringMode.AUTO;
+        if (!autoRequested) {
+            throw new ParquetWriteException(precisionClashMessage(defect.isEmpty()));
+        }
+        if (defect.isPresent()) {
+            String message = "cannot declare the 'bbox' column as the bbox covering: " + defect.orElseThrow();
+            return requireOrDowngrade(requested.isPresent(), schema, message);
+        }
+        ParquetSchema writtenSchema = BoundingBoxColumn.inSpecOrder(schema);
+        return new BboxCoveringPlan(true, false, writtenSchema, geometryColumn, bboxStructPaths(), false);
+    }
+
+    private static String precisionClashMessage(boolean bboxStructUsable) {
+        String message = "cannot derive a bbox covering: the schema already has a column named 'bbox'";
+        if (bboxStructUsable) {
+            return message + "; request AUTO to declare that column as the covering";
+        }
+        return message;
     }
 
     /**
@@ -184,14 +218,18 @@ public final class BboxCoveringPlan {
         return epsg4326 || crs.get().equals(CoordinateReferenceSystems.ogcCrs84());
     }
 
-    private static SchemaNode.Group coveringGroup(boolean useFloat) {
+    /**
+     * The derived {@code bbox} group, shaped as a GeoParquet bounding box column: the four fields in the spec order,
+     * and the repetition of the geometry column. The fields stay OPTIONAL to hold the nulls of an empty geometry.
+     */
+    private static SchemaNode.Group coveringGroup(boolean useFloat, Repetition geometryRepetition) {
         PrimitiveKind kind = useFloat ? PrimitiveKind.FLOAT : PrimitiveKind.DOUBLE;
         List<SchemaNode> leaves = List.of(
                 coveringLeaf("xmin", kind),
-                coveringLeaf("xmax", kind),
                 coveringLeaf("ymin", kind),
+                coveringLeaf("xmax", kind),
                 coveringLeaf("ymax", kind));
-        return new SchemaNode.Group(BBOX, Repetition.REQUIRED, leaves, Optional.empty(), -1);
+        return new SchemaNode.Group(BBOX, geometryRepetition, leaves, Optional.empty(), -1);
     }
 
     private static SchemaNode.Primitive coveringLeaf(String name, PrimitiveKind kind) {
@@ -206,7 +244,7 @@ public final class BboxCoveringPlan {
     }
 
     private static BboxCoveringPlan inactive(ParquetSchema schema) {
-        return new BboxCoveringPlan(false, false, schema, null, derivedPaths(), false);
+        return new BboxCoveringPlan(false, false, schema, null, bboxStructPaths(), false);
     }
 
     public boolean active() {

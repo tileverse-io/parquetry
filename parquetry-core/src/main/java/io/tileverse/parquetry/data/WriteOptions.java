@@ -223,6 +223,12 @@ public record WriteOptions(
      * what precision. The covering is declared in the geo document of any version. An unset
      * {@link WriteOptions#bboxCovering()} resolves to AUTO at open time, in any metadata mode. AUTO picks FLOAT for a
      * CRS84/EPSG:4326 geometry column and DOUBLE otherwise.
+     *
+     * <p>A schema may already have a top-level {@code bbox} struct, as written by DuckDB and other GeoParquet 1.0
+     * writers without a covering declaration. AUTO declares that struct as the covering when it meets the GeoParquet
+     * rules for a bounding box column, and derives nothing. The written struct has its fields in the spec order:
+     * {@code xmin}, {@code ymin}, {@code xmax}, {@code ymax}. FLOAT and DOUBLE derive values, and their derived
+     * {@code bbox} column would clash with the existing one.
      */
     public enum CoveringMode {
         NONE,
