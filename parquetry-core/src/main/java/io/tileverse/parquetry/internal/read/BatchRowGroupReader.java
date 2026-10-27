@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.internal.read;
 
-import java.lang.foreign.Arena;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -54,8 +53,8 @@ import lombok.NonNull;
  * </ol>
  *
  * <p>Most vectors are heap-backed at construction (see {@link BatchColumnReader#readBatch}); DOUBLE columns are decoded
- * into batch-owned off-heap buffers acquired through the decode allocator. The batch holds no Arena state across thread
- * boundaries.
+ * into batch-owned off-heap buffers acquired through the decode allocator. A batch owns those buffers and nothing else,
+ * and the consumer may close it on a thread other than the one that decoded it.
  */
 public final class BatchRowGroupReader implements AutoCloseable {
 
@@ -156,9 +155,6 @@ public final class BatchRowGroupReader implements AutoCloseable {
         if (!hasMore()) {
             throw new IllegalStateException("No more rows to read");
         }
-        // Shared arena: vectors are heap-backed, but the batch may be decoded on a worker thread
-        // and closed by the consumer thread, so its arena must not be confined to a single thread.
-        Arena batchArena = Arena.ofShared();
         List<AutoCloseable> acquiredBuffers = new ArrayList<>();
         try {
             ensureColumnReadersBuilt();
@@ -179,15 +175,13 @@ public final class BatchRowGroupReader implements AutoCloseable {
             Map<ColumnPath, ColumnVector> assembled =
                     assembleGroups(leafVectors, repLevelsByLeaf, defLevelsByLeaf, batchRows, acquiredBuffers);
             Map<ColumnPath, ColumnVector> vectors = withRowPosition(assembled, firstRowDenseIndex, batchRows);
-            DefaultParquetRecordBatch batch =
-                    new DefaultParquetRecordBatch(batchSchema, vectors, batchRows, batchArena);
+            DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(batchSchema, vectors, batchRows);
             for (AutoCloseable buffer : acquiredBuffers) {
                 batch.registerBuffer(buffer);
             }
             return batch;
         } catch (RuntimeException e) {
             closeQuietly(acquiredBuffers);
-            batchArena.close();
             throw e;
         }
     }

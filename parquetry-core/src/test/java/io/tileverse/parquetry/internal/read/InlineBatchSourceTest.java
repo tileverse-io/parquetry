@@ -16,10 +16,9 @@
 package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.lang.foreign.Arena;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.jupiter.api.Test;
 
@@ -29,8 +28,8 @@ class InlineBatchSourceTest {
 
     @Test
     void streamsBatchesInOrder() {
-        ParquetRecordBatch b0 = TestBatches.emptyBatch(Arena.ofConfined());
-        ParquetRecordBatch b1 = TestBatches.emptyBatch(Arena.ofConfined());
+        ParquetRecordBatch b0 = TestBatches.emptyBatch();
+        ParquetRecordBatch b1 = TestBatches.emptyBatch();
         InlineBatchSource source = new InlineBatchSource(new ListRowGroupDriver(List.of(b0, b1)));
 
         assertThat(source.hasNext()).isTrue();
@@ -45,21 +44,21 @@ class InlineBatchSourceTest {
 
     @Test
     void closeAfterPartialDrainClosesRemainingBatch() {
-        Arena emittedArena = Arena.ofConfined();
-        Arena remainingArena = Arena.ofConfined();
-        ParquetRecordBatch emitted = TestBatches.emptyBatch(emittedArena);
-        ParquetRecordBatch remaining = TestBatches.emptyBatch(remainingArena);
+        AtomicBoolean emittedClosed = new AtomicBoolean();
+        AtomicBoolean remainingClosed = new AtomicBoolean();
+        ParquetRecordBatch emitted = TestBatches.emptyBatch(emittedClosed);
+        ParquetRecordBatch remaining = TestBatches.emptyBatch(remainingClosed);
         InlineBatchSource source = new InlineBatchSource(new ListRowGroupDriver(List.of(emitted, remaining)));
 
         assertThat(source.next()).isSameAs(emitted);
         source.close();
 
-        assertThatThrownBy(() -> remainingArena.allocate(8))
+        assertThat(remainingClosed.get())
                 .as("the undrained batch is closed by close()")
-                .isInstanceOf(IllegalStateException.class);
-        assertThat(emittedArena.allocate(8))
+                .isTrue();
+        assertThat(emittedClosed.get())
                 .as("the emitted batch is owned by the consumer")
-                .isNotNull();
+                .isFalse();
 
         emitted.close();
     }

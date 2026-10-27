@@ -17,7 +17,6 @@ package io.tileverse.parquetry.conformance;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.BitSet;
@@ -72,7 +71,7 @@ class CanonicalRowFromParquetryTest {
                 ColumnPath.of("s"), sVec,
                 ColumnPath.of("opt"), optVec);
 
-        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, cols, 1, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, cols, 1)) {
             ParquetRecord row = batch.materialize(0);
             Map<String, Object> canonical = CanonicalRow.fromParquetry(row, schema);
 
@@ -106,7 +105,7 @@ class CanonicalRowFromParquetryTest {
                 new StructVector(Map.of(ColumnPath.of("x"), xVec, ColumnPath.of("y"), yVec), present, 1);
         Map<ColumnPath, ColumnVector> cols = Map.of(ColumnPath.of("point"), pointVec);
 
-        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, cols, 1, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, cols, 1)) {
             Map<String, Object> canonical = CanonicalRow.fromParquetry(batch.materialize(0), schema);
             assertThat(canonical).as("struct as nested map").containsEntry("point", Map.of("x", 3, "y", 4));
         }
@@ -137,7 +136,7 @@ class CanonicalRowFromParquetryTest {
         MapVector mapVec = new MapVector(new int[] {0, 2}, keys, values, rowValid, 1);
         Map<ColumnPath, ColumnVector> cols = Map.of(ColumnPath.of("m2i"), mapVec);
 
-        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, cols, 1, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, cols, 1)) {
             Object cell =
                     CanonicalRow.fromParquetry(batch.materialize(0), schema).get("m2i");
             assertThat(cell).as("map cell type").isInstanceOf(Map.class);
@@ -173,7 +172,7 @@ class CanonicalRowFromParquetryTest {
         ListVector listVec = new ListVector(new int[] {0, 2, 2, 2}, elems, rowValid, 3);
         Map<ColumnPath, ColumnVector> cols = Map.of(ColumnPath.of("nums"), listVec);
 
-        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, cols, 3, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, cols, 3)) {
             assertThat(CanonicalRow.fromParquetry(batch.materialize(0), schema))
                     .as("present list")
                     .containsEntry("nums", List.of(10, 20));

@@ -15,12 +15,12 @@
  */
 package io.tileverse.parquetry.internal.read;
 
-import java.lang.foreign.Arena;
 import java.util.BitSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.columnar.IntVector;
@@ -38,9 +38,16 @@ final class TestBatches {
 
     private TestBatches() {}
 
-    /** An empty batch over the given arena; its {@code approximateHeapBytes()} is zero. */
-    static ParquetRecordBatch emptyBatch(Arena arena) {
-        return new DefaultParquetRecordBatch(singleIntColumnSchema(), Map.of(), 0, arena);
+    /** An empty batch; its {@code approximateHeapBytes()} is zero. */
+    static ParquetRecordBatch emptyBatch() {
+        return new DefaultParquetRecordBatch(singleIntColumnSchema(), Map.of(), 0);
+    }
+
+    /** An empty batch owning one buffer; {@code closed} flips when the batch is closed. */
+    static ParquetRecordBatch emptyBatch(AtomicBoolean closed) {
+        ParquetRecordBatch batch = emptyBatch();
+        batch.registerBuffer(() -> closed.set(true));
+        return batch;
     }
 
     /**
@@ -57,7 +64,6 @@ final class TestBatches {
      * A batch holding one {@code IntVector} of {@code count} values, hence a non-zero {@code approximateHeapBytes()}.
      */
     static ParquetRecordBatch intBatch(int count) {
-        Arena arena = Arena.ofShared();
         int[] values = new int[count];
         for (int i = 0; i < count; i++) {
             values[i] = i;
@@ -66,7 +72,7 @@ final class TestBatches {
         validBits.set(0, count);
         IntVector vector = IntVector.materialized(values, Validity.of(validBits, count));
         Map<ColumnPath, io.tileverse.parquetry.columnar.ColumnVector> columns = Map.of(ColumnPath.of("value"), vector);
-        return new DefaultParquetRecordBatch(singleIntColumnSchema(), columns, count, arena);
+        return new DefaultParquetRecordBatch(singleIntColumnSchema(), columns, count);
     }
 
     static ParquetSchema singleIntColumnSchema() {

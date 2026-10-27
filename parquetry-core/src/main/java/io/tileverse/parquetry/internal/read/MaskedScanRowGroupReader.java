@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.internal.read;
 
-import java.lang.foreign.Arena;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.HashMap;
@@ -440,26 +439,18 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
             long firstDenseRow,
             int windowRows,
             List<AutoCloseable> acquired) {
-        // Confined is enough: this batch never leaves the decode worker that builds it, and the same call closes it.
-        // A shared arena would only add a close handshake per window.
-        Arena batchArena = Arena.ofConfined();
-        try {
-            Map<ColumnPath, ColumnVector> vectors = BatchAssembly.assemble(
-                    BatchForm.LEVELS,
-                    filterPlans,
-                    filterSchema,
-                    leafVectors,
-                    repLevels,
-                    defLevels,
-                    windowRows,
-                    decodeBufferAllocator,
-                    acquired);
-            Map<ColumnPath, ColumnVector> withPositions = addFilterPositions(vectors, firstDenseRow, windowRows);
-            return new DefaultParquetRecordBatch(filterBatchSchema, withPositions, windowRows, batchArena);
-        } catch (RuntimeException e) {
-            batchArena.close();
-            throw e;
-        }
+        Map<ColumnPath, ColumnVector> vectors = BatchAssembly.assemble(
+                BatchForm.LEVELS,
+                filterPlans,
+                filterSchema,
+                leafVectors,
+                repLevels,
+                defLevels,
+                windowRows,
+                decodeBufferAllocator,
+                acquired);
+        Map<ColumnPath, ColumnVector> withPositions = addFilterPositions(vectors, firstDenseRow, windowRows);
+        return new DefaultParquetRecordBatch(filterBatchSchema, withPositions, windowRows);
     }
 
     /** The window's synthesized columns over its own rows, which the predicate reads beside the decoded ones. */
@@ -485,7 +476,6 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
 
     /** Builds the window's emitted batch: survivor-dense output leaves, in the read's batch form. */
     private ParquetRecordBatch emit(Window window) {
-        Arena batchArena = Arena.ofShared();
         List<AutoCloseable> acquired = window.acquiredBuffers();
         try {
             int survivors = window.survivorCount();
@@ -505,8 +495,7 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
                     decodeBufferAllocator,
                     acquired);
             Map<ColumnPath, ColumnVector> withPositions = addOutputPositions(vectors, window);
-            DefaultParquetRecordBatch batch =
-                    new DefaultParquetRecordBatch(outputSchema, withPositions, survivors, batchArena);
+            DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(outputSchema, withPositions, survivors);
             for (AutoCloseable buffer : acquired) {
                 batch.registerBuffer(buffer);
             }
@@ -514,7 +503,6 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
             return batch;
         } catch (RuntimeException e) {
             window.release();
-            batchArena.close();
             throw e;
         }
     }

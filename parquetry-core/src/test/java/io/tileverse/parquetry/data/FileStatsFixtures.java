@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.data;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -77,7 +76,7 @@ final class FileStatsFixtures {
         }
         Validity validity = Validity.of(validBits, rows);
         Map<ColumnPath, ColumnVector> columns = Map.of(ColumnPath.of(column), LongVector.materialized(longs, validity));
-        return new DefaultParquetRecordBatch(schema, columns, rows, Arena.ofShared());
+        return new DefaultParquetRecordBatch(schema, columns, rows);
     }
 
     /**
@@ -109,7 +108,7 @@ final class FileStatsFixtures {
         allValid.set(0, points.length);
         Validity validity = Validity.of(allValid, points.length);
         Map<ColumnPath, ColumnVector> columns = Map.of(ColumnPath.of(column), BinaryVector.materialized(wkb, validity));
-        return new DefaultParquetRecordBatch(schema, columns, points.length, Arena.ofShared());
+        return new DefaultParquetRecordBatch(schema, columns, points.length);
     }
 
     /**
@@ -139,7 +138,7 @@ final class FileStatsFixtures {
         Validity validity = Validity.of(allValid, values.length);
         Map<ColumnPath, ColumnVector> columns =
                 Map.of(ColumnPath.of(column), BinaryVector.materialized(utf8, validity));
-        return new DefaultParquetRecordBatch(schema, columns, values.length, Arena.ofShared());
+        return new DefaultParquetRecordBatch(schema, columns, values.length);
     }
 
     private static ParquetSchema flatSchema(SchemaNode.Primitive... leaves) {

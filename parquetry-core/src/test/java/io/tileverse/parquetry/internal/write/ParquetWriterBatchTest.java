@@ -18,7 +18,6 @@ package io.tileverse.parquetry.internal.write;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -354,7 +353,7 @@ class ParquetWriterBatchTest {
     private static ParquetRecordBatch buildBatch(
             ParquetSchema schema, int rowCount, Map<ColumnPath, ColumnVector> columns) {
         Map<ColumnPath, ColumnVector> view = new LinkedHashMap<>(columns);
-        return new DefaultParquetRecordBatch(schema, view, rowCount, Arena.ofShared());
+        return new DefaultParquetRecordBatch(schema, view, rowCount);
     }
 
     private static List<Map<String, Object>> readAll(Path parquetFile, ParquetSchema schema) {

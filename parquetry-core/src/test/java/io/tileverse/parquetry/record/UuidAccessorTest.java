@@ -18,7 +18,6 @@ package io.tileverse.parquetry.record;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.BitSet;
 import java.util.LinkedHashMap;
@@ -151,7 +150,7 @@ class UuidAccessorTest {
     private static DefaultParquetRecordBatch batchOf(ParquetSchema schema, ColumnVector vector) {
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ID_COL, vector);
-        return new DefaultParquetRecordBatch(schema, columns, 1, Arena.ofConfined());
+        return new DefaultParquetRecordBatch(schema, columns, 1);
     }
 
     private static ParquetSchema singleColumnSchema(PrimitiveKind kind, OptionalInt typeLength) {

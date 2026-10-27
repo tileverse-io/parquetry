@@ -17,7 +17,6 @@ package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.charset.StandardCharsets;
@@ -83,7 +82,7 @@ class DeepNestingAssemblyTest {
         ColumnVector outer = assembled.get(ColumnPath.of("a"));
         assertThat(outer).as("outer column wraps to a ListVector").isInstanceOf(ListVector.class);
 
-        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 1, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 1)) {
             ParquetRecord row = batch.materialize(0);
             Object cell = row.get(ColumnPath.of("a"));
             assertThat(cell).as("row 0 reconstructs as a List").isInstanceOf(List.class);
@@ -144,7 +143,7 @@ class DeepNestingAssemblyTest {
                 .as("outer column wraps to a MapVector")
                 .isInstanceOf(MapVector.class);
 
-        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 4, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 4)) {
             Map<?, ?> row0 = (Map<?, ?>) batch.materialize(0).get(ColumnPath.of("a"));
             Map<?, ?> inner0 = (Map<?, ?>) onlyValue(row0);
             assertThat(asString(onlyKey(row0))).as("row 0 outer key").isEqualTo("a");
@@ -239,7 +238,7 @@ class DeepNestingAssemblyTest {
                 .as("row 1 tags has one element")
                 .isEqualTo(1);
 
-        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 2, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 2)) {
             ParquetRecord nested = batch.materialize(0).readStruct(ColumnPath.of("rec"));
             assertThat(nested.get(ColumnPath.of("name"))).as("row 0 name").isEqualTo(1);
             assertThat(nested.get(ColumnPath.of("tags"))).as("row 0 tags list").isEqualTo(List.of(10, 20));

@@ -17,7 +17,6 @@ package io.tileverse.parquetry.arrow.ipc;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.BitSet;
 import java.util.LinkedHashMap;
@@ -55,7 +54,7 @@ class ArrowBatchEncoderTest {
         Validity validity = Validity.of(validBits, 3);
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of("id"), IntVector.materialized(new int[] {1, 2, 3}, validity));
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 3, Arena.ofShared());
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 3);
 
         ArrowBatchEncoder.Encoded encoded = ArrowBatchEncoder.encode(batch);
 
@@ -87,7 +86,7 @@ class ArrowBatchEncoderTest {
         Validity validity = Validity.of(validBits, 3);
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of("id"), IntVector.materialized(new int[] {10, 0, 30}, validity));
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 3, Arena.ofShared());
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 3);
 
         ArrowBatchEncoder.Encoded encoded = ArrowBatchEncoder.encode(batch);
 

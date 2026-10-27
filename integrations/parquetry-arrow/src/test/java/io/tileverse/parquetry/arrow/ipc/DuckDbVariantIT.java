@@ -19,7 +19,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.sql.DriverManager;
@@ -108,7 +107,7 @@ class DuckDbVariantIT {
         VariantVector variant = new VariantVector(metadataColumn, valueColumn, Validity.allValid(1), 1);
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of("v"), variant);
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1, Arena.ofShared());
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ArrowIpcWriter.write(schema, Optional.empty(), Stream.of(batch), out);
         return out.toByteArray();

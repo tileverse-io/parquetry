@@ -18,7 +18,6 @@ package io.tileverse.parquetry.arrow.columnar;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.util.BitSet;
@@ -156,7 +155,7 @@ class BatchArrowLayoutTest {
         columns.put(ColumnPath.of("id"), idVector());
         columns.put(ColumnPath.of("name"), nameVector());
         columns.put(ColumnPath.of("scores"), scoresVector());
-        return new DefaultParquetRecordBatch(schema, columns, 3, Arena.ofConfined());
+        return new DefaultParquetRecordBatch(schema, columns, 3);
     }
 
     private static IntVector idVector() {
@@ -216,7 +215,7 @@ class BatchArrowLayoutTest {
     private static ParquetRecordBatch structBatch(ParquetSchema schema) {
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of("person"), personVector());
-        return new DefaultParquetRecordBatch(schema, columns, 3, Arena.ofConfined());
+        return new DefaultParquetRecordBatch(schema, columns, 3);
     }
 
     /** A {@code person} struct with an int32 {@code age} (row 1 null) and a UTF-8 {@code name}. */
@@ -256,7 +255,7 @@ class BatchArrowLayoutTest {
     private static ParquetRecordBatch mapBatch(ParquetSchema schema) {
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of("tags"), tagsVector());
-        return new DefaultParquetRecordBatch(schema, columns, 3, Arena.ofConfined());
+        return new DefaultParquetRecordBatch(schema, columns, 3);
     }
 
     /** Rows: {1 -> "x", 2 -> "yy"}, {}, {3 -> "zzz"}. Flattened keys/values hold the three entries. */

@@ -17,7 +17,6 @@ package io.tileverse.parquetry.record;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -72,7 +71,7 @@ class NestedColumnPathAccessTest {
         IntVector idVec = IntVector.materialized(new int[] {id}, Validity.allValid(1));
         DoubleVector xminVec = DoubleVector.materialized(new double[] {xmin}, Validity.allValid(1));
         StructVector bbox = new StructVector(Map.of(ColumnPath.of("xmin"), xminVec), Validity.allValid(1), 1);
-        return new DefaultParquetRecordBatch(bboxSchema(), Map.of(TOP, idVec, STRUCT, bbox), 1, Arena.ofConfined());
+        return new DefaultParquetRecordBatch(bboxSchema(), Map.of(TOP, idVec, STRUCT, bbox), 1);
     }
 
     private static ParquetSchema bboxSchema() {

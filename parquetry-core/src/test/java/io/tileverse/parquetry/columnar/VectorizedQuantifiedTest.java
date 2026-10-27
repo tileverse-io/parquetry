@@ -17,7 +17,6 @@ package io.tileverse.parquetry.columnar;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -140,8 +139,7 @@ class VectorizedQuantifiedTest {
         StructVector element = new StructVector(
                 Map.of(ColumnPath.of("locality"), localityVec), Validity.allValid(totalElements), totalElements);
         ListVector addresses = new ListVector(offsets, element, Validity.allValid(rowCount), rowCount);
-        return new DefaultParquetRecordBatch(
-                addressesSchema(), Map.of(ADDRESSES, addresses), rowCount, Arena.ofConfined());
+        return new DefaultParquetRecordBatch(addressesSchema(), Map.of(ADDRESSES, addresses), rowCount);
     }
 
     private static LocalDateTime[] stamps(LocalDateTime... values) {
@@ -164,7 +162,7 @@ class VectorizedQuantifiedTest {
         MemorySegment[] values = cells.toArray(MemorySegment[]::new);
         Int96Vector elements = Int96Vector.materialized(values, Validity.allValid(values.length));
         ListVector stamps = new ListVector(offsets, elements, Validity.allValid(rowCount), rowCount);
-        return new DefaultParquetRecordBatch(stampsSchema(), Map.of(STAMPS, stamps), rowCount, Arena.ofConfined());
+        return new DefaultParquetRecordBatch(stampsSchema(), Map.of(STAMPS, stamps), rowCount);
     }
 
     /** An INT96 cell: eight little-endian bytes of nanoseconds within the day, then four of the Julian day. */

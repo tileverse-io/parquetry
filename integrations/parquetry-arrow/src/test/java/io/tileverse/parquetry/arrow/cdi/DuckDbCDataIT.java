@@ -17,7 +17,6 @@ package io.tileverse.parquetry.arrow.cdi;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
@@ -102,7 +101,7 @@ class DuckDbCDataIT {
     private static ParquetRecordBatch flatBatch(ParquetSchema schema, long id0, long id1) {
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of("id"), LongVector.materialized(new long[] {id0, id1}, Validity.allValid(2)));
-        return new DefaultParquetRecordBatch(schema, columns, 2, Arena.ofShared());
+        return new DefaultParquetRecordBatch(schema, columns, 2);
     }
 
     private static ParquetSchema structSchema() {
@@ -120,6 +119,6 @@ class DuckDbCDataIT {
         StructVector person = new StructVector(fields, Validity.allValid(2), 2);
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of("person"), person);
-        return new DefaultParquetRecordBatch(schema, columns, 2, Arena.ofShared());
+        return new DefaultParquetRecordBatch(schema, columns, 2);
     }
 }

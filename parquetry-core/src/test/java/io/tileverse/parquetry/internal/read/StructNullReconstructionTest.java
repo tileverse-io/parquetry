@@ -17,7 +17,6 @@ package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.util.BitSet;
 import java.util.List;
 import java.util.Map;
@@ -92,7 +91,7 @@ class StructNullReconstructionTest {
                 .as("row 2 struct is present, validity bit must be set")
                 .isTrue();
 
-        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 3, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, assembled, 3)) {
             ParquetRecord nullStructRow = batch.materialize(0);
             assertThat(nullStructRow.get(INFO))
                     .as("row 0 struct column reads as null")

@@ -20,7 +20,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.util.BitSet;
@@ -71,7 +70,7 @@ class ArrowIpcWriterTest {
         Validity validity = Validity.of(validBits, 3);
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of("id"), LongVector.materialized(new long[] {7, 8, 9}, validity));
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 3, Arena.ofShared());
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 3);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ArrowIpcWriter.write(schema, Optional.empty(), Stream.of(batch), out);
@@ -126,7 +125,7 @@ class ArrowIpcWriterTest {
         columns.put(
                 ColumnPath.of("name"),
                 BinaryVector.materialized(utf8Segments("alpha", "beta", "gamma"), Validity.allValid(3)));
-        ParquetRecordBatch source = new DefaultParquetRecordBatch(schema, columns, 3, Arena.ofShared());
+        ParquetRecordBatch source = new DefaultParquetRecordBatch(schema, columns, 3);
         BitSet keep = new BitSet();
         keep.set(0);
         keep.set(2);
@@ -158,10 +157,10 @@ class ArrowIpcWriterTest {
         ParquetSchema schema = schema(id);
         Map<ColumnPath, ColumnVector> noRows = new LinkedHashMap<>();
         noRows.put(ColumnPath.of("id"), LongVector.materialized(new long[0], Validity.allValid(0)));
-        ParquetRecordBatch empty = new DefaultParquetRecordBatch(schema, noRows, 0, Arena.ofShared());
+        ParquetRecordBatch empty = new DefaultParquetRecordBatch(schema, noRows, 0);
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of("id"), LongVector.materialized(new long[] {7, 8, 9}, Validity.allValid(3)));
-        ParquetRecordBatch data = new DefaultParquetRecordBatch(schema, columns, 3, Arena.ofShared());
+        ParquetRecordBatch data = new DefaultParquetRecordBatch(schema, columns, 3);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ArrowIpcWriter.write(schema, Optional.empty(), Stream.of(empty, data), out);

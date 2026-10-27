@@ -79,7 +79,7 @@ class BatchRecordMaterializationTest {
         cols.put(DOUBLE_COL, DoubleVector.materialized(new double[] {3.5, 4.5}, validity));
         cols.put(BOOL_COL, BooleanVector.materialized(new boolean[] {true, false}, validity));
 
-        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(primitiveSchema(), cols, 2, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(primitiveSchema(), cols, 2)) {
             ParquetRecord row0 = batch.materialize(0);
             ParquetRecord row1 = batch.materialize(1);
 
@@ -100,8 +100,7 @@ class BatchRecordMaterializationTest {
         Validity validity = Validity.of(validBits, 2);
         IntVector vec = IntVector.materialized(new int[] {42, 0}, validity);
 
-        try (ParquetRecordBatch batch =
-                new DefaultParquetRecordBatch(primitiveSchema(), Map.of(INT_COL, vec), 2, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(primitiveSchema(), Map.of(INT_COL, vec), 2)) {
             ParquetRecord row0 = batch.materialize(0);
             ParquetRecord row1 = batch.materialize(1);
 
@@ -121,8 +120,7 @@ class BatchRecordMaterializationTest {
         MemorySegment.copy(MemorySegment.ofArray(payload), 0L, source, 0L, payload.length);
         BinaryVector vec = BinaryVector.materialized(new MemorySegment[] {source}, allValid(1));
 
-        try (ParquetRecordBatch batch =
-                new DefaultParquetRecordBatch(binarySchema(), Map.of(BINARY_COL, vec), 1, arena)) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(binarySchema(), Map.of(BINARY_COL, vec), 1)) {
             ParquetRecord row = batch.materialize(0);
 
             byte[] copy = row.getBinary(BINARY_COL);
@@ -135,6 +133,7 @@ class BatchRecordMaterializationTest {
                     .as("source MemorySegment is untouched by caller mutation")
                     .isEqualTo((byte) 'h');
         }
+        arena.close();
     }
 
     @Test
@@ -145,11 +144,11 @@ class BatchRecordMaterializationTest {
         MemorySegment.copy(MemorySegment.ofArray(payload), 0L, source, 0L, payload.length);
         BinaryVector vec = BinaryVector.materialized(new MemorySegment[] {source}, allValid(1));
 
-        try (ParquetRecordBatch batch =
-                new DefaultParquetRecordBatch(binarySchema(), Map.of(BINARY_COL, vec), 1, arena)) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(binarySchema(), Map.of(BINARY_COL, vec), 1)) {
             ParquetRecord row = batch.materialize(0);
             assertThat(row.getString(BINARY_COL)).isEqualTo("café");
         }
+        arena.close();
     }
 
     @Test
@@ -159,8 +158,7 @@ class BatchRecordMaterializationTest {
         IntVector child = IntVector.materialized(new int[] {10, 20, 30}, childValidity);
         ListVector listVec = new ListVector(new int[] {0, 2, 3}, child, listValidity, 2);
 
-        try (ParquetRecordBatch batch =
-                new DefaultParquetRecordBatch(listSchema(), Map.of(LIST_COL, listVec), 2, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(listSchema(), Map.of(LIST_COL, listVec), 2)) {
             ParquetRecord row0 = batch.materialize(0);
             ParquetRecord row1 = batch.materialize(1);
 
@@ -178,8 +176,7 @@ class BatchRecordMaterializationTest {
         IntVector values = IntVector.materialized(new int[] {10, 20}, valueValidity);
         MapVector mapVec = new MapVector(new int[] {0, 2}, keys, values, mapValidity, 1);
 
-        try (ParquetRecordBatch batch =
-                new DefaultParquetRecordBatch(mapSchema(), Map.of(MAP_COL, mapVec), 1, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(mapSchema(), Map.of(MAP_COL, mapVec), 1)) {
             ParquetRecord row = batch.materialize(0);
 
             Object cell = row.get(MAP_COL);
@@ -200,7 +197,7 @@ class BatchRecordMaterializationTest {
         StructVector structVec = new StructVector(Map.of(STRUCT_CHILD, childInt), structValidity, 1);
 
         try (ParquetRecordBatch batch =
-                new DefaultParquetRecordBatch(structSchema(), Map.of(STRUCT_COL, structVec), 1, Arena.ofConfined())) {
+                new DefaultParquetRecordBatch(structSchema(), Map.of(STRUCT_COL, structVec), 1)) {
             ParquetRecord row = batch.materialize(0);
 
             ParquetRecord sub = row.readStruct(STRUCT_COL);
@@ -218,7 +215,7 @@ class BatchRecordMaterializationTest {
         StructVector structVec = new StructVector(Map.of(STRUCT_CHILD, childInt), structValidity, 1);
 
         try (ParquetRecordBatch batch =
-                new DefaultParquetRecordBatch(structSchema(), Map.of(STRUCT_COL, structVec), 1, Arena.ofConfined())) {
+                new DefaultParquetRecordBatch(structSchema(), Map.of(STRUCT_COL, structVec), 1)) {
             ParquetRecord row = batch.materialize(0);
 
             assertThat(row.readStruct(STRUCT_COL)).isNull();
@@ -231,8 +228,7 @@ class BatchRecordMaterializationTest {
     void typedAccessorRejectsKindMismatch() {
         IntVector vec = IntVector.materialized(new int[] {1}, allValid(1));
 
-        try (ParquetRecordBatch batch =
-                new DefaultParquetRecordBatch(primitiveSchema(), Map.of(INT_COL, vec), 1, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(primitiveSchema(), Map.of(INT_COL, vec), 1)) {
             ParquetRecord row = batch.materialize(0);
 
             assertThatThrownBy(() -> row.getLong(INT_COL))
@@ -245,8 +241,7 @@ class BatchRecordMaterializationTest {
     void rowIndexOutOfBoundsRejected() {
         IntVector vec = IntVector.materialized(new int[] {1}, allValid(1));
 
-        try (ParquetRecordBatch batch =
-                new DefaultParquetRecordBatch(primitiveSchema(), Map.of(INT_COL, vec), 1, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(primitiveSchema(), Map.of(INT_COL, vec), 1)) {
             assertThatThrownBy(() -> batch.materialize(-1)).isInstanceOf(IndexOutOfBoundsException.class);
             assertThatThrownBy(() -> batch.materialize(1)).isInstanceOf(IndexOutOfBoundsException.class);
         }
@@ -257,8 +252,7 @@ class BatchRecordMaterializationTest {
         IntVector vec = IntVector.materialized(new int[] {1}, allValid(1));
         ColumnPath unprojected = ColumnPath.of("col_long");
 
-        try (ParquetRecordBatch batch =
-                new DefaultParquetRecordBatch(primitiveSchema(), Map.of(INT_COL, vec), 1, Arena.ofConfined())) {
+        try (ParquetRecordBatch batch = new DefaultParquetRecordBatch(primitiveSchema(), Map.of(INT_COL, vec), 1)) {
             ParquetRecord row = batch.materialize(0);
 
             assertThat(row.get(unprojected)).isNull();

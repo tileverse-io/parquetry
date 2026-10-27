@@ -17,7 +17,6 @@ package io.tileverse.parquetry.columnar;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.util.BitSet;
 import java.util.List;
 import java.util.Map;
@@ -72,7 +71,7 @@ class RowIndexExcludedEvaluatorTest {
         Validity validity = Validity.of(allValid, rows);
         LongVector positions = LongVector.rowPositions(0L, Selection.ALL, rows);
         Map<ColumnPath, ColumnVector> columns = Map.of(ID, IntVector.materialized(ids, validity), POS, positions);
-        return new DefaultParquetRecordBatch(schema(), columns, rows, Arena.ofConfined());
+        return new DefaultParquetRecordBatch(schema(), columns, rows);
     }
 
     private static ParquetSchema schema() {

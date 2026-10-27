@@ -17,11 +17,11 @@ package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
@@ -36,10 +36,10 @@ import io.tileverse.parquetry.schema.SchemaNode;
 class BatchCrossThreadCloseTest {
 
     @Test
-    void sharedArenaBatchClosesOnAnotherThread() throws Exception {
-        ParquetSchema schema = minimalSchema();
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, Map.of(), 0, Arena.ofShared());
-
+    void batchClosesOnAnotherThread() throws Exception {
+        ParquetRecordBatch batch = new DefaultParquetRecordBatch(minimalSchema(), Map.of(), 0);
+        AtomicBoolean bufferClosed = new AtomicBoolean();
+        batch.registerBuffer(() -> bufferClosed.set(true));
         AtomicReference<Throwable> failure = new AtomicReference<>();
         Thread closer = new Thread(() -> {
             try {
@@ -50,31 +50,10 @@ class BatchCrossThreadCloseTest {
         });
         closer.start();
         closer.join();
-
         assertThat(failure.get())
-                .as("a shared-arena batch must be closable on a thread other than the one that built it")
+                .as("a batch decoded on a worker is closed by the consumer")
                 .isNull();
-    }
-
-    @Test
-    void confinedArenaBatchWouldFailAcrossThreads() throws Exception {
-        ParquetSchema schema = minimalSchema();
-        ParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, Map.of(), 0, Arena.ofConfined());
-
-        AtomicReference<Throwable> failure = new AtomicReference<>();
-        Thread closer = new Thread(() -> {
-            try {
-                batch.close();
-            } catch (Throwable t) {
-                failure.set(t);
-            }
-        });
-        closer.start();
-        closer.join();
-
-        assertThat(failure.get())
-                .as("documents why nextBatch must not use a confined arena once decode runs off the consumer thread")
-                .isInstanceOf(WrongThreadException.class);
+        assertThat(bufferClosed.get()).isTrue();
     }
 
     private static ParquetSchema minimalSchema() {

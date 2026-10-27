@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.columnar;
 
-import java.lang.foreign.Arena;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -34,27 +33,26 @@ public final class DefaultParquetRecordBatch implements ParquetRecordBatch {
     private final Map<ColumnPath, ColumnVector> columns;
     private final RowColumns rowColumns;
     private final int rowCount;
-    private final Arena arena;
     private final List<AutoCloseable> ownedBuffers = new ArrayList<>();
     private boolean closed;
     private Runnable releaseAction;
 
     /**
      * Builds a heap-backed batch around vectors that own their bytes outright. Used when a batch is rebuilt from a
-     * detached representation rather than decoded from a row group: the vectors already hold heap-owned values, and the
-     * batch only needs a token Arena to satisfy the close contract. Vectors remain accessible after {@link #close()}.
+     * detached representation rather than decoded from a row group: the vectors already hold heap-owned values and the
+     * batch owns no buffers. Vectors remain accessible after {@link #close()}.
      */
     public static DefaultParquetRecordBatch ofHeap(
             @NonNull ParquetSchema projectedSchema, @NonNull Map<ColumnPath, ColumnVector> columns, int rowCount) {
-        return new DefaultParquetRecordBatch(projectedSchema, columns, rowCount, Arena.ofShared());
+        return new DefaultParquetRecordBatch(projectedSchema, columns, rowCount);
     }
 
+    /**
+     * A batch over {@code columns}. The batch owns nothing until buffers are registered on it; closing it closes those
+     * buffers in reverse order and then runs the attached release action.
+     */
     public DefaultParquetRecordBatch(
-            @NonNull ParquetSchema projectedSchema,
-            @NonNull Map<ColumnPath, ColumnVector> columns,
-            int rowCount,
-            @NonNull Arena arena) {
-
+            @NonNull ParquetSchema projectedSchema, @NonNull Map<ColumnPath, ColumnVector> columns, int rowCount) {
         if (rowCount < 0) {
             throw new IllegalArgumentException("rowCount must be >= 0, got " + rowCount);
         }
@@ -63,7 +61,6 @@ public final class DefaultParquetRecordBatch implements ParquetRecordBatch {
         this.columns = Map.copyOf(columns);
         this.rowColumns = RowColumns.of(projectedSchema, projectedSchema.root(), this.columns);
         this.rowCount = rowCount;
-        this.arena = arena;
     }
 
     @Override
@@ -120,7 +117,6 @@ public final class DefaultParquetRecordBatch implements ParquetRecordBatch {
         }
         closed = true;
         closeOwnedBuffers();
-        arena.close();
         if (releaseAction != null) {
             releaseAction.run();
         }

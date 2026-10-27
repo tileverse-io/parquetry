@@ -17,7 +17,6 @@ package io.tileverse.parquetry.arrow.cdi;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.LinkedHashMap;
@@ -96,6 +95,6 @@ class FilteredStreamExportIT {
     private static ParquetRecordBatch idBatch(ParquetSchema schema, long[] values) {
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ID, LongVector.materialized(values, Validity.allValid(values.length)));
-        return new DefaultParquetRecordBatch(schema, columns, values.length, Arena.ofShared());
+        return new DefaultParquetRecordBatch(schema, columns, values.length);
     }
 }

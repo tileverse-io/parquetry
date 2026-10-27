@@ -17,7 +17,6 @@ package io.tileverse.parquetry.arrow.cdi;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -105,6 +104,6 @@ class CDataColumnOrderIT {
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(N, LongVector.materialized(nValues, Validity.allValid(nValues.length)));
         columns.put(A, LongVector.materialized(aValues, Validity.allValid(aValues.length)));
-        return new DefaultParquetRecordBatch(schema, columns, nValues.length, Arena.ofShared());
+        return new DefaultParquetRecordBatch(schema, columns, nValues.length);
     }
 }

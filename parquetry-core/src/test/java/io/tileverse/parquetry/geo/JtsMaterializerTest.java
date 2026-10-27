@@ -18,7 +18,6 @@ package io.tileverse.parquetry.geo;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.HashMap;
 import java.util.List;
@@ -207,7 +206,7 @@ class JtsMaterializerTest {
     private static ParquetRecord rowOf(ParquetSchema schema, Map<ColumnPath, Object> values) {
         Map<ColumnPath, ColumnVector> columns = new HashMap<>();
         values.forEach((path, value) -> columns.put(path, vectorOf(value)));
-        DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1, Arena.ofConfined());
+        DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1);
         return batch.materialize(0);
     }
 

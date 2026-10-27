@@ -98,7 +98,7 @@ class ArrowArrayStreamIT {
         Map<ColumnPath, ColumnVector> columns = new LinkedHashMap<>();
         columns.put(ColumnPath.of("id"), LongVector.materialized(new long[] {id0, id1}, Validity.allValid(2)));
         columns.put(ColumnPath.of("name"), utf8(name0, name1));
-        return new DefaultParquetRecordBatch(schema, columns, 2, Arena.ofShared());
+        return new DefaultParquetRecordBatch(schema, columns, 2);
     }
 
     private static BinaryVector utf8(String... values) {

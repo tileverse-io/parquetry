@@ -29,7 +29,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.StringWriter;
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.Base64;
 import java.util.BitSet;
@@ -103,7 +102,7 @@ class JsonRecordEncoderTest {
                         BinaryVector.materialized(new MemorySegment[] {MemorySegment.ofArray(rawBlob)}, present),
                 ColumnPath.of("absent"), BinaryVector.materialized(new MemorySegment[] {utf8("")}, missing));
 
-        try (DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1, Arena.ofConfined())) {
+        try (DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1)) {
             JsonNode node = encode(schema, batch.materialize(0));
             assertThat(node.get("flag").booleanValue()).isTrue();
             assertThat(node.get("count").intValue()).isEqualTo(7);
@@ -125,7 +124,7 @@ class JsonRecordEncoderTest {
                 ColumnPath.of("id"),
                 BinaryVector.materialized(new MemorySegment[] {UuidConverter.toReadOnlySegment(uuid)}, present));
 
-        try (DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1, Arena.ofConfined())) {
+        try (DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1)) {
             JsonNode node = encode(schema, batch.materialize(0));
             assertThat(node.get("id").stringValue()).isEqualTo(uuid.toString());
         }
@@ -148,7 +147,7 @@ class JsonRecordEncoderTest {
         Map<ColumnPath, ColumnVector> columns = Map.of(
                 ColumnPath.of("id"), IntVector.materialized(new int[] {1}, present), ColumnPath.of("addr"), addrVector);
 
-        try (DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1, Arena.ofConfined())) {
+        try (DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1)) {
             JsonNode node = encode(schema, batch.materialize(0));
             assertThat(node.get("id").intValue()).isEqualTo(1);
             assertThat(node.get("addr").get("zip").intValue()).isEqualTo(2000);
@@ -171,7 +170,7 @@ class JsonRecordEncoderTest {
         ListVector listVector = new ListVector(new int[] {0, 3}, elements, rowValid, 1);
         Map<ColumnPath, ColumnVector> columns = Map.of(ColumnPath.of("nums"), listVector);
 
-        try (DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1, Arena.ofConfined())) {
+        try (DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1)) {
             JsonNode node = encode(schema, batch.materialize(0));
             JsonNode array = node.get("nums");
             assertThat(array.isArray()).isTrue();
@@ -206,7 +205,7 @@ class JsonRecordEncoderTest {
         Map<ColumnPath, ColumnVector> columns =
                 Map.of(ColumnPath.of("labels"), labels, ColumnPath.of("scores"), scores);
 
-        try (DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1, Arena.ofConfined())) {
+        try (DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1)) {
             JsonNode node = encode(schema, batch.materialize(0));
             assertThat(node.get("labels").get("a").intValue()).isEqualTo(1);
             assertThat(node.get("labels").get("b").intValue()).isEqualTo(2);
@@ -238,7 +237,7 @@ class JsonRecordEncoderTest {
                 1);
         Map<ColumnPath, ColumnVector> columns = Map.of(ColumnPath.of("v"), variantVector);
 
-        try (DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1, Arena.ofConfined())) {
+        try (DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1)) {
             JsonNode node = encode(schema, batch.materialize(0));
             assertThat(node.get("v").get("n").intValue()).isEqualTo(42);
             assertThat(node.get("v").get("label").stringValue()).isEqualTo("hi");
@@ -266,7 +265,7 @@ class JsonRecordEncoderTest {
         JsonFactory permissiveFactory =
                 JsonFactory.builder().streamWriteConstraints(permissive).build();
 
-        try (DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1, Arena.ofConfined())) {
+        try (DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(schema, columns, 1)) {
             ParquetRecord row = batch.materialize(0);
             assertThatThrownBy(() -> encode(permissiveFactory, schema, row))
                     .isInstanceOf(ParquetFormatException.class)

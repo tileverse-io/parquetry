@@ -19,7 +19,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -152,7 +151,7 @@ class CatalogFeatureSourceBoundsTest {
         Validity validity = Validity.of(allValid, points.length);
         Map<ColumnPath, ColumnVector> columns =
                 Map.of(ColumnPath.of(GEOMETRY), BinaryVector.materialized(wkb, validity));
-        return new DefaultParquetRecordBatch(schema, columns, points.length, Arena.ofShared());
+        return new DefaultParquetRecordBatch(schema, columns, points.length);
     }
 
     private static byte[] wkbPoint(double x, double y) {

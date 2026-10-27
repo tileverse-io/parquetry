@@ -18,7 +18,6 @@ package io.tileverse.parquetry.internal.read;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.lang.foreign.Arena;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -111,9 +110,8 @@ class BatchHandoffTest {
     @Timeout(value = 5, unit = TimeUnit.SECONDS)
     void closeClosesUndeliveredBatches() throws InterruptedException {
         BatchHandoff handoff = new BatchHandoff(2);
-        Arena arena = Arena.ofShared();
         AtomicInteger releases = new AtomicInteger();
-        ParquetRecordBatch undelivered = batch(arena);
+        ParquetRecordBatch undelivered = batch();
         undelivered.attachReleaseAction(releases::incrementAndGet);
         handoff.put(new HandoffItem.InHeap(undelivered));
         handoff.complete();
@@ -121,7 +119,6 @@ class BatchHandoffTest {
         handoff.close();
 
         assertThat(releases.get()).as("undelivered batch is closed by close()").isEqualTo(1);
-        assertThatThrownBy(() -> arena.allocate(8)).isInstanceOf(IllegalStateException.class);
     }
 
     @Test
@@ -130,9 +127,8 @@ class BatchHandoffTest {
         BatchHandoff handoff = new BatchHandoff(1);
         handoff.put(new HandoffItem.InHeap(batch())); // fill the single slot
 
-        Arena arena = Arena.ofShared();
         AtomicInteger releases = new AtomicInteger();
-        ParquetRecordBatch held = batch(arena);
+        ParquetRecordBatch held = batch();
         held.attachReleaseAction(releases::incrementAndGet);
 
         CountDownLatch putReturned = new CountDownLatch(1);
@@ -232,11 +228,7 @@ class BatchHandoffTest {
     }
 
     private static ParquetRecordBatch batch() {
-        return batch(Arena.ofShared());
-    }
-
-    private static ParquetRecordBatch batch(Arena arena) {
-        return new DefaultParquetRecordBatch(schema(), Map.of(), 0, arena);
+        return new DefaultParquetRecordBatch(schema(), Map.of(), 0);
     }
 
     private static ParquetSchema schema() {
