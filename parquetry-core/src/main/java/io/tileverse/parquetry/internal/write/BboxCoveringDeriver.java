@@ -75,14 +75,13 @@ public final class BboxCoveringDeriver {
             }
             hasGeometry.set(row);
             Bbox envelope = WkbEnvelope.compute(wkb);
-            if (isEmptyEnvelope(envelope)) {
-                continue;
+            if (!isEmptyEnvelope(envelope)) {
+                present.set(row);
+                xmin[row] = envelope.minX();
+                xmax[row] = envelope.maxX();
+                ymin[row] = envelope.minY();
+                ymax[row] = envelope.maxY();
             }
-            present.set(row);
-            xmin[row] = envelope.minX();
-            xmax[row] = envelope.maxX();
-            ymin[row] = envelope.minY();
-            ymax[row] = envelope.maxY();
         }
         Validity validity = Validity.of(present, rowCount);
         Map<ColumnPath, ColumnVector> children = new LinkedHashMap<>();
