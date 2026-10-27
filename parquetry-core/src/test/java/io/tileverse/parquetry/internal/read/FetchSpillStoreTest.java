@@ -37,7 +37,7 @@ class FetchSpillStoreTest {
         FetchSpillStore store = new FetchSpillStore(dir, budget);
         long before = budget.available();
 
-        SegmentPool.Pooled mapped = store.map(4096);
+        SegmentPool.Pooled mapped = store.tryMap(4096).orElseThrow();
         MemorySegment segment = mapped.segment();
         assertThat(segment.byteSize()).isEqualTo(4096);
         segment.set(ValueLayout.JAVA_LONG, 0, 0x0102030405060708L);
@@ -54,7 +54,7 @@ class FetchSpillStoreTest {
         DiskBudget budget = DiskBudget.ofBytes(1 << 20);
         FetchSpillStore store = new FetchSpillStore(dir, budget);
         long before = budget.available();
-        SegmentPool.Pooled mapped = store.map(64);
+        SegmentPool.Pooled mapped = store.tryMap(64).orElseThrow();
         mapped.close();
         mapped.close();
         assertThat(budget.available()).as("disk released exactly once").isEqualTo(before);
@@ -83,5 +83,11 @@ class FetchSpillStoreTest {
         Path live = Files.createDirectories(dir.resolve("parquetry-fetch-spill-" + pid));
         FetchSpillStore.sweepOrphans(dir);
         assertThat(Files.exists(live)).isTrue();
+    }
+
+    @Test
+    void tryMapIsEmptyWithoutDiskRoom(@TempDir Path dir) {
+        FetchSpillStore store = new FetchSpillStore(dir, DiskBudget.ofBytes(1));
+        assertThat(store.tryMap(4096)).isEmpty();
     }
 }

@@ -48,6 +48,10 @@ import lombok.NonNull;
  * <p>Every row group honors the budget: a speculative batch that does not fit spills to disk rather than exempting the
  * row group, which keeps the read live even under a budget too small for a single batch. The consumer holds at most one
  * batch at a time, restoring a spilled one when it reaches it.
+ *
+ * <p>Decode-ahead is speculation on the fetch budget too: a row group is taken ahead only when its fetch was prefetched
+ * or can be reserved now, and the coordinator stops submitting ahead when it cannot. Only the consumer's current row
+ * group is fetched through the waiting, mandatory path, at a point where the read holds no other fetch buffer.
  */
 public final class ParallelDecodeCoordinator implements AutoCloseable {
 
@@ -159,6 +163,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
             if (speculativelyDecoded != null) {
                 speculativelyDecoded.close();
             }
+            prefetcher.discard(nextToConsume);
             nextToConsume++;
             nextToSubmit = Math.max(nextToSubmit, nextToConsume);
         }
@@ -179,14 +184,20 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
                 return;
             }
             int index = nextToSubmit;
-            RowGroupFetch fetch;
+            Optional<RowGroupFetch> fetch;
             try {
-                fetch = prefetcher.take(index);
+                fetch = prefetcher.tryTake(index);
             } catch (IOException | RuntimeException e) {
                 decodeExecutor.release();
                 throw e;
             }
-            window.put(index, submitSpeculative(fetch, index));
+            if (fetch.isEmpty()) {
+                // The fetch budget has no room for this row group now. Fetching it through the waiting path here would
+                // hold the row groups already in the window while waiting; the consumer fetches it when it gets there.
+                decodeExecutor.release();
+                return;
+            }
+            window.put(index, submitSpeculative(fetch.orElseThrow(), index));
             nextToSubmit++;
         }
     }

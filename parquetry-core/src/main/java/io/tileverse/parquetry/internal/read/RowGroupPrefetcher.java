@@ -20,6 +20,7 @@ import java.io.UncheckedIOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -41,9 +42,14 @@ import lombok.NonNull;
  * consumer thread. A row group dropped by its plan is never fetched: the window records it as submitted and moves on.
  * Every other row group fetches under the plan's fetch mask, which skips the pages outside the planned rows.
  *
- * <p>The current row group's fetch is mandatory and never waits on the budget; speculative prefetches do. The per-read
- * concurrency permit is released when a fetch task completes (buffer filled); the budget bytes are released when the
- * resulting {@link RowGroupFetch} is closed (after decode).
+ * <p>Speculation is in order and never waits: the window stops at the first row group whose span the budget cannot
+ * reserve now, and {@link #tryTake} hands a row group out only when it was prefetched or can be reserved now. The
+ * in-order {@link #take} is the one path that may wait. It reserves the span of the current row group when the budget
+ * has room now, submits the window ahead, then reads. When the budget has no room it fetches through the mandatory
+ * allocator and queues there for budget room; the window ahead is submitted once the row group has its buffer. A
+ * waiting read therefore holds no reservation of its own. The per-read concurrency permit is released when a fetch task
+ * completes (buffer filled); the budget bytes are released when the resulting {@link RowGroupFetch} is closed (after
+ * decode), or when the coordinator {@link #discard discards} a prefetched row group skipped by the consumer.
  */
 public final class RowGroupPrefetcher implements AutoCloseable {
 
@@ -105,16 +111,55 @@ public final class RowGroupPrefetcher implements AutoCloseable {
         return survivors.size();
     }
 
-    /** Returns row group {@code index}, using a completed prefetch if available, otherwise fetching it inline. */
+    /**
+     * Returns row group {@code index}: a completed prefetch when there is one, otherwise a fetch of its own. That fetch
+     * reserves its span when the budget has room now, and otherwise waits for room through the mandatory allocator
+     * while the read holds no reservation. The window ahead is submitted while the row group is still in the window, or
+     * once it has its reservation or its buffer; a failure while submitting ahead leaves nothing behind.
+     */
     public RowGroupFetch take(int index) throws IOException {
-        submitWindowAhead(index);
-        Future<RowGroupFetch> prefetched = window.remove(index);
+        Future<RowGroupFetch> prefetched = window.get(index);
         if (prefetched != null) {
-            return join(prefetched);
+            return takePrefetched(index, prefetched);
         }
-        return fetchInline(index);
+        RowGroupSurvivor survivor = survivors.get(index);
+        FetchPlan plan = fetcher.planFor(survivor, plans.fetchMask(index));
+        Optional<RowGroupFetch> reserved = fetchIfRoom(index, survivor, plan);
+        if (reserved.isPresent()) {
+            return reserved.orElseThrow();
+        }
+        return fetchAfterWait(index, survivor, plan);
     }
 
+    /**
+     * Returns row group {@code index} without waiting: a completed prefetch when there is one, a fetch reserved up
+     * front when the budget has room for its span now, and nothing otherwise. Nothing is fetched or reserved on the
+     * empty result; the row group is fetched through {@link #take} when the consumer reaches it.
+     */
+    public Optional<RowGroupFetch> tryTake(int index) throws IOException {
+        Future<RowGroupFetch> prefetched = window.get(index);
+        if (prefetched != null) {
+            return Optional.of(takePrefetched(index, prefetched));
+        }
+        RowGroupSurvivor survivor = survivors.get(index);
+        FetchPlan plan = fetcher.planFor(survivor, plans.fetchMask(index));
+        return fetchIfRoom(index, survivor, plan);
+    }
+
+    /**
+     * Drops the prefetch of row group {@code index}, if any: waits for its fetch to finish and closes the result,
+     * returning its buffer and its budget reservation. Called when the consumer skips a row group without taking it.
+     */
+    public void discard(int index) {
+        Future<RowGroupFetch> prefetched = window.remove(index);
+        if (prefetched != null) {
+            drainAndClose(prefetched);
+        }
+    }
+
+    /**
+     * Submits the row groups after {@code currentIndex}, in order, and stops at the first one refused by the budget.
+     */
     private void submitWindowAhead(int currentIndex) {
         int target = Math.min(survivors.size() - 1, currentIndex + prefetchDepth);
         for (int next = Math.max(highestSubmitted + 1, currentIndex + 1); next <= target; next++) {
@@ -122,19 +167,22 @@ public final class RowGroupPrefetcher implements AutoCloseable {
                 highestSubmitted = Math.max(highestSubmitted, next);
                 continue;
             }
-            trySubmit(next);
+            if (!trySubmit(next)) {
+                return;
+            }
         }
     }
 
-    private void trySubmit(int index) {
+    /** Whether the row group was submitted; a refusal by the budget, the permits or the executor stops the window. */
+    private boolean trySubmit(int index) {
         FetchPlan plan = fetcher.planFor(survivors.get(index), plans.fetchMask(index));
         long span = plan.spanBytes();
         if (!budget.tryReserve(span)) {
-            return;
+            return false;
         }
         if (!concurrencyPermits.tryAcquire()) {
             budget.release(span);
-            return;
+            return false;
         }
         BudgetReservation reservation = new BudgetReservation(budget, span);
         RowGroupSurvivor survivor = survivors.get(index);
@@ -150,16 +198,58 @@ public final class RowGroupPrefetcher implements AutoCloseable {
         } catch (RejectedExecutionException _) {
             concurrencyPermits.release();
             reservation.release();
-            return;
+            return false;
         }
         window.put(index, future);
         highestSubmitted = Math.max(highestSubmitted, index);
+        return true;
     }
 
-    private RowGroupFetch fetchInline(int index) {
-        RowGroupSurvivor survivor = survivors.get(index);
-        FetchPlan plan = fetcher.planFor(survivor, plans.fetchMask(index));
-        return fetcher.fetch(survivor, plan, BudgetReservation.NONE, wantsTimings);
+    /**
+     * Hands out a prefetched row group. The window ahead is submitted while the row group is still in the window: a
+     * planning failure then leaves the prefetch for {@link #close()} to drain.
+     */
+    private RowGroupFetch takePrefetched(int index, Future<RowGroupFetch> prefetched) throws IOException {
+        submitWindowAhead(index);
+        window.remove(index);
+        return join(prefetched);
+    }
+
+    /**
+     * Fetches the row group with its span reserved up front, like a prefetch, when the budget has room now; empty when
+     * it does not. The window ahead is submitted between the reservation and the read: the speculative fetches then
+     * overlap this one. A failure while submitting ahead releases the reservation; the fetch releases it itself if it
+     * fails.
+     */
+    private Optional<RowGroupFetch> fetchIfRoom(int index, RowGroupSurvivor survivor, FetchPlan plan) {
+        long span = plan.spanBytes();
+        if (!budget.tryReserve(span)) {
+            return Optional.empty();
+        }
+        BudgetReservation reservation = new BudgetReservation(budget, span);
+        try {
+            submitWindowAhead(index);
+        } catch (RuntimeException e) {
+            reservation.release();
+            throw e;
+        }
+        return Optional.of(fetcher.fetch(survivor, plan, reservation, wantsTimings));
+    }
+
+    /**
+     * Fetches the row group through the mandatory allocator and waits there for budget room while the read holds no
+     * reservation of its own. The window ahead is submitted once the row group has its buffer; a failure while
+     * submitting ahead closes the fetch.
+     */
+    private RowGroupFetch fetchAfterWait(int index, RowGroupSurvivor survivor, FetchPlan plan) {
+        RowGroupFetch fetch = fetcher.fetch(survivor, plan, BudgetReservation.NONE, wantsTimings);
+        try {
+            submitWindowAhead(index);
+        } catch (RuntimeException e) {
+            fetch.close();
+            throw e;
+        }
+        return fetch;
     }
 
     private RowGroupFetch join(Future<RowGroupFetch> future) throws IOException {

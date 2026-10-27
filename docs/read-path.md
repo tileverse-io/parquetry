@@ -227,7 +227,9 @@ What each piece guarantees:
   pooled buffers. A plan above the per-call range cap goes out as several calls.
 - **`RowGroupPrefetcher`** fetches upcoming row groups ahead of consumption on a
   per-read virtual-thread pool, bounded by a process-wide `FetchBudget` that caps
-  the off-heap bytes a read may speculatively prefetch.
+  the off-heap bytes held by column-chunk fetches. A prefetch is refused when the
+  budget is full; the current row group's fetch waits a bounded time for room and
+  spills to a mapped file when the wait expires.
 - **`ParallelDecodeCoordinator`** decodes several row groups concurrently on a
   shared CPU pool but returns them in file order; the stream stays ordered. A
   decode worker streams one page-batch at a time into a small bounded hand-off
@@ -240,12 +242,13 @@ What each piece guarantees:
   outright, and surviving pages are compacted to the surviving rows.
 
 **Memory contract.** Two budgets bound a read. `FetchBudget` caps the *off-heap*
-bytes a read may speculatively prefetch for column-chunk fetches; off-heap memory
-counts against a container's limit and is invisible to `-Xmx`. `DecodeBudget`
-(`ReadOptions.decodeBudget`) caps the *on-heap* bytes a read may hold in
-speculatively decoded batches, inside `-Xmx`. Only speculative decode-ahead is
-controlled by `DecodeBudget`: the in-order current row group (the one the consumer
-is reading) never reserves budget, which is what prevents deadlock. When the
+bytes held by column-chunk fetches, the current row group's and the prefetched
+ones alike; off-heap memory counts against a container's limit and is invisible
+to `-Xmx`. `DecodeBudget` (`ReadOptions.decodeBudget`) caps the *on-heap* bytes
+held by a read in speculatively decoded batches, inside `-Xmx`. Only speculative
+decode-ahead is controlled by `DecodeBudget`: the in-order current row group (the
+one being read by the consumer) never reserves decode budget, and that is what
+prevents deadlock on the decode side. When the
 consumer advances to a row group that was decoding ahead, the coordinator promotes
 it, and it stops reserving. `maxDecodeAheadPerRead` is a concurrency cap on decode
 worker slots, not a memory bound; a speculative row group decodes ahead only when a

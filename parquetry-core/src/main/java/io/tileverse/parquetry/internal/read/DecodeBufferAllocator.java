@@ -20,19 +20,21 @@ import java.lang.foreign.MemorySegment;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.tileverse.parquetry.io.SegmentPool;
+import io.tileverse.parquetry.runtime.BudgetExhaustedException;
 import io.tileverse.parquetry.runtime.DecodeBudget;
 
 import lombok.NonNull;
 
 /**
- * The RAM-or-mmap valve for a mandatory decode buffer. A mandatory decode buffer is needed for progress and must always
- * get a segment; it never parks and never returns {@code null}. When the {@link DecodeBudget} has room the buffer is a
- * native {@link SegmentPool} segment; otherwise it is a {@link FetchSpillStore} mmap of an on-disk file, which trades
- * RAM for disk while disk has headroom.
+ * The RAM-or-mmap valve for a mandatory decode buffer. A mandatory decode buffer is needed for progress and must get a
+ * segment; it never parks and never returns {@code null}. When the {@link DecodeBudget} has room the buffer is a native
+ * {@link SegmentPool} segment; otherwise it is a {@link FetchSpillStore} mapping of an on-disk file, trading RAM for
+ * disk while disk has headroom. When the disk budget is exhausted as well, the decode fails with
+ * {@link BudgetExhaustedException}.
  *
- * <p>This mirrors {@link FetchBufferAllocator}: same RAM-or-mmap shape, same never-park guarantee, and the same shared
- * disk budget via the mmap spill store. The two differ only in which budget the RAM path reserves against - the decode
- * buffer reserves against the native decode budget rather than the fetch budget.
+ * <p>This valve never waits for room: decode buffers are acquired while other decode buffers are held, and a wait here
+ * would be a wait among the decoders for each other's memory. It reserves against the native decode budget and shares
+ * the disk budget through the spill store.
  */
 public final class DecodeBufferAllocator {
 
@@ -49,13 +51,21 @@ public final class DecodeBufferAllocator {
 
     /**
      * Acquires a buffer of exactly {@code size} bytes for a mandatory decode. Prefers a RAM segment reserved against
-     * the decode budget; falls back to a disk-backed mmap when the budget has no room. Never returns {@code null}.
+     * the decode budget; falls back to a disk-backed mapping when the budget has no room. Never returns {@code null}.
+     *
+     * @throws BudgetExhaustedException when the disk budget has no room for the buffer either
      */
     SegmentPool.Pooled acquireMandatory(long size) {
         if (decodeBudget.tryReserve(size)) {
             return borrowRam(size);
         }
-        return spillStore.map(size);
+        return spillStore.tryMap(size).orElseThrow(() -> exhausted(size));
+    }
+
+    private BudgetExhaustedException exhausted(long size) {
+        return new BudgetExhaustedException("No room for a mandatory decode buffer of " + size
+                + " bytes: the off-heap decode budget (capacity " + decodeBudget.capacity() + ", available "
+                + decodeBudget.available() + ") has no room, and the disk budget is exhausted");
     }
 
     /** The arena of one decompressed page. Its buffers are pooled and return to the pool when the page closes. */

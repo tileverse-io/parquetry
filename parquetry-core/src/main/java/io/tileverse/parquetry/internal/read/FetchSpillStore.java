@@ -25,6 +25,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Comparator;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
@@ -63,15 +64,15 @@ public final class FetchSpillStore {
 
     /**
      * Reserves {@code size} disk bytes, maps a fresh temp file of that size into its own shared arena, and returns a
-     * handle owning that mapping. The caller has already decided disk is the path and ensured headroom; a failed
-     * reservation here is a programming error.
+     * handle owning that mapping. Returns empty when the disk budget has no room for the buffer; the caller decides
+     * what an unplaceable buffer means.
      */
-    SegmentPool.Pooled map(long size) {
+    Optional<SegmentPool.Pooled> tryMap(long size) {
         if (!diskBudget.tryReserve(size)) {
-            throw new IllegalStateException("DiskBudget could not reserve " + size + " bytes for a fetch spill buffer");
+            return Optional.empty();
         }
         try {
-            return mapReservedFile(size);
+            return Optional.of(mapReservedFile(size));
         } catch (IOException e) {
             diskBudget.release(size);
             throw new UncheckedIOException("Failed to map fetch spill buffer of " + size + " bytes", e);

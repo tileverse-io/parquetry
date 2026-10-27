@@ -57,4 +57,12 @@ class DiskBudgetTest {
     void defaultBudgetHasPositiveCapacity() {
         assertThat(DiskBudget.defaultBudget().capacity()).isPositive();
     }
+
+    @Test
+    void statsCountRefusals() {
+        DiskBudget budget = DiskBudget.ofBytes(100);
+        assertThat(budget.tryReserve(60)).isTrue();
+        assertThat(budget.tryReserve(60)).isFalse();
+        assertThat(budget.stats()).isEqualTo(new DiskBudget.Stats(1, 1, 40));
+    }
 }

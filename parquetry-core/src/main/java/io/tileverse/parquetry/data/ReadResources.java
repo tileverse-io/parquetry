@@ -149,8 +149,8 @@ final class ReadResources {
             FetchAccumulator accumulator,
             boolean wantsTimings) {
         FetchSpillStore spillStore = new FetchSpillStore(runtime.spillDir(), runtime.diskBudget());
-        FetchBufferAllocator mandatoryAllocator =
-                new FetchBufferAllocator(runtime.segmentPool(), runtime.fetchBudget(), spillStore);
+        FetchBufferAllocator mandatoryAllocator = new FetchBufferAllocator(
+                runtime.segmentPool(), runtime.fetchBudget(), spillStore, runtime.mandatoryBufferWait());
         RowGroupFetcher fetcher = new RowGroupFetcher(
                 source, fileSchema, projectedSchema, runtime.segmentPool(), mandatoryAllocator, accumulator);
         ExecutorService executor = Executors.newThreadPerTaskExecutor(

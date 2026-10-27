@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.runtime;
 
 import java.nio.file.Path;
+import java.time.Duration;
 
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.internal.read.FetchSpillStore;
@@ -54,6 +55,8 @@ import lombok.NonNull;
  *     {@code > 0}
  * @param maxConcurrentFiles maximum survivor files a multi-file read drains concurrently; the fan-out is I/O-bound
  *     (each producer mostly parks on round-trips), hence the default exceeds core count; must be {@code > 0}
+ * @param mandatoryBufferWait the longest wait of a read's current row-group fetch for room in the fetch budget before
+ *     it spills to a mapped file; zero spills at once; must not be negative
  */
 public record ParquetRuntime(
         @NonNull ComputeExecutor computeExecutor,
@@ -67,7 +70,8 @@ public record ParquetRuntime(
         int maxDecodeAhead,
         int prefetchDepth,
         int maxConcurrentFetchesPerRead,
-        int maxConcurrentFiles) {
+        int maxConcurrentFiles,
+        @NonNull Duration mandatoryBufferWait) {
 
     private static final long NOMINAL_AHEAD_SLOT_BYTES = 32L << 20;
 
@@ -91,6 +95,9 @@ public record ParquetRuntime(
         }
         if (maxConcurrentFiles <= 0) {
             throw new IllegalArgumentException("maxConcurrentFiles must be > 0, got " + maxConcurrentFiles);
+        }
+        if (mandatoryBufferWait.isNegative()) {
+            throw new IllegalArgumentException("mandatoryBufferWait must be >= 0, got " + mandatoryBufferWait);
         }
     }
 
@@ -117,7 +124,8 @@ public record ParquetRuntime(
                 maxDecodeAhead,
                 prefetchDepth,
                 maxConcurrentFetchesPerRead,
-                maxConcurrentFiles);
+                maxConcurrentFiles,
+                mandatoryBufferWait);
     }
 
     /** A copy sharing every resource, with {@code maxConcurrentFetchesPerRead} replaced. */
@@ -134,7 +142,8 @@ public record ParquetRuntime(
                 maxDecodeAhead,
                 prefetchDepth,
                 maxConcurrentFetchesPerRead,
-                maxConcurrentFiles);
+                maxConcurrentFiles,
+                mandatoryBufferWait);
     }
 
     /** A copy sharing every resource, with {@code maxConcurrentFiles} replaced. */
@@ -151,7 +160,26 @@ public record ParquetRuntime(
                 maxDecodeAhead,
                 prefetchDepth,
                 maxConcurrentFetchesPerRead,
-                maxConcurrentFiles);
+                maxConcurrentFiles,
+                mandatoryBufferWait);
+    }
+
+    /** A copy sharing every resource, with {@code mandatoryBufferWait} replaced. */
+    public ParquetRuntime withMandatoryBufferWait(@NonNull Duration mandatoryBufferWait) {
+        return new ParquetRuntime(
+                computeExecutor,
+                segmentPool,
+                fetchBudget,
+                decodeBudget,
+                offHeapDecodeBudget,
+                diskBudget,
+                spillDir,
+                spillEnabled,
+                maxDecodeAhead,
+                prefetchDepth,
+                maxConcurrentFetchesPerRead,
+                maxConcurrentFiles,
+                mandatoryBufferWait);
     }
 
     /** A copy sharing every resource, with {@code maxDecodeAhead} replaced. */
@@ -168,7 +196,8 @@ public record ParquetRuntime(
                 maxDecodeAhead,
                 prefetchDepth,
                 maxConcurrentFetchesPerRead,
-                maxConcurrentFiles);
+                maxConcurrentFiles,
+                mandatoryBufferWait);
     }
 
     static int decodeAheadDefault(int availableProcessors, long decodeBudgetCapacity) {
@@ -196,6 +225,7 @@ public record ParquetRuntime(
         private int prefetchDepth = 2;
         private int maxConcurrentFetchesPerRead = 4;
         private int maxConcurrentFiles = 8;
+        private Duration mandatoryBufferWait = Duration.ofSeconds(1);
 
         private Builder() {}
 
@@ -274,6 +304,18 @@ public record ParquetRuntime(
             return this;
         }
 
+        /**
+         * The longest wait of a read's current row-group fetch for room in the fetch budget before it spills. Zero
+         * spills at once.
+         */
+        public Builder mandatoryBufferWait(@NonNull Duration mandatoryBufferWait) {
+            if (mandatoryBufferWait.isNegative()) {
+                throw new IllegalArgumentException("mandatoryBufferWait must be >= 0, got " + mandatoryBufferWait);
+            }
+            this.mandatoryBufferWait = mandatoryBufferWait;
+            return this;
+        }
+
         public ParquetRuntime build() {
             IoLimits limits = IoLimits.from(resourceLimits);
             FetchBudget resolvedFetchBudget =
@@ -298,7 +340,8 @@ public record ParquetRuntime(
                     resolvedDecodeAhead,
                     prefetchDepth,
                     maxConcurrentFetchesPerRead,
-                    maxConcurrentFiles);
+                    maxConcurrentFiles,
+                    mandatoryBufferWait);
         }
     }
 
