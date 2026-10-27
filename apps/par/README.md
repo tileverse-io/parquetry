@@ -127,6 +127,10 @@ whose source declares none: `auto` (the default: FLOAT leaves for a CRS84 or EPS
 otherwise), `float`, `double` or `none`. A covering declared by the source over copied columns is kept whatever the
 flag says.
 
+`--covering-page-values <n>` caps the pages of the covering columns at `n` values, 1024 by default. A spatial read
+skips rows by whole covering pages. Smaller pages narrow a small query box to fewer rows, and make the file slightly
+larger. The other columns keep the writer's page sizing.
+
 The write path currently handles flat columns (primitives, including WKB geometry); copying a file whose schema
 contains nested list/map/struct or Variant columns is not yet supported and fails with a clear error.
 
