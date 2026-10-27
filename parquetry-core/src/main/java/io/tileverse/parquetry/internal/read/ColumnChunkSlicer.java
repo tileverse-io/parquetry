@@ -16,7 +16,6 @@
 package io.tileverse.parquetry.internal.read;
 
 import java.io.IOException;
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,20 +35,31 @@ import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.internal.read.page.DictionaryDecoder;
 import io.tileverse.parquetry.internal.read.page.MemorySegmentInputStream;
-import io.tileverse.parquetry.io.Segments;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.LevelMaxima;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
 
+import lombok.NonNull;
+
 /**
  * Slices one column chunk's fetched bytes out of the fetch buffer and decodes its dictionary, producing a
- * {@link FetchedColumnChunk} view whose runs cover just the data-page region.
+ * {@link FetchedColumnChunk} view whose runs cover just the data-page region. A dictionary page is decompressed into a
+ * buffer borrowed from the read's {@link SegmentPool} and returned before the chunk is handed out; the decoded
+ * {@link Dictionary} holds heap values, and never a view of that buffer. A native allocation per dictionary page would
+ * map and unmap memory on the request thread once per dictionary-encoded column and row group.
  */
 final class ColumnChunkSlicer {
 
-    private ColumnChunkSlicer() {}
+    private final ParquetSchema fileSchema;
+    private final SegmentPool pool;
+
+    ColumnChunkSlicer(@NonNull ParquetSchema fileSchema, @NonNull SegmentPool pool) {
+        this.fileSchema = fileSchema;
+        this.pool = pool;
+    }
 
     /**
      * Builds the chunk view from the fetched pieces of one column chunk.
@@ -63,27 +73,22 @@ final class ColumnChunkSlicer {
      * @param dictionaryPrefix view of the chunk's bytes up to its first data page, when fetched separately
      * @param runs views of the fetched stretches of the chunk's pages, in file order; never empty
      */
-    static FetchedColumnChunk slice(
-            Optional<MemorySegment> dictionaryPrefix,
-            List<DataPageRun> runs,
-            ChunkMeta meta,
-            ColumnPath path,
-            ParquetSchema fileSchema) {
+    FetchedColumnChunk slice(
+            Optional<MemorySegment> dictionaryPrefix, List<DataPageRun> runs, ChunkMeta meta, ColumnPath path) {
         if (runs.isEmpty()) {
             throw new IllegalStateException("No data-page bytes were fetched for column " + path.dot()
                     + "; every fetched chunk holds at least one run of pages");
         }
         if (dictionaryPrefix.isPresent()) {
-            Optional<Dictionary<?>> dictionary =
-                    decodeDictionaryPrefix(dictionaryPrefix.orElseThrow(), meta, path, fileSchema);
-            return chunkOf(path, meta, fileSchema, runs, dictionary);
+            Optional<Dictionary<?>> dictionary = decodeDictionaryPrefix(dictionaryPrefix.orElseThrow(), meta, path);
+            return chunkOf(path, meta, runs, dictionary);
         }
         MemorySegment head = runs.get(0).segment();
-        DictionaryAndOffset dict = maybeDecodeDictionary(head, meta, path, fileSchema);
+        DictionaryAndOffset dict = maybeDecodeDictionary(head, meta, path);
         if (dict.dataPageOffset() == 0) {
-            return chunkOf(path, meta, fileSchema, runs, dict.dictionary());
+            return chunkOf(path, meta, runs, dict.dictionary());
         }
-        return chunkOf(path, meta, fileSchema, stripDictionaryPage(runs, dict.dataPageOffset()), dict.dictionary());
+        return chunkOf(path, meta, stripDictionaryPage(runs, dict.dataPageOffset()), dict.dictionary());
     }
 
     /** Drops the leading {@code dataPageOffset} bytes the dictionary page occupies at the head of the first run. */
@@ -96,12 +101,8 @@ final class ColumnChunkSlicer {
         return stripped;
     }
 
-    private static FetchedColumnChunk chunkOf(
-            ColumnPath path,
-            ChunkMeta meta,
-            ParquetSchema fileSchema,
-            List<DataPageRun> runs,
-            Optional<Dictionary<?>> dictionary) {
+    private FetchedColumnChunk chunkOf(
+            ColumnPath path, ChunkMeta meta, List<DataPageRun> runs, Optional<Dictionary<?>> dictionary) {
         LevelMaxima maxima = fileSchema.maxLevels(path);
         return new FetchedColumnChunk(
                 path,
@@ -136,8 +137,7 @@ final class ColumnChunkSlicer {
      * would mean the planner narrowed a chunk whose pages it had mislocated, and decoding on would drop a dictionary
      * the data pages reference.
      */
-    private static Optional<Dictionary<?>> decodeDictionaryPrefix(
-            MemorySegment prefix, ChunkMeta meta, ColumnPath path, ParquetSchema fileSchema) {
+    private Optional<Dictionary<?>> decodeDictionaryPrefix(MemorySegment prefix, ChunkMeta meta, ColumnPath path) {
         MemorySegmentInputStream stream = new MemorySegmentInputStream(prefix, 0L, prefix.byteSize());
         PageHeader header = readPageHeader(stream, path);
         if (header.type() != PageType.DICTIONARY_PAGE) {
@@ -145,7 +145,7 @@ final class ColumnChunkSlicer {
                     + " was fetched with a dictionary prefix but the prefix begins with a page of type "
                     + header.type());
         }
-        return decodeDictionaryPage(prefix, stream.position(), header, meta, path, fileSchema)
+        return decodeDictionaryPage(prefix, stream.position(), header, meta, path)
                 .dictionary();
     }
 
@@ -160,11 +160,10 @@ final class ColumnChunkSlicer {
      * directly rather than trusting {@code dictionary_page_offset}; when the first page is a data page, the chunk has
      * no dictionary and this returns {@link #NO_DICTIONARY}.
      *
-     * <p>The dictionary is decompressed into a transient Arena segment that is closed before the method returns; the
-     * resulting {@link Dictionary} holds heap-resident Java values referenced from the {@link FetchedColumnChunk}.
+     * <p>The dictionary is decompressed into a pooled buffer returned before the method returns; the resulting
+     * {@link Dictionary} holds heap-resident Java values referenced from the {@link FetchedColumnChunk}.
      */
-    private static DictionaryAndOffset maybeDecodeDictionary(
-            MemorySegment chunkSegment, ChunkMeta meta, ColumnPath path, ParquetSchema fileSchema) {
+    private DictionaryAndOffset maybeDecodeDictionary(MemorySegment chunkSegment, ChunkMeta meta, ColumnPath path) {
         if (chunkSegment.byteSize() == 0) {
             return NO_DICTIONARY;
         }
@@ -178,20 +177,15 @@ final class ColumnChunkSlicer {
             }
             return NO_DICTIONARY;
         }
-        return decodeDictionaryPage(chunkSegment, stream.position(), header, meta, path, fileSchema);
+        return decodeDictionaryPage(chunkSegment, stream.position(), header, meta, path);
     }
 
     /**
      * Decodes the dictionary page whose header has already been read, given {@code headerEnd}, the offset of the first
      * payload byte within {@code chunkSegment}.
      */
-    private static DictionaryAndOffset decodeDictionaryPage(
-            MemorySegment chunkSegment,
-            long headerEnd,
-            PageHeader header,
-            ChunkMeta meta,
-            ColumnPath path,
-            ParquetSchema fileSchema) {
+    private DictionaryAndOffset decodeDictionaryPage(
+            MemorySegment chunkSegment, long headerEnd, PageHeader header, ChunkMeta meta, ColumnPath path) {
         DictionaryPageHeader dictHeader = header.dictionaryPageHeader()
                 .orElseThrow(() -> new MalformedFileException(
                         named(path) + " dictionary page is missing its dictionary page header"));
@@ -208,7 +202,7 @@ final class ColumnChunkSlicer {
         MemorySegment compressedPayload =
                 chunkSegment.asSlice(headerEnd, compressedSize).asReadOnly();
         Dictionary<?> dictionary =
-                decodeDictionary(meta, path, fileSchema, dictHeader, compressedPayload, header.uncompressedPageSize());
+                decodeDictionary(meta, path, dictHeader, compressedPayload, header.uncompressedPageSize());
         int dataPageOffset = Math.toIntExact(headerEnd + compressedSize);
         return new DictionaryAndOffset(Optional.of(dictionary), dataPageOffset);
     }
@@ -222,23 +216,23 @@ final class ColumnChunkSlicer {
     }
 
     /**
-     * Decompresses the dictionary page payload into a transient Arena segment and dispatches to
-     * {@link DictionaryDecoder} using the column's {@link PrimitiveKind} and optional {@code typeLength}. The Arena is
-     * closed before this method returns.
+     * Decompresses the dictionary page payload into a buffer borrowed from the pool and dispatches to
+     * {@link DictionaryDecoder} using the column's {@link PrimitiveKind} and optional {@code typeLength}. The buffer
+     * returns to the pool before this method returns.
      */
-    private static Dictionary<?> decodeDictionary(
+    private Dictionary<?> decodeDictionary(
             ChunkMeta meta,
             ColumnPath path,
-            ParquetSchema fileSchema,
             DictionaryPageHeader dictHeader,
             MemorySegment compressedPayload,
             int uncompressedSize) {
         Compression codec = Compression.forWireCodec(meta.codec());
         PrimitiveKind kind = primitiveKindOf(meta.type());
-        OptionalInt typeLength = typeLengthFor(kind, path, fileSchema);
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment dst = Segments.allocateNative(uncompressedSize, arena);
-            codec.decompress(compressedPayload, dst);
+        OptionalInt typeLength = typeLengthFor(kind, path);
+        try (SegmentPool.Pooled buffer = pool.borrow(uncompressedSize)) {
+            MemorySegment dst = buffer.segment();
+            int written = codec.decompress(compressedPayload, dst);
+            requireDeclaredSize(written, uncompressedSize);
             return DictionaryDecoder.read(dst, kind, dictHeader.numValues(), typeLength);
         } catch (ParquetFormatException e) {
             throw e.withContext(named(path) + " dictionary page: " + e.getMessage());
@@ -246,6 +240,17 @@ final class ColumnChunkSlicer {
             // The bytes were fetched already: a codec failing on them means a corrupt page.
             throw new MalformedFileException(
                     named(path) + " dictionary page cannot be decompressed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * A pooled buffer holds the bytes of its earlier uses, and a page whose header overstates its uncompressed size
+     * would be decoded from them. The decoder may read only what the codec wrote.
+     */
+    private static void requireDeclaredSize(int written, int uncompressedSize) {
+        if (written != uncompressedSize) {
+            throw new MalformedFileException(
+                    "decompressed to " + written + " bytes, header declares " + uncompressedSize);
         }
     }
 
@@ -272,7 +277,7 @@ final class ColumnChunkSlicer {
      * values. The dictionary page header does not record it; it comes from the schema leaf instead. Every other kind
      * has a self-describing layout and needs no length.
      */
-    private static OptionalInt typeLengthFor(PrimitiveKind kind, ColumnPath path, ParquetSchema fileSchema) {
+    private OptionalInt typeLengthFor(PrimitiveKind kind, ColumnPath path) {
         if (kind != PrimitiveKind.FIXED_LEN_BYTE_ARRAY) {
             return OptionalInt.empty();
         }
