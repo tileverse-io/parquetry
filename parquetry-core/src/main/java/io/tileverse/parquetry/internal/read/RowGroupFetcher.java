@@ -64,11 +64,11 @@ public final class RowGroupFetcher {
     private static final int MAX_REQUESTS_PER_CALL = 256;
 
     private final ByteRangeSource source;
-    private final ParquetSchema fileSchema;
     private final ParquetSchema projectedSchema;
     private final SegmentPool pool;
     private final FetchBufferAllocator mandatoryAllocator;
     private final FetchAccumulator accumulator;
+    private final ColumnChunkSlicer slicer;
 
     public RowGroupFetcher(
             @NonNull ByteRangeSource source,
@@ -78,11 +78,11 @@ public final class RowGroupFetcher {
             @NonNull FetchBufferAllocator mandatoryAllocator,
             @NonNull FetchAccumulator accumulator) {
         this.source = source;
-        this.fileSchema = fileSchema;
         this.projectedSchema = projectedSchema;
         this.pool = pool;
         this.mandatoryAllocator = mandatoryAllocator;
         this.accumulator = accumulator;
+        this.slicer = new ColumnChunkSlicer(fileSchema, pool);
     }
 
     /**
@@ -327,7 +327,7 @@ public final class RowGroupFetcher {
             ChunkMeta meta = requireMeta(chunks, path);
             Optional<MemorySegment> dictionaryPrefix = dictionaryPrefixOf(placed);
             List<DataPageRun> runs = dataPageRunsOf(placed);
-            columns.add(ColumnChunkSlicer.slice(dictionaryPrefix, runs, meta, path, fileSchema));
+            columns.add(slicer.slice(dictionaryPrefix, runs, meta, path));
         }
         return columns;
     }

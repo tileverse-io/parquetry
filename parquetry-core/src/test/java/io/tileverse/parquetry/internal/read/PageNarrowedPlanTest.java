@@ -19,9 +19,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -53,12 +55,14 @@ import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.OffsetIndex;
+import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
+import io.tileverse.parquetry.internal.read.page.MemorySegmentInputStream;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
@@ -293,10 +297,31 @@ class PageNarrowedPlanTest {
             Optional<MemorySegment> prefixThatIsReallyADataPage = Optional.of(firstDataPage);
             ChunkMeta meta = fixture.meta(A);
 
-            assertThatThrownBy(() -> ColumnChunkSlicer.slice(prefixThatIsReallyADataPage, runs, meta, A, SCHEMA))
+            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA, SegmentPool.create());
+
+            assertThatThrownBy(() -> slicer.slice(prefixThatIsReallyADataPage, runs, meta, A))
                     .isInstanceOf(MalformedFileException.class)
                     .hasMessageContaining(A.dot())
                     .hasMessageContaining("DATA_PAGE");
+        }
+    }
+
+    // a dictionary page declaring more uncompressed bytes than its codec produces is malformed, not decoded
+    @Test
+    void wrongDictionarySizeIsMalformed() {
+        try (Arena arena = Arena.ofConfined();
+                ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.open(source);
+            Optional<MemorySegment> lyingPage =
+                    Optional.of(withInflatedUncompressedSize(fixture.readDictionaryPrefix(B, arena), arena));
+            List<DataPageRun> runs = List.of(new DataPageRun(fixture.readFirstDataPage(B, arena), 0));
+            ChunkMeta meta = fixture.meta(B);
+            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA, SegmentPool.create());
+
+            assertThatThrownBy(() -> slicer.slice(lyingPage, runs, meta, B))
+                    .isInstanceOf(MalformedFileException.class)
+                    .hasMessageContaining(B.dot())
+                    .hasMessageContaining("declares");
         }
     }
 
@@ -307,9 +332,10 @@ class PageNarrowedPlanTest {
             Fixture fixture = Fixture.open(source);
             MemorySegment dictionaryPage = fixture.readDictionaryPrefix(B, arena);
 
+            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA, SegmentPool.create());
+
             assertThatIllegalStateException()
-                    .isThrownBy(() ->
-                            ColumnChunkSlicer.slice(Optional.of(dictionaryPage), List.of(), fixture.meta(B), B, SCHEMA))
+                    .isThrownBy(() -> slicer.slice(Optional.of(dictionaryPage), List.of(), fixture.meta(B), B))
                     .withMessageContaining(B.dot());
         }
     }
@@ -520,6 +546,31 @@ class PageNarrowedPlanTest {
             source.readFully(start, prefix);
             return prefix.asReadOnly();
         }
+    }
+
+    /**
+     * The dictionary page at the start of {@code prefix}, its header declaring one uncompressed byte more than it has.
+     */
+    private static MemorySegment withInflatedUncompressedSize(MemorySegment prefix, Arena arena) {
+        MemorySegmentInputStream stream = new MemorySegmentInputStream(prefix, 0L, prefix.byteSize());
+        PageHeader header = ParquetFormat.readPageHeader(stream);
+        PageHeader inflated = new PageHeader(
+                header.type(),
+                header.uncompressedPageSize() + 1,
+                header.compressedPageSize(),
+                header.crc(),
+                header.dataPageHeader(),
+                header.indexPageHeader(),
+                header.dictionaryPageHeader(),
+                header.dataPageHeaderV2());
+        ByteArrayOutputStream page = new ByteArrayOutputStream();
+        ParquetFormat.writePageHeader(page, inflated);
+        MemorySegment payload = prefix.asSlice(stream.position(), header.compressedPageSize());
+        page.writeBytes(payload.toArray(ValueLayout.JAVA_BYTE));
+        byte[] bytes = page.toByteArray();
+        MemorySegment lying = arena.allocate(bytes.length);
+        MemorySegment.copy(MemorySegment.ofArray(bytes), 0, lying, 0, bytes.length);
+        return lying.asReadOnly();
     }
 
     private static ColumnChunk withDataPageOffset(ColumnChunk chunk, ColumnMetaData meta, long dataPageOffset) {

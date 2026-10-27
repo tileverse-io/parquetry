@@ -52,9 +52,10 @@ public final class Segments {
     /**
      * Allocates {@code byteSize} zeroed native bytes owned by {@code arena}. On Linux and macOS a request of 64 KiB or
      * more is an anonymous memory mapping, unmapped when the arena closes. A smaller request, and any request on
-     * another platform, comes from malloc. The segment pool allocates its backings this way. Use it for a large
-     * short-lived buffer such as a decompressed dictionary page: memory freed to malloc stays in the allocator's
-     * per-thread arenas, a mapping leaves the process at once.
+     * another platform, comes from malloc. The segment pool allocates its backings this way: memory freed to malloc
+     * stays in the allocator's per-thread arenas, a mapping leaves the process at once. A short-lived buffer belongs in
+     * the pool rather than in a mapping of its own, because a mapping per use costs two system calls on the calling
+     * thread.
      */
     public static MemorySegment allocateNative(long byteSize, Arena arena) {
         return MappedMemory.allocate(byteSize, arena);
