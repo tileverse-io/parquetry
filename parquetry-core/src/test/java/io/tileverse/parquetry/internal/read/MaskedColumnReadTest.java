@@ -110,7 +110,7 @@ class MaskedColumnReadTest {
 
     private static List<Integer> drainInts(BatchColumnReader colReader) {
         List<Integer> out = new ArrayList<>();
-        List<AutoCloseable> acquiredBuffers = new ArrayList<>();
+        BatchBuffers acquiredBuffers = TestDecodeBuffers.batchBuffers();
         while (colReader.hasMore()) {
             int n = colReader.rowsRemainingInCurrentPage();
             ColumnVector vec = colReader.readBatch(n, acquiredBuffers);

@@ -262,14 +262,15 @@ class MaskedWindowRowMaskReadTest {
         overColumn(file, schema, V, mask, ValueDecode.EAGER, reader -> {
             BitSet survivors = new BitSet(1);
             survivors.set(0);
+            BatchBuffers buffers = TestDecodeBuffers.batchBuffers();
             assertThatIllegalStateException()
-                    .isThrownBy(() -> reader.readMaskedWindow(1, survivors, new ArrayList<>()))
+                    .isThrownBy(() -> reader.readMaskedWindow(1, survivors, buffers))
                     .withMessageContaining("windowed value decode");
             assertThatIllegalStateException()
                     .isThrownBy(() -> reader.skipMaskedWindow(1))
                     .withMessageContaining("windowed value decode");
             assertThatIllegalStateException()
-                    .isThrownBy(() -> reader.readMaskedSpanningRow(true, new ArrayList<>()))
+                    .isThrownBy(() -> reader.readMaskedSpanningRow(true, buffers))
                     .withMessageContaining("windowed value decode");
             return null;
         });
@@ -314,7 +315,7 @@ class MaskedWindowRowMaskReadTest {
             throws Exception {
         return overColumn(file, schema, column, mask, ValueDecode.WINDOWED_MASK, reader -> {
             DrainedRows drained = new DrainedRows();
-            List<AutoCloseable> acquiredBuffers = new ArrayList<>();
+            BatchBuffers acquiredBuffers = TestDecodeBuffers.batchBuffers();
             int firstRow = 0;
             while (reader.hasMore()) {
                 int rowsServableByPage = reader.logicalRowsRemainingInCurrentPage();
@@ -343,7 +344,7 @@ class MaskedWindowRowMaskReadTest {
             throws Exception {
         return overColumn(file, schema, column, mask, ValueDecode.EAGER, reader -> {
             DrainedRows drained = new DrainedRows();
-            List<AutoCloseable> acquiredBuffers = new ArrayList<>();
+            BatchBuffers acquiredBuffers = TestDecodeBuffers.batchBuffers();
             int firstRow = 0;
             while (reader.hasMore()) {
                 int pageRows = reader.rowsRemainingInCurrentPage();
@@ -360,7 +361,7 @@ class MaskedWindowRowMaskReadTest {
             int pageRows,
             int firstRow,
             IntPredicate survives,
-            List<AutoCloseable> acquiredBuffers,
+            BatchBuffers acquiredBuffers,
             DrainedRows drained) {
         Levels pageDefLevels = reader.currentPageDefLevels();
         int windowFirstValue = reader.valuesConsumedInCurrentPage();

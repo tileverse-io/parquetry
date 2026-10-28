@@ -233,7 +233,7 @@ class MaskedWindowColumnReadTest {
             survivors.set(2, 6);
             survivors.set(8, 10);
             DrainedRows drained = new DrainedRows();
-            drained.addWindow(reader.readMaskedWindow(WIDE_ROWS_PER_PAGE, survivors, new ArrayList<>()));
+            drained.addWindow(reader.readMaskedWindow(WIDE_ROWS_PER_PAGE, survivors, TestDecodeBuffers.batchBuffers()));
             return drained.toResult(reader.decodedValueCount(), reader.windowDecodeCallCount());
         });
 
@@ -252,8 +252,9 @@ class MaskedWindowColumnReadTest {
             int servableRows = reader.logicalRowsRemainingInCurrentPage();
             int tooManyRows = servableRows + 1;
             BitSet survivors = survivorsOf(0, tooManyRows, _ -> true);
+            BatchBuffers buffers = TestDecodeBuffers.batchBuffers();
             assertThatIllegalArgumentException()
-                    .isThrownBy(() -> reader.readMaskedWindow(tooManyRows, survivors, new ArrayList<>()))
+                    .isThrownBy(() -> reader.readMaskedWindow(tooManyRows, survivors, buffers))
                     .withMessageContainingAll(String.valueOf(tooManyRows), String.valueOf(servableRows));
             assertThatIllegalArgumentException()
                     .isThrownBy(() -> reader.skipMaskedWindow(tooManyRows))
@@ -268,14 +269,15 @@ class MaskedWindowColumnReadTest {
         ParquetSchema schema = flatSchema(requiredInt64("v"));
         overColumn(file, schema, V, ValueDecode.EAGER, reader -> {
             BitSet survivors = survivorsOf(0, 1, _ -> true);
+            BatchBuffers buffers = TestDecodeBuffers.batchBuffers();
             assertThatIllegalStateException()
-                    .isThrownBy(() -> reader.readMaskedWindow(1, survivors, new ArrayList<>()))
+                    .isThrownBy(() -> reader.readMaskedWindow(1, survivors, buffers))
                     .withMessageContaining("windowed value decode");
             assertThatIllegalStateException()
                     .isThrownBy(() -> reader.skipMaskedWindow(1))
                     .withMessageContaining("windowed value decode");
             assertThatIllegalStateException()
-                    .isThrownBy(() -> reader.readMaskedSpanningRow(true, new ArrayList<>()))
+                    .isThrownBy(() -> reader.readMaskedSpanningRow(true, buffers))
                     .withMessageContaining("windowed value decode");
             return null;
         });
@@ -315,7 +317,8 @@ class MaskedWindowColumnReadTest {
     private static List<Long> readWholePageKeepingEveryRow(BatchColumnReader reader) {
         int windowRows = reader.logicalRowsRemainingInCurrentPage();
         BitSet survivors = survivorsOf(0, windowRows, _ -> true);
-        BatchColumnReader.MaskedWindow window = reader.readMaskedWindow(windowRows, survivors, new ArrayList<>());
+        BatchColumnReader.MaskedWindow window =
+                reader.readMaskedWindow(windowRows, survivors, TestDecodeBuffers.batchBuffers());
         LongVector vector = (LongVector) window.vector();
         List<Long> values = new ArrayList<>();
         for (int i = 0; i < vector.size(); i++) {
@@ -329,8 +332,9 @@ class MaskedWindowColumnReadTest {
         Path file = writeRequiredLongs();
         ParquetSchema schema = flatSchema(requiredInt64("v"));
         overColumn(file, schema, V, ValueDecode.WINDOWED_MASK, reader -> {
+            BatchBuffers buffers = TestDecodeBuffers.batchBuffers();
             assertThatIllegalStateException()
-                    .isThrownBy(() -> reader.readBatch(1, new ArrayList<>()))
+                    .isThrownBy(() -> reader.readBatch(1, buffers))
                     .withMessageContaining("one window at a time");
             return null;
         });
@@ -369,7 +373,7 @@ class MaskedWindowColumnReadTest {
             throws Exception {
         return overColumn(file, schema, column, ValueDecode.WINDOWED_MASK, reader -> {
             DrainedRows drained = new DrainedRows();
-            List<AutoCloseable> acquiredBuffers = new ArrayList<>();
+            BatchBuffers acquiredBuffers = TestDecodeBuffers.batchBuffers();
             int firstRow = 0;
             while (reader.hasMore()) {
                 int rowsServableByPage = reader.logicalRowsRemainingInCurrentPage();
@@ -396,7 +400,7 @@ class MaskedWindowColumnReadTest {
             throws Exception {
         return overColumn(file, schema, column, ValueDecode.EAGER, reader -> {
             DrainedRows drained = new DrainedRows();
-            List<AutoCloseable> acquiredBuffers = new ArrayList<>();
+            BatchBuffers acquiredBuffers = TestDecodeBuffers.batchBuffers();
             int firstRow = 0;
             while (reader.hasMore()) {
                 int windowRows = reader.logicalRowsRemainingInCurrentPage();
@@ -418,7 +422,7 @@ class MaskedWindowColumnReadTest {
             int windowRows,
             int firstRow,
             IntPredicate survives,
-            List<AutoCloseable> acquiredBuffers,
+            BatchBuffers acquiredBuffers,
             DrainedRows drained) {
         Levels pageRepLevels = reader.currentPageRepLevels();
         Levels pageDefLevels = reader.currentPageDefLevels();

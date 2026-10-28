@@ -40,6 +40,11 @@ final class TestDecodeBuffers {
         return ample(SegmentPool.getDefault());
     }
 
+    /** Buffers for one batch over an {@link #ample()} allocator, for a test that does not check their accounting. */
+    static BatchBuffers batchBuffers() {
+        return new BatchBuffers(ample());
+    }
+
     /** Same ample budgets over a caller-supplied pool, letting a test assert on that pool's borrow accounting. */
     static DecodeBufferAllocator ample(SegmentPool pool) {
         return new DecodeBufferAllocator(

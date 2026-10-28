@@ -15,7 +15,6 @@
  */
 package io.tileverse.parquetry.internal.read;
 
-import java.util.List;
 import java.util.Map;
 
 import io.tileverse.parquetry.columnar.ColumnVector;
@@ -25,7 +24,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 /**
  * Wraps a batch's row-aligned LIST and MAP groups in the requested {@link BatchForm}: the eager Arrow-shape vectors for
  * {@link BatchForm#ASSEMBLED}, or the lazy level vectors for {@link BatchForm#LEVELS}. The level form acquires a
- * batch-owned {@link BatchLevels} into {@code acquiredBuffers}, which the owning batch closes.
+ * batch-owned {@link BatchLevels} into {@code batchBuffers}, closed by the owning batch.
  */
 final class BatchAssembly {
 
@@ -41,7 +40,7 @@ final class BatchAssembly {
             Map<ColumnPath, LevelSlice> defLevels,
             int batchRows,
             DecodeBufferAllocator allocator,
-            List<AutoCloseable> acquiredBuffers) {
+            BatchBuffers batchBuffers) {
         return switch (form) {
             case ASSEMBLED ->
                 NestedVectorAssembler.assembleNestedViews(schema, leafVectors, repLevels, defLevels, batchRows);
@@ -54,7 +53,7 @@ final class BatchAssembly {
                         defLevels,
                         batchRows,
                         allocator,
-                        acquiredBuffers);
+                        batchBuffers);
         };
     }
 }

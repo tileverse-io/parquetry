@@ -39,6 +39,7 @@ import io.tileverse.parquetry.columnar.IntVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -259,6 +260,32 @@ class BatchRowGroupReaderTest {
         // Calling close() a second time must be safe: BatchColumnReader.close() nulls out its arena refs,
         // so a second iteration over the same column readers is a no-op.
         reader.close();
+    }
+
+    // The value slices of both columns come from one slab. The slab returns to the pool with the batch.
+    @Test
+    void batchColumnsShareOneSlab() throws IOException {
+        FetchedColumnChunk chunkA = twoPageInt32Chunk(PATH_A, new int[] {1, 2}, new int[] {3, 4});
+        FetchedColumnChunk chunkB = twoPageInt32Chunk(PATH_B, new int[] {10, 20}, new int[] {30, 40});
+        ParquetSchema schema = flatSchema("a", "b");
+        SegmentPool pool = SegmentPool.create();
+
+        try (BatchRowGroupReader reader = new BatchRowGroupReader(
+                TestDecodeBuffers.ample(pool),
+                List.of(chunkA, chunkB),
+                schema,
+                schema,
+                OptionalInt.empty(),
+                Optional.empty(),
+                BatchForm.ASSEMBLED)) {
+            long withBatchOpen;
+            try (ParquetRecordBatch batch = reader.nextBatch()) {
+                assertThat(batch.rowCount()).isEqualTo(2);
+                withBatchOpen = pool.stats().outstandingBorrows();
+            }
+            assertThat(pool.stats().outstandingBorrows()).isEqualTo(withBatchOpen - 1);
+        }
+        assertThat(pool.stats().outstandingBorrows()).isZero();
     }
 
     // --- test 8: decoded DOUBLE column lives off-heap ---

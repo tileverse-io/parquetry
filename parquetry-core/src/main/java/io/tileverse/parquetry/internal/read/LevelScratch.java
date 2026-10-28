@@ -19,52 +19,31 @@ import java.lang.foreign.MemorySegment;
 
 import io.tileverse.parquetry.columnar.Levels;
 import io.tileverse.parquetry.internal.read.page.LevelDecoder;
-import io.tileverse.parquetry.io.SegmentPool;
 
 /**
  * A column reader's reusable off-heap buffer for one level stream (rep or def). {@link #decode} fills the buffer from
- * the loaded decoder and returns a {@link Levels} view over it; the view is valid until the next {@link #decode} call
- * on the same scratch, which is the reader's next page decode. The buffer comes from the decode valve
- * (budget-accounted, RAM-or-mmap), grows to the largest page seen (next power of two), and is released at
- * {@link #close()} - reader close, not page advance, because reuse across pages is the point.
+ * the loaded decoder and returns a {@link Levels} view over it. The view is valid until the next {@link #decode} call
+ * on the same scratch: the reader's next page decode. The buffer is a {@link SegmentScratch}, released at
+ * {@link #close()}.
  */
 final class LevelScratch implements AutoCloseable {
 
-    private static final long MIN_CAPACITY_BYTES = 8192;
-
-    private final DecodeBufferAllocator allocator;
-    private SegmentPool.Pooled pooled;
+    private final SegmentScratch buffer;
 
     LevelScratch(DecodeBufferAllocator allocator) {
-        this.allocator = allocator;
+        this.buffer = new SegmentScratch(allocator);
     }
 
     /** Decodes {@code count} levels from the loaded {@code decoder} into this scratch; see the class contract. */
     Levels decode(LevelDecoder decoder, int count) {
-        MemorySegment dst = ensureCapacity(4L * count);
+        MemorySegment dst = buffer.acquire(4L * count);
         decoder.decodeInto(count, dst);
         return Levels.ofSegment(dst, count);
-    }
-
-    private MemorySegment ensureCapacity(long byteSize) {
-        if (pooled != null && pooled.segment().byteSize() >= byteSize) {
-            return pooled.segment();
-        }
-        close();
-        pooled = allocator.acquireMandatory(Math.max(MIN_CAPACITY_BYTES, ceilPowerOfTwo(byteSize)));
-        return pooled.segment();
-    }
-
-    private static long ceilPowerOfTwo(long byteSize) {
-        return 1L << (64 - Long.numberOfLeadingZeros(byteSize - 1));
     }
 
     /** Returns the buffer to the pool; idempotent. */
     @Override
     public void close() {
-        if (pooled != null) {
-            pooled.close();
-            pooled = null;
-        }
+        buffer.close();
     }
 }
