@@ -125,11 +125,15 @@ types and a 1.1.0 geo document, readable by 1.x and 2.0 readers, the default), `
 document) or `1.1` (a 1.1.0 document only). `--bbox-covering <mode>` decides the `bbox` covering of a copy whose
 source declares none: `auto`, `float`, `double` or `none`. `auto`, the default, declares a `bbox` struct of the source
 as the covering, such as the one written by DuckDB without a declaration. The struct must have the fields `xmin`,
-`ymin`, `xmax` and `ymax` and no other, all FLOAT or all DOUBLE, and the repetition of the geometry column. The copy
-writes the fields in that order, as required by GeoParquet 1.1. DuckDB writes them as `xmin`, `xmax`, `ymin`, `ymax`.
-Otherwise the copy declares no covering and `par` prints the reason. A source without a `bbox`
-column gets derived covering columns: FLOAT leaves for a CRS84 or EPSG:4326 geometry column, DOUBLE otherwise. A
-covering declared by the source over copied columns is kept whatever the flag says.
+`ymin`, `xmax` and `ymax`, optionally with `zmin` and `zmax`, and no other. The fields must be all FLOAT or all DOUBLE,
+and the struct must have the repetition of the geometry column. The copy writes the fields in the order required by
+GeoParquet 1.1: `xmin`, `ymin`, `xmax`, `ymax`, or `xmin`, `ymin`, `zmin`, `xmax`, `ymax`, `zmax`. DuckDB writes them
+as `xmin`, `xmax`, `ymin`, `ymax`. Otherwise the copy declares no covering and `par` prints the reason. A source
+without a `bbox` column gets derived covering columns: FLOAT leaves for a CRS84 or EPSG:4326 geometry column, DOUBLE
+otherwise.
+
+A covering declared by the source is kept whatever the flag says, under the same rules for the struct it names. When
+the copy cannot keep it, `par` prints the reason and the copy follows the flag.
 
 `--covering-page-values <n>` caps the pages of the covering columns at `n` values, 1024 by default. A spatial read
 skips rows by whole covering pages. Smaller pages narrow a small query box to fewer rows, and make the file slightly

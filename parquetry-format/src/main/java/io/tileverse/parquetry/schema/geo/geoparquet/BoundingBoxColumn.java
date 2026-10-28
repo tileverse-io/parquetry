@@ -29,67 +29,100 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * The GeoParquet 1.1 rules for a two-dimensional bounding box column, applied to a top-level {@code bbox} struct. The
- * struct has the fields {@code xmin}, {@code ymin}, {@code xmax} and {@code ymax} and no other. The fields are all
- * FLOAT or all DOUBLE, and the struct has the repetition of its geometry column.
+ * The GeoParquet 1.1 rules for a bounding box column: a top-level struct with the fields {@code xmin}, {@code ymin},
+ * {@code xmax} and {@code ymax}, and optionally the pair {@code zmin} and {@code zmax}, with no other field. The fields
+ * are all FLOAT or all DOUBLE, and the struct has the repetition of its geometry column. A covering declaration names
+ * the planar fields of one such struct.
  *
- * <p>The spec also requires that field order. DuckDB writes the fields as {@code xmin}, {@code xmax}, {@code ymin},
- * {@code ymax}. A writer can still declare such a struct as a covering after {@link #inSpecOrder(ParquetSchema)}
- * reorders its fields.
+ * <p>The spec also fixes the field order: {@code xmin, ymin, xmax, ymax}, or {@code xmin, ymin, zmin, xmax, ymax, zmax}
+ * with the z pair. DuckDB writes the fields as {@code xmin, xmax, ymin, ymax}. A writer can still declare such a struct
+ * as a covering after {@link #inSpecOrder(ParquetSchema, String)} reorders its fields.
  */
 public final class BoundingBoxColumn {
 
-    /** The name of the bounding box column, at the root of the schema. */
+    /** The conventional name of the bounding box column, used by DuckDB and by the covering derived by parquetry. */
     public static final String NAME = "bbox";
 
-    /** The fields of a two-dimensional bounding box column, in the order required by the spec. */
-    public static final List<String> FIELDS = List.of("xmin", "ymin", "xmax", "ymax");
+    private static final List<String> PLANAR_FIELDS = List.of("xmin", "ymin", "xmax", "ymax");
+    private static final List<String> SPATIAL_FIELDS = List.of("xmin", "ymin", "zmin", "xmax", "ymax", "zmax");
 
     private BoundingBoxColumn() {}
 
     /**
-     * Why the {@code bbox} column of {@code schema} cannot be the bounding box column of {@code geometryColumn}, field
-     * order aside; empty when it can. Both columns must exist in {@code schema}.
+     * The struct named by the planar paths of {@code covering}. The spec requires each path to name a field of one
+     * top-level struct, after the extremum it holds: {@code [name, "xmin"]}, {@code [name, "ymin"]}, and so on. Empty
+     * when the paths name anything else.
      */
-    public static Optional<String> defect(ParquetSchema schema, ColumnPath geometryColumn) {
-        SchemaNode bbox = schema.find(ColumnPath.of(NAME)).orElseThrow();
-        if (!(bbox instanceof SchemaNode.Group group)) {
-            return Optional.of("the 'bbox' column is not a struct");
+    public static Optional<String> columnNamedBy(BboxCovering covering) {
+        Map<String, ColumnPath> paths = Map.of(
+                "xmin", covering.xmin(),
+                "ymin", covering.ymin(),
+                "xmax", covering.xmax(),
+                "ymax", covering.ymax());
+        Set<String> structs = new HashSet<>();
+        for (Map.Entry<String, ColumnPath> entry : paths.entrySet()) {
+            ColumnPath path = entry.getValue();
+            if (path.numParts() != 2 || !path.part(1).equals(entry.getKey())) {
+                return Optional.empty();
+            }
+            structs.add(path.part(0));
         }
-        Optional<String> fieldDefect = fieldDefect(group);
+        if (structs.size() != 1) {
+            return Optional.empty();
+        }
+        return Optional.of(structs.iterator().next());
+    }
+
+    /**
+     * Why the column {@code name} of {@code schema} cannot be the bounding box column of {@code geometryColumn}, field
+     * order aside; empty when it can. The geometry column must exist in {@code schema}.
+     */
+    public static Optional<String> defect(ParquetSchema schema, String name, ColumnPath geometryColumn) {
+        Optional<SchemaNode> column = schema.find(ColumnPath.of(name));
+        if (column.isEmpty()) {
+            return Optional.of("there is no '" + name + "' column");
+        }
+        if (!(column.orElseThrow() instanceof SchemaNode.Group struct)) {
+            return Optional.of(columnLabel(name) + " is not a struct");
+        }
+        Optional<String> fieldDefect = fieldDefect(struct);
         if (fieldDefect.isPresent()) {
             return fieldDefect;
         }
         SchemaNode geometry = schema.find(geometryColumn).orElseThrow();
-        return repetitionDefect(group, geometry, geometryColumn);
+        return repetitionDefect(struct, geometry, geometryColumn);
     }
 
-    private static Optional<String> fieldDefect(SchemaNode.Group bbox) {
-        Map<String, SchemaNode> fields = fieldsByName(bbox);
-        for (String name : FIELDS) {
-            if (!fields.containsKey(name)) {
-                return Optional.of("the 'bbox' column has no field '" + name + "'");
+    private static Optional<String> fieldDefect(SchemaNode.Group struct) {
+        Map<String, SchemaNode> fields = fieldsByName(struct);
+        String column = columnLabel(struct.name());
+        for (String field : PLANAR_FIELDS) {
+            if (!fields.containsKey(field)) {
+                return Optional.of(column + " has no field '" + field + "'");
             }
         }
-        for (String name : fields.keySet()) {
-            if (!FIELDS.contains(name)) {
-                return Optional.of("the 'bbox' column has a field '" + name + "' besides xmin, ymin, xmax and ymax");
+        if (fields.containsKey("zmin") != fields.containsKey("zmax")) {
+            return Optional.of(column + " has only one of the fields 'zmin' and 'zmax'");
+        }
+        for (String field : fields.keySet()) {
+            if (!SPATIAL_FIELDS.contains(field)) {
+                return Optional.of(column + " has a field '" + field + "' besides the bounding box fields");
             }
         }
-        return kindDefect(fields);
+        return kindDefect(struct.name(), fields);
     }
 
-    private static Optional<String> kindDefect(Map<String, SchemaNode> fields) {
+    private static Optional<String> kindDefect(String name, Map<String, SchemaNode> fields) {
         Set<PrimitiveKind> kinds = new HashSet<>();
-        for (String name : FIELDS) {
-            Optional<PrimitiveKind> kind = floatingPointKind(fields.get(name));
+        for (String field : specOrder(fields)) {
+            Optional<PrimitiveKind> kind = floatingPointKind(fields.get(field));
             if (kind.isEmpty()) {
-                return Optional.of("the field 'bbox." + name + "' is not FLOAT or DOUBLE");
+                return Optional.of("the field '" + name + "." + field + "' is not FLOAT or DOUBLE");
             }
             kinds.add(kind.orElseThrow());
         }
         if (kinds.size() > 1) {
-            return Optional.of("the fields of the 'bbox' column mix FLOAT and DOUBLE");
+            return Optional.of("the fields of " + columnLabel(name) + " mix FLOAT and DOUBLE");
         }
         return Optional.empty();
     }
@@ -107,24 +140,28 @@ public final class BoundingBoxColumn {
      * breaks that rule, and a reader pruning by the covering would drop the rows without a bounding box.
      */
     private static Optional<String> repetitionDefect(
-            SchemaNode.Group bbox, SchemaNode geometry, ColumnPath geometryColumn) {
-        if (bbox.repetition() == geometry.repetition()) {
+            SchemaNode.Group struct, SchemaNode geometry, ColumnPath geometryColumn) {
+        if (struct.repetition() == geometry.repetition()) {
             return Optional.empty();
         }
-        return Optional.of("the 'bbox' column is " + bbox.repetition() + " but the geometry column '"
+        return Optional.of(columnLabel(struct.name()) + " is " + struct.repetition() + " but the geometry column '"
                 + geometryColumn.dot() + "' is " + geometry.repetition());
     }
 
+    private static String columnLabel(String name) {
+        return "the '" + name + "' column";
+    }
+
     /**
-     * {@code schema} with the fields of its {@code bbox} struct in the order required by the spec. Nothing else
-     * changes. The struct must have no {@link #defect(ParquetSchema, ColumnPath) defect}.
+     * {@code schema} with the fields of its struct {@code name} in the order required by the spec. Nothing else
+     * changes. The struct must have no {@link #defect(ParquetSchema, String, ColumnPath) defect}.
      */
-    public static ParquetSchema inSpecOrder(ParquetSchema schema) {
+    public static ParquetSchema inSpecOrder(ParquetSchema schema, String name) {
         SchemaNode.Group root = schema.root();
         List<SchemaNode> columns = new ArrayList<>(root.children());
         for (int i = 0; i < columns.size(); i++) {
-            if (columns.get(i) instanceof SchemaNode.Group group && NAME.equals(group.name())) {
-                columns.set(i, withFieldsInSpecOrder(group));
+            if (columns.get(i) instanceof SchemaNode.Group struct && name.equals(struct.name())) {
+                columns.set(i, withFieldsInSpecOrder(struct));
             }
         }
         SchemaNode.Group reordered =
@@ -132,15 +169,24 @@ public final class BoundingBoxColumn {
         return new ParquetSchema(reordered);
     }
 
-    private static SchemaNode.Group withFieldsInSpecOrder(SchemaNode.Group bbox) {
-        Map<String, SchemaNode> fields = fieldsByName(bbox);
-        List<SchemaNode> ordered = FIELDS.stream().map(fields::get).toList();
-        return new SchemaNode.Group(bbox.name(), bbox.repetition(), ordered, bbox.logicalType(), bbox.fieldId());
+    private static SchemaNode.Group withFieldsInSpecOrder(SchemaNode.Group struct) {
+        Map<String, SchemaNode> fields = fieldsByName(struct);
+        List<SchemaNode> ordered = specOrder(fields).stream().map(fields::get).toList();
+        return new SchemaNode.Group(
+                struct.name(), struct.repetition(), ordered, struct.logicalType(), struct.fieldId());
     }
 
-    private static Map<String, SchemaNode> fieldsByName(SchemaNode.Group bbox) {
+    /** The field order required by the spec, with the z pair when the struct has it. */
+    private static List<String> specOrder(Map<String, SchemaNode> fields) {
+        if (fields.containsKey("zmin")) {
+            return SPATIAL_FIELDS;
+        }
+        return PLANAR_FIELDS;
+    }
+
+    private static Map<String, SchemaNode> fieldsByName(SchemaNode.Group struct) {
         Map<String, SchemaNode> fields = new HashMap<>();
-        for (SchemaNode field : bbox.children()) {
+        for (SchemaNode field : struct.children()) {
             fields.put(field.name(), field);
         }
         return fields;

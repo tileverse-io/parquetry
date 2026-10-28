@@ -93,9 +93,10 @@ public final class BboxCoveringPlan {
     }
 
     /**
-     * Declares a covering over leaves already in {@code schema}. The geometry column must be one of the configured
-     * geometry columns and each of the four paths must resolve to a FLOAT or DOUBLE leaf; the schema is written as-is
-     * and batches are not augmented.
+     * Declares a covering over a struct already in {@code schema}. The geometry column must be one of the configured
+     * geometry columns. The four paths must name the fields of one top-level struct, and the struct must meet the
+     * {@link BoundingBoxColumn} rules. The struct is written with its fields in the spec order, and batches are not
+     * augmented.
      */
     private static BboxCoveringPlan declareExisting(
             ExistingBboxCovering existing, ParquetSchema schema, List<ColumnPath> geometryColumns) {
@@ -105,29 +106,29 @@ public final class BboxCoveringPlan {
                     + "' as its geometry column, but no CRS is configured for that column");
         }
         CoveringPaths paths = new CoveringPaths(
-                numericLeaf(schema, existing.xmin()),
-                numericLeaf(schema, existing.ymin()),
-                numericLeaf(schema, existing.xmax()),
-                numericLeaf(schema, existing.ymax()));
-        return new BboxCoveringPlan(true, false, schema, geometryColumn, paths, false);
+                ColumnPath.parse(existing.xmin()),
+                ColumnPath.parse(existing.ymin()),
+                ColumnPath.parse(existing.xmax()),
+                ColumnPath.parse(existing.ymax()));
+        String struct = declaredStruct(paths);
+        Optional<String> defect = BoundingBoxColumn.defect(schema, struct, geometryColumn);
+        if (defect.isPresent()) {
+            throw new ParquetWriteException("cannot declare the existing bbox covering: " + defect.orElseThrow());
+        }
+        ParquetSchema writtenSchema = BoundingBoxColumn.inSpecOrder(schema, struct);
+        return new BboxCoveringPlan(true, false, writtenSchema, geometryColumn, paths, false);
     }
 
-    private static ColumnPath numericLeaf(ParquetSchema schema, String dotted) {
-        ColumnPath path = ColumnPath.parse(dotted);
-        Optional<SchemaNode> node = schema.find(path);
-        if (node.isEmpty()) {
-            throw new ParquetWriteException(
-                    "existing bbox covering names '" + dotted + "', which is not in the schema");
+    /** The top-level struct named by the four paths of a declared covering. */
+    private static String declaredStruct(CoveringPaths paths) {
+        BboxCovering declared = new BboxCovering(
+                paths.xmin(), paths.xmax(), paths.ymin(), paths.ymax(), Optional.empty(), Optional.empty());
+        Optional<String> struct = BoundingBoxColumn.columnNamedBy(declared);
+        if (struct.isEmpty()) {
+            throw new ParquetWriteException("cannot declare the existing bbox covering: its paths must name the "
+                    + "fields xmin, ymin, xmax and ymax of one top-level struct");
         }
-        if (!(node.orElseThrow() instanceof SchemaNode.Primitive leaf) || !isFloatOrDouble(leaf.kind())) {
-            throw new ParquetWriteException(
-                    "existing bbox covering names '" + dotted + "', which is not a FLOAT or DOUBLE leaf");
-        }
-        return path;
-    }
-
-    private static boolean isFloatOrDouble(PrimitiveKind kind) {
-        return kind == PrimitiveKind.FLOAT || kind == PrimitiveKind.DOUBLE;
+        return struct.orElseThrow();
     }
 
     /**
@@ -164,7 +165,7 @@ public final class BboxCoveringPlan {
      */
     private static BboxCoveringPlan resolveOverBboxColumn(
             Optional<CoveringMode> requested, ParquetSchema schema, ColumnPath geometryColumn) {
-        Optional<String> defect = BoundingBoxColumn.defect(schema, geometryColumn);
+        Optional<String> defect = BoundingBoxColumn.defect(schema, BBOX, geometryColumn);
         boolean autoRequested = requested.orElse(CoveringMode.AUTO) == CoveringMode.AUTO;
         if (!autoRequested) {
             throw new ParquetWriteException(precisionClashMessage(defect.isEmpty()));
@@ -173,7 +174,7 @@ public final class BboxCoveringPlan {
             String message = "cannot declare the 'bbox' column as the bbox covering: " + defect.orElseThrow();
             return requireOrDowngrade(requested.isPresent(), schema, message);
         }
-        ParquetSchema writtenSchema = BoundingBoxColumn.inSpecOrder(schema);
+        ParquetSchema writtenSchema = BoundingBoxColumn.inSpecOrder(schema, BBOX);
         return new BboxCoveringPlan(true, false, writtenSchema, geometryColumn, bboxStructPaths(), false);
     }
 

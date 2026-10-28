@@ -239,10 +239,13 @@ public record WriteOptions(
 
     /**
      * A {@code bbox} covering already present in the schema: the geometry column described by the covering and the four
-     * FLOAT or DOUBLE leaves holding each row's xmin, ymin, xmax and ymax. The writer declares it in the geo metadata
-     * as-is and derives no covering columns. The four leaves must hold each row's minimum and maximum x and y for the
-     * geometry in {@code geometryColumn}; a declaration over leaves that do not hold those bounds makes readers prune
-     * away matching rows. Every path is a dotted column path, e.g. {@code "bbox.xmin"}.
+     * leaves holding each row's xmin, ymin, xmax and ymax. The leaves are the fields of one top-level struct, named
+     * after the extremum they hold, and the struct must be a GeoParquet bounding box column: FLOAT or DOUBLE fields of
+     * one type, with an optional {@code zmin} and {@code zmax} pair, and the repetition of the geometry column. The
+     * writer declares the covering in the geo metadata, writes the struct with its fields in the spec order, and
+     * derives no covering columns. The four leaves must hold each row's minimum and maximum x and y for the geometry in
+     * {@code geometryColumn}; a declaration over leaves that do not hold those bounds makes readers prune away matching
+     * rows. Every path is a dotted column path, e.g. {@code "bbox.xmin"}.
      *
      * @param geometryColumn dotted path of the geometry column described by the covering
      * @param xmin dotted path of the leaf holding each row's minimum x

@@ -38,7 +38,7 @@ class BoundingBoxColumnTest {
     void duckDbOrderHasNoDefect() {
         ParquetSchema schema = schemaWithBbox(fields(PrimitiveKind.DOUBLE, "xmin", "xmax", "ymin", "ymax"));
 
-        assertThat(BoundingBoxColumn.defect(schema, GEOMETRY)).isEmpty();
+        assertThat(BoundingBoxColumn.defect(schema, "bbox", GEOMETRY)).isEmpty();
     }
 
     @Test
@@ -46,7 +46,7 @@ class BoundingBoxColumnTest {
         SchemaNode bbox = primitive("bbox", PrimitiveKind.DOUBLE);
         ParquetSchema schema = schemaOf(geometry(), bbox);
 
-        assertThat(BoundingBoxColumn.defect(schema, GEOMETRY)).contains("the 'bbox' column is not a struct");
+        assertThat(BoundingBoxColumn.defect(schema, "bbox", GEOMETRY)).contains("the 'bbox' column is not a struct");
     }
 
     @Test
@@ -55,20 +55,75 @@ class BoundingBoxColumnTest {
         fields.add(primitive("ymax", PrimitiveKind.INT64));
         ParquetSchema schema = schemaWithBbox(fields);
 
-        assertThat(BoundingBoxColumn.defect(schema, GEOMETRY)).contains("the field 'bbox.ymax' is not FLOAT or DOUBLE");
+        assertThat(BoundingBoxColumn.defect(schema, "bbox", GEOMETRY))
+                .contains("the field 'bbox.ymax' is not FLOAT or DOUBLE");
     }
 
     @Test
     void inSpecOrderMovesOnlyFields() {
         ParquetSchema schema = schemaWithBbox(fields(PrimitiveKind.FLOAT, "xmax", "xmin", "ymax", "ymin"));
 
-        ParquetSchema reordered = BoundingBoxColumn.inSpecOrder(schema);
+        ParquetSchema reordered = BoundingBoxColumn.inSpecOrder(schema, "bbox");
 
         assertThat(reordered.leafColumns())
                 .extracting(ColumnPath::dot)
                 .containsExactly("geometry", "bbox.xmin", "bbox.ymin", "bbox.xmax", "bbox.ymax");
         assertThat(reordered.find(ColumnPath.of("bbox")).orElseThrow().repetition())
                 .isEqualTo(Repetition.OPTIONAL);
+    }
+
+    @Test
+    void zPairGoesAfterEachPlane() {
+        List<SchemaNode> fields = fields(PrimitiveKind.DOUBLE, "zmax", "xmin", "zmin", "xmax", "ymin", "ymax");
+        ParquetSchema schema = schemaWithBbox(fields);
+
+        ParquetSchema reordered = BoundingBoxColumn.inSpecOrder(schema, "bbox");
+
+        assertThat(BoundingBoxColumn.defect(schema, "bbox", GEOMETRY)).isEmpty();
+        assertThat(reordered.leafColumns())
+                .extracting(ColumnPath::dot)
+                .containsExactly(
+                        "geometry", "bbox.xmin", "bbox.ymin", "bbox.zmin", "bbox.xmax", "bbox.ymax", "bbox.zmax");
+    }
+
+    @Test
+    void zminWithoutZmaxIsADefect() {
+        ParquetSchema schema = schemaWithBbox(fields(PrimitiveKind.DOUBLE, "xmin", "ymin", "zmin", "xmax", "ymax"));
+
+        assertThat(BoundingBoxColumn.defect(schema, "bbox", GEOMETRY))
+                .contains("the 'bbox' column has only one of the fields 'zmin' and 'zmax'");
+    }
+
+    @Test
+    void coveringNamesOneStruct() {
+        BboxCovering covering = covering("extent.xmin", "extent.ymin", "extent.xmax", "extent.ymax");
+
+        assertThat(BoundingBoxColumn.columnNamedBy(covering)).contains("extent");
+    }
+
+    @Test
+    void coveringOverTwoStructs() {
+        BboxCovering covering = covering("a.xmin", "a.ymin", "b.xmax", "b.ymax");
+
+        assertThat(BoundingBoxColumn.columnNamedBy(covering)).isEmpty();
+    }
+
+    // The spec requires each path to end in the name of its extremum.
+    @Test
+    void coveringOverMisnamedFields() {
+        BboxCovering covering = covering("bbox.minx", "bbox.miny", "bbox.maxx", "bbox.maxy");
+
+        assertThat(BoundingBoxColumn.columnNamedBy(covering)).isEmpty();
+    }
+
+    private static BboxCovering covering(String xmin, String ymin, String xmax, String ymax) {
+        return new BboxCovering(
+                ColumnPath.parse(xmin),
+                ColumnPath.parse(xmax),
+                ColumnPath.parse(ymin),
+                ColumnPath.parse(ymax),
+                Optional.empty(),
+                Optional.empty());
     }
 
     private static List<SchemaNode> fields(PrimitiveKind kind, String... names) {
