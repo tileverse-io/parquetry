@@ -19,67 +19,41 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.atomic.LongAdder;
 
 /**
- * A bounded pool of native {@link MemorySegment}s for column-chunk fetch and per-page decode buffers, the JDK-only
- * {@link SegmentPool#getDefault() default}. It reuses native memory across reads while keeping a long-running server's
- * native footprint flat.
- *
- * <p>Reuse matters because {@link Arena#allocate} always zeroes its memory: a fetch span or a decompression output is
- * allocated, fully overwritten, then discarded, and a fresh allocation per use pays that zeroing every time. Pooling
- * pays the zeroing once and reuses the buffer; the cost shows up directly under heavy scans.
- *
- * <p>Two size classes share the same reuse machinery but keep separate idle-retention caps, letting the common buffers
- * of each class reuse without a rare outlier pinning memory. {@code largeBufferThreshold} is the dividing line.
+ * A bounded pool of native {@link MemorySegment}s for fetch and decode buffers, the JDK-only
+ * {@link SegmentPool#getDefault() default}. {@link Arena#allocate} zeroes what it returns, and these buffers are
+ * overwritten in full anyway. Reusing them pays the zeroing once instead of on each use.
  *
  * <ul>
- *   <li><b>Small buffers</b> (rounded capacity at most {@code largeBufferThreshold}) reuse up to {@code maxPooledBytes}
- *       of idle retention.
- *   <li><b>Large buffers</b> (above the threshold) reuse up to {@code maxLargePooledBytes}. A row group's fetch buffer
- *       lands here; reusing it across row groups is the bulk of the saved zeroing.
+ *   <li><b>Size classes.</b> Capacities up to {@code largeBufferThreshold} are small, and up to {@code maxPooledBytes}
+ *       of them stay idle. Larger ones, such as a row group's fetch buffer, have their own cap,
+ *       {@code maxLargePooledBytes}. A rare outlier then cannot pin the memory of the common sizes. Capacities round up
+ *       to {@code blockSize}.
+ *   <li><b>Borrow and return.</b> A borrow takes the smallest idle backing that fits, or allocates one, and is never
+ *       refused. A return is retained while its class is under its cap and the footprint within {@code maxTotalBytes};
+ *       otherwise its memory is freed at once.
+ *   <li><b>Stripes.</b> The small class is split over stripes, one per core, in a {@link StripedFreeLists}. The large
+ *       class takes a few operations per query and keeps one {@link LockedFreeLists}. Nothing on the borrow and return
+ *       path is written by all threads.
+ *   <li><b>Footprint ceiling.</b> {@code maxTotalBytes} bounds the borrowed and retained bytes together. The footprint
+ *       never exceeds the larger of this ceiling and the bytes in flight. The default pool sets it to the fetch and
+ *       decode budgets. Retention then fills what they leave idle and adds nothing to them.
+ *   <li><b>Arenas.</b> Each backing owns an explicitly closed arena and frees on its own. Such memory does not count
+ *       against {@code -XX:MaxDirectMemorySize}, unlike an {@link Arena#ofAuto() auto} arena's. {@link MappedMemory}
+ *       maps the backings of at least {@link MappedMemory#MIN_MAPPED_BYTES}, and their pages go back to the kernel when
+ *       they are freed.
+ *   <li><b>Idle decay.</b> With a positive {@code idleRetentionNanos}, a daemon timer frees backings idle past that
+ *       window every {@link #SWEEP_INTERVAL_SECONDS} seconds. The timer holds the pool weakly, and a pool abandoned
+ *       without {@link #close()} is still collected. {@link #close()} stops the timer and frees everything retained.
  * </ul>
- *
- * <p>In each class a borrow takes the smallest free backing that fits, or allocates a fresh one; a return is retained
- * for reuse while its class is under its cap, and otherwise has its arena closed at once, freeing the native memory
- * deterministically. A return over the cap evicting the incoming backing keeps a freak oversized request from pinning
- * memory: it is allocated, used, then freed on return rather than parked.
- *
- * <p>{@code maxTotalBytes} limits retention by the pool's whole footprint, the borrowed and the retained bytes
- * together. The class caps bound what sits idle; the ceiling decides whether a return is retained at all: only while
- * the total stays within it. A borrow is never refused, and the footprint never exceeds the larger of the ceiling and
- * the bytes in flight. The default pool sets the ceiling to what the fetch and off-heap decode budgets allow in flight;
- * retention then fills what those budgets leave idle instead of adding to them.
- *
- * <p>Every backing comes from an explicitly-closed {@link Arena}, never a GC-managed {@link Arena#ofAuto() auto} arena.
- * Auto-arena segments are reserved against {@code -XX:MaxDirectMemorySize} (they free on garbage collection, which the
- * JVM must drive under direct-memory pressure); explicitly-closed arenas are not. Sourcing the pool from explicit
- * arenas keeps the streaming working set off that ceiling, which would otherwise default to {@code -Xmx} and starve a
- * concurrent reader. A per-backing arena (rather than one pool-wide arena) is what lets a single evicted backing free
- * on its own. A large backing is an anonymous mapping from {@link MappedMemory}, unmapped when freed. Memory freed to
- * malloc stays in the allocator's arenas instead, and the process keeps growing.
- *
- * <p>Capacities are rounded up to {@code blockSize}, mapping requests of slightly different sizes onto one shared
- * capacity they can reuse from one another.
- *
- * <p>When the policy sets a positive {@code idleRetentionNanos}, the pool runs a timer on a daemon thread that
- * periodically frees backings left idle past that window, returning their native memory to the OS during quiet periods.
- * The thread is parked between sweeps and wakes briefly every {@link #SWEEP_INTERVAL_SECONDS} seconds. The sweep only
- * reaps when it can take the lock without waiting; a pool actively serving borrows holds the lock briefly and is
- * skipped that round, which is harmless because the next sweep one interval later reaps it. {@link #close()} stops the
- * timer and frees everything retained.
- *
- * <p>The timer task holds only a {@link WeakReference} to its pool, keeping the pool collectible while the daemon
- * thread is alive. A private pool abandoned without {@link #close()} would otherwise be pinned for the life of the JVM
- * by its own timer thread; instead the next sweep observes the cleared reference, shuts the timer down, and lets the
- * thread and its native footprint be reclaimed.
  */
 final class DefaultSegmentPool implements SegmentPool {
 
@@ -99,12 +73,16 @@ final class DefaultSegmentPool implements SegmentPool {
                 options.maxLargePooledBytes(),
                 options.maxTotalBytes(),
                 options.idleRetentionNanos(),
-                options.blockSize());
+                options.blockSize(),
+                StripedFreeLists.stripeCount(
+                        Runtime.getRuntime().availableProcessors(),
+                        options.maxPooledBytes(),
+                        options.largeBufferThreshold()));
         pool.startIdleSweep();
         return pool;
     }
 
-    /** Rounded capacities at or below this reuse from {@link #smallClass}; larger ones from {@link #largeClass}. */
+    /** Rounded capacities at or below this reuse in the small class; larger ones in the large class. */
     private final long largeBufferThreshold;
 
     /** Requested sizes round up to a multiple of this, mapping near-equal requests onto one reusable capacity. */
@@ -118,29 +96,30 @@ final class DefaultSegmentPool implements SegmentPool {
      */
     private final long maxTotalBytes;
 
-    /** Guards both size classes' free lists, their retained-byte counters and {@link #borrowedBytes}. */
-    private final ReentrantLock lock = new ReentrantLock();
+    /** The small class, split over stripes. */
+    private final StripedFreeLists smallBuffers;
 
-    /** Total capacity of the backings borrowed and not yet returned. Guarded by {@link #lock}. */
-    private long borrowedBytes;
+    /** The large class under one lock and an exact cap; it takes a few operations per query. */
+    private final LockedFreeLists largeBuffers;
 
-    /** Reuse pool for buffers at or below {@link #largeBufferThreshold}. */
-    private final SizeClass smallClass;
+    /**
+     * The capacity of the backings alive, borrowed or idle: the pool's footprint. It moves only when a backing is
+     * allocated or freed, never on a borrow or a return, hence the ceiling check on a return is one read of it.
+     */
+    private final AtomicLong footprint = new AtomicLong();
 
-    /** Reuse pool for buffers above {@link #largeBufferThreshold} (row-group fetch buffers, large decode buffers). */
-    private final SizeClass largeClass;
+    /** Borrows handed out but not yet returned; reaching zero proves every borrowed segment was closed. */
+    private final LongAdder outstandingBorrows = new LongAdder();
+
+    /** Borrows ever made, never decremented; a monitoring counter, zero proves the pool was never drawn from. */
+    private final LongAdder totalBorrows = new LongAdder();
 
     /**
      * The idle-sweep timer, created when idle decay is enabled and scheduled after construction; null when disabled.
      */
     private final ScheduledExecutorService idleSweep;
 
-    /** Borrows handed out but not yet returned; reaching zero proves every borrowed segment was closed. */
-    private final AtomicLong outstandingBorrows = new AtomicLong();
-
-    /** Borrows ever made, never decremented; a monitoring counter, zero proves the pool was never drawn from. */
-    private final AtomicLong totalBorrows = new AtomicLong();
-
+    /** A single-stripe pool, the retention policy in its exact form; the tests of that policy build this one. */
     DefaultSegmentPool(long largeBufferThreshold, long maxPooledBytes, long maxLargePooledBytes, int blockSize) {
         this(largeBufferThreshold, maxPooledBytes, maxLargePooledBytes, 0L, blockSize);
     }
@@ -161,6 +140,24 @@ final class DefaultSegmentPool implements SegmentPool {
             long maxTotalBytes,
             long idleRetentionNanos,
             int blockSize) {
+        this(
+                largeBufferThreshold,
+                maxPooledBytes,
+                maxLargePooledBytes,
+                maxTotalBytes,
+                idleRetentionNanos,
+                blockSize,
+                1);
+    }
+
+    DefaultSegmentPool(
+            long largeBufferThreshold,
+            long maxPooledBytes,
+            long maxLargePooledBytes,
+            long maxTotalBytes,
+            long idleRetentionNanos,
+            int blockSize,
+            int stripes) {
         if (largeBufferThreshold <= 0) {
             throw new IllegalArgumentException("largeBufferThreshold must be > 0, got " + largeBufferThreshold);
         }
@@ -183,8 +180,8 @@ final class DefaultSegmentPool implements SegmentPool {
         this.maxTotalBytes = maxTotalBytes;
         this.blockSize = blockSize;
         this.idleRetentionNanos = idleRetentionNanos;
-        this.smallClass = new SizeClass(maxPooledBytes);
-        this.largeClass = new SizeClass(maxLargePooledBytes);
+        this.smallBuffers = new StripedFreeLists(maxPooledBytes, stripes);
+        this.largeBuffers = new LockedFreeLists(maxLargePooledBytes);
         this.idleSweep =
                 idleRetentionNanos > 0 ? Executors.newSingleThreadScheduledExecutor(reaperThreadFactory()) : null;
     }
@@ -195,42 +192,34 @@ final class DefaultSegmentPool implements SegmentPool {
             throw new IllegalArgumentException("byteSize must be >= 0, got " + byteSize);
         }
         long capacity = roundUpToBlockSize(byteSize);
-        SizeClass sizeClass = capacity > largeBufferThreshold ? largeClass : smallClass;
-        Backing backing = claimBacking(sizeClass, capacity);
+        Backing backing = capacity > largeBufferThreshold ? largeBuffers.take(capacity) : smallBuffers.take(capacity);
         if (backing == null) {
-            backing = allocateClaimedCapacity(capacity);
+            backing = allocateFresh(capacity);
         }
-        MemorySegment view = backing.view(byteSize);
-        outstandingBorrows.incrementAndGet();
-        totalBorrows.incrementAndGet();
-        return new PooledSegment(this, backing, view);
+        outstandingBorrows.increment();
+        totalBorrows.increment();
+        return new PooledSegment(this, backing, backing.view(byteSize));
     }
 
     @Override
     public PoolStats stats() {
-        lock.lock();
-        try {
-            int freeSegments = smallClass.size() + largeClass.size();
-            long retainedBytes = smallClass.retainedBytes() + largeClass.retainedBytes();
-            return new PoolStats(
-                    outstandingBorrows.get(), totalBorrows.get(), freeSegments, retainedBytes, borrowedBytes);
-        } finally {
-            lock.unlock();
-        }
+        long retainedBytes = largeBuffers.retainedBytes() + smallBuffers.retainedBytes();
+        int freeSegments = largeBuffers.count() + smallBuffers.count();
+        long borrowedBytes = footprint.get() - retainedBytes;
+        return new PoolStats(outstandingBorrows.sum(), totalBorrows.sum(), freeSegments, retainedBytes, borrowedBytes);
     }
 
     @Override
     public void close() {
         stopIdleSweep();
-        List<Backing> drained = new ArrayList<>();
-        lock.lock();
-        try {
-            drained.addAll(smallClass.drain());
-            drained.addAll(largeClass.drain());
-        } finally {
-            lock.unlock();
-        }
+        List<Backing> drained = new ArrayList<>(largeBuffers.drain());
+        drained.addAll(smallBuffers.drain());
         freeAll(drained);
+    }
+
+    /** The number of stripes the small class is split over. */
+    int stripes() {
+        return smallBuffers.stripes();
     }
 
     /**
@@ -253,52 +242,37 @@ final class DefaultSegmentPool implements SegmentPool {
 
     /** Called by a handle's first {@code close()}; the handles guarantee at most one call per borrow. */
     void borrowReturned() {
-        outstandingBorrows.decrementAndGet();
-    }
-
-    void giveBack(Backing backing) {
-        long size = backing.byteSize();
-        SizeClass sizeClass = size > largeBufferThreshold ? largeClass : smallClass;
-        long nowNanos = System.nanoTime();
-        boolean retained;
-        lock.lock();
-        try {
-            borrowedBytes -= size;
-            retained = fitsUnderCeiling(size) && sizeClass.offer(backing, nowNanos);
-        } finally {
-            lock.unlock();
-        }
-        if (!retained) {
-            backing.close();
-        }
+        outstandingBorrows.decrement();
     }
 
     /**
-     * Whether retaining a returned backing of {@code size} bytes keeps the pool's whole footprint, borrowed and
-     * retained together, within {@link #maxTotalBytes}. A return moves bytes from borrowed to retained and leaves the
-     * total as it was. A pool working inside its ceiling therefore retains each return. Only borrows beyond the ceiling
-     * make later returns free their memory, until the total is back under it. Caller holds {@link #lock}.
+     * Retains {@code backing} when the ceiling and its class's cap allow, and frees it otherwise. A return moves bytes
+     * from borrowed to retained and leaves the footprint as it was: it is retained while the footprint is within the
+     * ceiling. Only borrows beyond the ceiling make later returns free their memory, until the footprint is back under
+     * it.
      */
-    private boolean fitsUnderCeiling(long size) {
-        long retainedBytes = smallClass.retainedBytes() + largeClass.retainedBytes();
-        return borrowedBytes + retainedBytes + size <= maxTotalBytes;
+    void giveBack(Backing backing) {
+        if (footprint.get() > maxTotalBytes) {
+            free(backing);
+            return;
+        }
+        boolean retained =
+                backing.byteSize() > largeBufferThreshold ? largeBuffers.put(backing) : smallBuffers.put(backing);
+        if (!retained) {
+            free(backing);
+        }
     }
 
     /**
-     * Frees every retained backing idle for at least {@code thresholdNanos} as of {@code nowNanos}, taking the lock
+     * Frees the retained backings idle for at least {@code thresholdNanos} as of {@code nowNanos}, taking each lock
      * normally. The package-private entry point the tests drive directly; the live pool reaps through {@link #sweep()}.
      */
     void reapIdle(long nowNanos, long thresholdNanos) {
         if (thresholdNanos <= 0) {
             return;
         }
-        List<Backing> stale;
-        lock.lock();
-        try {
-            stale = collectStale(nowNanos, thresholdNanos);
-        } finally {
-            lock.unlock();
-        }
+        List<Backing> stale = new ArrayList<>(largeBuffers.reapStale(nowNanos, thresholdNanos));
+        stale.addAll(smallBuffers.reapStale(nowNanos, thresholdNanos));
         freeAll(stale);
     }
 
@@ -317,48 +291,20 @@ final class DefaultSegmentPool implements SegmentPool {
     }
 
     /**
-     * Reaps idle backings only when the lock can be taken without waiting. Skipping a contended tick is harmless: the
-     * next sweep one interval later reaps, and a pool busy enough to hold the lock at the tick is actively churning its
+     * Reaps the idle backings behind the locks it can take without waiting. Skipping a busy stripe is harmless: the
+     * next sweep one interval later reaps it, and a stripe busy enough to hold its lock at the tick is churning its
      * buffers rather than letting them sit idle.
      */
     private void sweep() {
-        if (!lock.tryLock()) {
-            return;
-        }
-        List<Backing> stale;
-        try {
-            stale = collectStale(System.nanoTime(), idleRetentionNanos);
-        } finally {
-            lock.unlock();
-        }
+        long nowNanos = System.nanoTime();
+        List<Backing> stale = new ArrayList<>(largeBuffers.tryReapStale(nowNanos, idleRetentionNanos));
+        stale.addAll(smallBuffers.tryReapStale(nowNanos, idleRetentionNanos));
         freeAll(stale);
     }
 
-    private List<Backing> collectStale(long nowNanos, long thresholdNanos) {
-        List<Backing> stale = new ArrayList<>();
-        stale.addAll(smallClass.reapStale(nowNanos, thresholdNanos));
-        stale.addAll(largeClass.reapStale(nowNanos, thresholdNanos));
-        return stale;
-    }
-
-    /**
-     * Takes the smallest retained backing that fits {@code capacity}, or {@code null} when the caller must allocate a
-     * fresh one. Either way the bytes count as borrowed from here on: the backing's own size when one is reused, the
-     * requested capacity when one is about to be allocated.
-     */
-    private Backing claimBacking(SizeClass sizeClass, long capacity) {
-        lock.lock();
-        try {
-            Backing fit = sizeClass.takeFit(capacity);
-            borrowedBytes += fit != null ? fit.byteSize() : capacity;
-            return fit;
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    /** Allocates a fresh backing of a capacity already counted as borrowed, uncounting it when the allocation fails. */
-    private Backing allocateClaimedCapacity(long capacity) {
+    /** Allocates a fresh backing, counted in the footprint before the allocation and uncounted when it fails. */
+    private Backing allocateFresh(long capacity) {
+        footprint.addAndGet(capacity);
         boolean allocated = false;
         try {
             Arena arena = Arena.ofShared();
@@ -367,24 +313,20 @@ final class DefaultSegmentPool implements SegmentPool {
             return new Backing(arena, segment);
         } finally {
             if (!allocated) {
-                unclaimCapacity(capacity);
+                footprint.addAndGet(-capacity);
             }
         }
     }
 
-    private void unclaimCapacity(long capacity) {
-        lock.lock();
-        try {
-            borrowedBytes -= capacity;
-        } finally {
-            lock.unlock();
+    private void freeAll(List<Backing> backings) {
+        for (Backing backing : backings) {
+            free(backing);
         }
     }
 
-    private static void freeAll(List<Backing> backings) {
-        for (Backing backing : backings) {
-            backing.close();
-        }
+    private void free(Backing backing) {
+        footprint.addAndGet(-backing.byteSize());
+        backing.close();
     }
 
     private long roundUpToBlockSize(long byteSize) {
@@ -440,100 +382,6 @@ final class DefaultSegmentPool implements SegmentPool {
         /** Frees the backing's native memory by closing its arena. */
         void close() {
             arena.close();
-        }
-    }
-
-    /**
-     * One size class's reuse state: a capacity-sorted free list of retained backings under a byte cap, each stamped
-     * with the time it was returned for idle reaping. Not thread-safe; the enclosing pool serializes every call through
-     * its single {@link #lock}.
-     */
-    private static final class SizeClass {
-
-        private final List<Retained> free = new ArrayList<>();
-        private final long maxRetainedBytes;
-        private long retainedBytes;
-
-        SizeClass(long maxRetainedBytes) {
-            this.maxRetainedBytes = maxRetainedBytes;
-        }
-
-        /** Removes and returns the smallest retained backing that fits {@code capacity}, or {@code null} when none. */
-        Backing takeFit(long capacity) {
-            for (int i = 0; i < free.size(); i++) {
-                Retained candidate = free.get(i);
-                if (candidate.byteSize() >= capacity) {
-                    retainedBytes -= candidate.byteSize();
-                    return free.remove(i).backing();
-                }
-            }
-            return null;
-        }
-
-        /** Retains {@code backing} (stamped {@code nowNanos}) for reuse when it fits under the cap. */
-        boolean offer(Backing backing, long nowNanos) {
-            long size = backing.byteSize();
-            if (retainedBytes + size > maxRetainedBytes) {
-                return false;
-            }
-            free.add(insertionPoint(size), new Retained(backing, nowNanos));
-            retainedBytes += size;
-            return true;
-        }
-
-        /** Removes and returns backings idle for at least {@code thresholdNanos} as of {@code nowNanos}. */
-        List<Backing> reapStale(long nowNanos, long thresholdNanos) {
-            List<Backing> stale = new ArrayList<>();
-            Iterator<Retained> iterator = free.iterator();
-            while (iterator.hasNext()) {
-                Retained retained = iterator.next();
-                if (nowNanos - retained.retainedAtNanos() >= thresholdNanos) {
-                    retainedBytes -= retained.byteSize();
-                    stale.add(retained.backing());
-                    iterator.remove();
-                }
-            }
-            return stale;
-        }
-
-        List<Backing> drain() {
-            List<Backing> drained = new ArrayList<>(free.size());
-            for (Retained retained : free) {
-                drained.add(retained.backing());
-            }
-            free.clear();
-            retainedBytes = 0;
-            return drained;
-        }
-
-        int size() {
-            return free.size();
-        }
-
-        long retainedBytes() {
-            return retainedBytes;
-        }
-
-        private int insertionPoint(long byteSize) {
-            int low = 0;
-            int high = free.size();
-            while (low < high) {
-                int mid = (low + high) >>> 1;
-                if (free.get(mid).byteSize() >= byteSize) {
-                    high = mid;
-                } else {
-                    low = mid + 1;
-                }
-            }
-            return low;
-        }
-
-        /** A retained backing paired with the time it entered the free list, for idle reaping. */
-        private record Retained(Backing backing, long retainedAtNanos) {
-
-            long byteSize() {
-                return backing.byteSize();
-            }
         }
     }
 }
