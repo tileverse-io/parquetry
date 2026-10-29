@@ -53,8 +53,8 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * vectors, the level windows, and the validity read from them.
  *
  * <p>The per-batch level windows for every repeated leaf are copied once into one pooled segment through
- * {@link BatchLevels}; the returned instance is added to {@code acquiredBuffers}, which the caller's batch owns and
- * closes. When the schema has no repeated leaf the empty {@link BatchLevels} acquires no segment.
+ * {@link BatchLevels}; the returned instance is added to {@code batchBuffers}, owned and closed by the caller's batch.
+ * When the schema has no repeated leaf the empty {@link BatchLevels} acquires no segment.
  *
  * <p>The leaf-hiding rules match the eager walk: a LIST or MAP hides every descendant leaf, a STRUCT keeps its
  * row-aligned child leaves addressable and hides only the leaves descending through a repeated child.
@@ -69,7 +69,7 @@ public final class LevelVectorAssembler {
      * every call; a caller reading many batches over one row group resolves a {@link LevelAssemblyPlan} once and passes
      * it instead.
      *
-     * @param acquiredBuffers receives the per-batch {@link BatchLevels}; the caller's batch closes it
+     * @param batchBuffers receives the per-batch {@link BatchLevels}; the caller's batch closes it
      */
     static Map<ColumnPath, ColumnVector> assembleLevelForm(
             ParquetSchema projectedSchema,
@@ -78,18 +78,11 @@ public final class LevelVectorAssembler {
             Map<ColumnPath, LevelSlice> defLevelsByLeaf,
             int numRows,
             DecodeBufferAllocator allocator,
-            List<AutoCloseable> acquiredBuffers) {
+            BatchBuffers batchBuffers) {
 
         LevelAssemblyPlan plan = LevelAssemblyPlan.of(projectedSchema, leafVectors.keySet());
         return assembleLevelForm(
-                plan,
-                projectedSchema,
-                leafVectors,
-                repLevelsByLeaf,
-                defLevelsByLeaf,
-                numRows,
-                allocator,
-                acquiredBuffers);
+                plan, projectedSchema, leafVectors, repLevelsByLeaf, defLevelsByLeaf, numRows, allocator, batchBuffers);
     }
 
     /**
@@ -97,7 +90,7 @@ public final class LevelVectorAssembler {
      * batch's leaves. The plan must have been resolved against {@code projectedSchema} and the key set of
      * {@code leafVectors}.
      *
-     * @param acquiredBuffers receives the per-batch {@link BatchLevels}; the caller's batch closes it
+     * @param batchBuffers receives the per-batch {@link BatchLevels}; the caller's batch closes it
      */
     // S107: the batch's decode inputs plus the resolved plan; a parameter object would only relocate the arity
     @SuppressWarnings("java:S107")
@@ -109,11 +102,11 @@ public final class LevelVectorAssembler {
             Map<ColumnPath, LevelSlice> defLevelsByLeaf,
             int numRows,
             DecodeBufferAllocator allocator,
-            List<AutoCloseable> acquiredBuffers) {
+            BatchBuffers batchBuffers) {
 
         BatchLevels batchLevels =
                 BatchLevels.build(allocator, repLevelsByLeaf, defLevelsByLeaf, plan.repeatedLeaves(), numRows);
-        acquiredBuffers.add(batchLevels);
+        batchBuffers.add(batchLevels);
 
         DremelAssembler dremel = new DremelAssembler(projectedSchema, leafVectors, repLevelsByLeaf, defLevelsByLeaf);
         Assembly assembly = new Assembly(projectedSchema, leafVectors, batchLevels, dremel, numRows);

@@ -292,7 +292,7 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
             return readAndEvaluateSpanningRow();
         }
         long firstDenseRow = rowsDecodedTotal;
-        List<AutoCloseable> acquired = new ArrayList<>();
+        BatchBuffers acquired = new BatchBuffers(decodeBufferAllocator);
         Map<ColumnPath, ColumnVector> leafVectors = new HashMap<>();
         Map<ColumnPath, LevelSlice> repLevels = new HashMap<>();
         Map<ColumnPath, LevelSlice> defLevels = new HashMap<>();
@@ -310,7 +310,7 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
                     acquired,
                     false);
         } catch (RuntimeException e) {
-            closeQuietly(acquired);
+            acquired.close();
             throw e;
         }
     }
@@ -336,7 +336,7 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
             Map<ColumnPath, ColumnVector> leafVectors,
             Map<ColumnPath, LevelSlice> repLevels,
             Map<ColumnPath, LevelSlice> defLevels,
-            List<AutoCloseable> acquired) {
+            BatchBuffers acquired) {
         for (Map.Entry<ColumnPath, BatchColumnReader> entry : filterReaders.entrySet()) {
             BatchColumnReader reader = entry.getValue();
             int windowValues = reader.valuesForLogicalRows(windowRows);
@@ -360,7 +360,7 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
     private Window readAndEvaluateSpanningRow() {
         requireUnmaskedSpanningRow();
         long firstDenseRow = rowsDecodedTotal;
-        List<AutoCloseable> acquired = new ArrayList<>();
+        BatchBuffers acquired = new BatchBuffers(decodeBufferAllocator);
         Map<ColumnPath, ColumnVector> leafVectors = new HashMap<>();
         Map<ColumnPath, LevelSlice> repLevels = new HashMap<>();
         Map<ColumnPath, LevelSlice> defLevels = new HashMap<>();
@@ -371,7 +371,7 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
             return new Window(
                     firstDenseRow, 1, Survivors.of(survivors), leafVectors, repLevels, defLevels, acquired, true);
         } catch (RuntimeException e) {
-            closeQuietly(acquired);
+            acquired.close();
             throw e;
         }
     }
@@ -396,7 +396,7 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
             Map<ColumnPath, ColumnVector> leafVectors,
             Map<ColumnPath, LevelSlice> repLevels,
             Map<ColumnPath, LevelSlice> defLevels,
-            List<AutoCloseable> acquired) {
+            BatchBuffers acquired) {
         for (Map.Entry<ColumnPath, BatchColumnReader> entry : filterReaders.entrySet()) {
             BatchColumnReader.SpanningRow row = entry.getValue().readSpanningRow(acquired);
             if (row.repLevels() != null) {
@@ -416,7 +416,7 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
             Map<ColumnPath, LevelSlice> defLevels,
             long firstDenseRow,
             int windowRows,
-            List<AutoCloseable> acquired) {
+            BatchBuffers acquired) {
         long start = System.nanoTime();
         try (ParquetRecordBatch filterBatch =
                 filterBatch(leafVectors, repLevels, defLevels, firstDenseRow, windowRows, acquired)) {
@@ -438,7 +438,7 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
             Map<ColumnPath, LevelSlice> defLevels,
             long firstDenseRow,
             int windowRows,
-            List<AutoCloseable> acquired) {
+            BatchBuffers acquired) {
         Map<ColumnPath, ColumnVector> vectors = BatchAssembly.assemble(
                 BatchForm.LEVELS,
                 filterPlans,
@@ -463,20 +463,9 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
         return RowPositionVectors.add(vectors, filterPositions.orElseThrow(), positions, windowRows);
     }
 
-    /** Closes decode buffers in reverse order, best-effort: one failing close must not strand the others. */
-    private static void closeQuietly(List<AutoCloseable> buffers) {
-        for (int i = buffers.size() - 1; i >= 0; i--) {
-            try {
-                buffers.get(i).close();
-            } catch (Exception _) {
-                // best-effort release; one failure must not strand the others
-            }
-        }
-    }
-
     /** Builds the window's emitted batch: survivor-dense output leaves, in the read's batch form. */
     private ParquetRecordBatch emit(Window window) {
-        List<AutoCloseable> acquired = window.acquiredBuffers();
+        BatchBuffers acquired = window.batchBuffers();
         try {
             int survivors = window.survivorCount();
             Map<ColumnPath, ColumnVector> leafVectors = new HashMap<>();
@@ -496,9 +485,7 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
                     acquired);
             Map<ColumnPath, ColumnVector> withPositions = addOutputPositions(vectors, window);
             DefaultParquetRecordBatch batch = new DefaultParquetRecordBatch(outputSchema, withPositions, survivors);
-            for (AutoCloseable buffer : acquired) {
-                batch.registerBuffer(buffer);
-            }
+            batch.registerBuffer(acquired);
             rowsMatchedTotal += survivors;
             return batch;
         } catch (RuntimeException e) {
@@ -556,7 +543,7 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
             Map<ColumnPath, ColumnVector> leafVectors,
             Map<ColumnPath, LevelSlice> repLevels,
             Map<ColumnPath, LevelSlice> defLevels,
-            List<AutoCloseable> acquired) {
+            BatchBuffers acquired) {
         for (Map.Entry<ColumnPath, BatchColumnReader> entry : outputReaders.entrySet()) {
             BatchColumnReader.MaskedWindow masked = readOutputWindow(entry.getValue(), window, acquired);
             leafVectors.put(entry.getKey(), masked.vector());
@@ -571,7 +558,7 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
 
     /** One output column's surviving values for the window, read across the page boundary for a spanning row. */
     private BatchColumnReader.MaskedWindow readOutputWindow(
-            BatchColumnReader reader, Window window, List<AutoCloseable> acquired) {
+            BatchColumnReader reader, Window window, BatchBuffers acquired) {
         BitSet survivors = window.survivors().bits();
         if (window.spansPages()) {
             return reader.readMaskedSpanningRow(survivors.get(0), acquired);
@@ -583,7 +570,7 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
     private void skipOutputs(Window window) {
         for (BatchColumnReader reader : outputReaders.values()) {
             if (window.spansPages()) {
-                reader.readMaskedSpanningRow(false, window.acquiredBuffers());
+                reader.readMaskedSpanningRow(false, window.batchBuffers());
             } else {
                 reader.skipMaskedWindow(window.rows());
             }
@@ -669,9 +656,9 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
     /**
      * One window's decoded filter columns and the rows of it the predicate kept. The vectors and level windows cover
      * the window's own rows, indexed from zero; {@code firstDenseRow} places those rows in the row group, counting the
-     * rows the scan walked before them. {@code acquiredBuffers} holds the decode buffers they read, which the emitted
-     * batch takes over and a dropped window releases. {@code spansPages} marks the one-row window that follows a row
-     * past the page it started in.
+     * rows the scan walked before them. {@code batchBuffers} holds the decode buffers read by those vectors; the
+     * emitted batch takes them over, and a dropped window releases them. {@code spansPages} marks the one-row window
+     * that follows a row past the page it started in.
      */
     private record Window(
             long firstDenseRow,
@@ -680,7 +667,7 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
             Map<ColumnPath, ColumnVector> leafVectors,
             Map<ColumnPath, LevelSlice> repLevels,
             Map<ColumnPath, LevelSlice> defLevels,
-            List<AutoCloseable> acquiredBuffers,
+            BatchBuffers batchBuffers,
             boolean spansPages) {
 
         int survivorCount() {
@@ -689,7 +676,7 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
 
         /** Closes the window's decode buffers in reverse order, best-effort. */
         void release() {
-            closeQuietly(acquiredBuffers);
+            batchBuffers.close();
         }
     }
 

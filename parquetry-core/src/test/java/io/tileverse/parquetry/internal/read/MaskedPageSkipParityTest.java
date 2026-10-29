@@ -125,7 +125,7 @@ class MaskedPageSkipParityTest {
 
     private static DrainResult drainWholePages(BatchColumnReader reader) {
         DrainedRows drained = new DrainedRows();
-        List<AutoCloseable> acquiredBuffers = new ArrayList<>();
+        BatchBuffers acquiredBuffers = TestDecodeBuffers.batchBuffers();
         while (reader.hasMore()) {
             int pageRows = reader.rowsRemainingInCurrentPage();
             drained.addVector((LongVector) reader.readBatch(pageRows, acquiredBuffers));
@@ -136,7 +136,7 @@ class MaskedPageSkipParityTest {
     /** Takes one window per page: every surviving row the page can serve, all of them kept. */
     private static DrainResult drainWindows(BatchColumnReader reader) {
         DrainedRows drained = new DrainedRows();
-        List<AutoCloseable> acquiredBuffers = new ArrayList<>();
+        BatchBuffers acquiredBuffers = TestDecodeBuffers.batchBuffers();
         while (reader.hasMore()) {
             int windowRows = reader.logicalRowsRemainingInCurrentPage();
             BitSet keepAll = new BitSet(windowRows);

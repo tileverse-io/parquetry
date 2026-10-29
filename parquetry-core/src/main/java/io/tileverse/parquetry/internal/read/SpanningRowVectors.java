@@ -36,7 +36,6 @@ import io.tileverse.parquetry.columnar.IntSequence;
 import io.tileverse.parquetry.columnar.IntVector;
 import io.tileverse.parquetry.columnar.LongVector;
 import io.tileverse.parquetry.columnar.Validity;
-import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
@@ -48,8 +47,7 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * dictionary-view part and a consolidated part. The merge therefore reads every part through the leaf-kind accessors
  * and materializes one standard vector: fixed-width kinds into a pooled little-endian segment (null slots zeroed, the
  * decode contract), BOOLEAN into a pooled LSB-first bitmap, and the binary kinds into a pooled backing buffer with
- * row-indexed offsets. All pooled buffers are acquired through the decode valve and registered on the owning batch,
- * which releases them on close.
+ * row-indexed offsets. The buffers belong to the batch's {@link BatchBuffers}, released when the batch closes.
  */
 final class SpanningRowVectors {
 
@@ -57,23 +55,18 @@ final class SpanningRowVectors {
 
     private SpanningRowVectors() {}
 
-    static ColumnVector merge(
-            SchemaNode.Primitive leaf,
-            List<ColumnVector> parts,
-            DecodeBufferAllocator allocator,
-            List<AutoCloseable> acquiredBuffers) {
+    static ColumnVector merge(SchemaNode.Primitive leaf, List<ColumnVector> parts, BatchBuffers batchBuffers) {
         int size = totalSize(parts);
         Validity validity = mergedValidity(parts, size);
         return switch (leaf.kind()) {
-            case INT32 -> mergeInts(parts, size, validity, allocator, acquiredBuffers);
-            case INT64 -> mergeLongs(parts, size, validity, allocator, acquiredBuffers);
-            case FLOAT -> mergeFloats(parts, size, validity, allocator, acquiredBuffers);
-            case DOUBLE -> mergeDoubles(parts, size, validity, allocator, acquiredBuffers);
-            case BOOLEAN -> mergeBooleans(parts, size, validity, allocator, acquiredBuffers);
-            case BYTE_ARRAY -> mergeVariableBinary(parts, size, validity, allocator, acquiredBuffers);
-            case FIXED_LEN_BYTE_ARRAY ->
-                mergeFixedBinary(parts, size, requiredByteWidth(leaf), validity, allocator, acquiredBuffers);
-            case INT96 -> mergeInt96(parts, size, validity, allocator, acquiredBuffers);
+            case INT32 -> mergeInts(parts, size, validity, batchBuffers);
+            case INT64 -> mergeLongs(parts, size, validity, batchBuffers);
+            case FLOAT -> mergeFloats(parts, size, validity, batchBuffers);
+            case DOUBLE -> mergeDoubles(parts, size, validity, batchBuffers);
+            case BOOLEAN -> mergeBooleans(parts, size, validity, batchBuffers);
+            case BYTE_ARRAY -> mergeVariableBinary(parts, size, validity, batchBuffers);
+            case FIXED_LEN_BYTE_ARRAY -> mergeFixedBinary(parts, size, requiredByteWidth(leaf), validity, batchBuffers);
+            case INT96 -> mergeInt96(parts, size, validity, batchBuffers);
         };
     }
 
@@ -100,12 +93,8 @@ final class SpanningRowVectors {
     }
 
     private static ColumnVector mergeInts(
-            List<ColumnVector> parts,
-            int size,
-            Validity validity,
-            DecodeBufferAllocator allocator,
-            List<AutoCloseable> acquiredBuffers) {
-        MemorySegment dst = acquire(allocator, acquiredBuffers, (long) size * Integer.BYTES);
+            List<ColumnVector> parts, int size, Validity validity, BatchBuffers batchBuffers) {
+        MemorySegment dst = batchBuffers.allocate((long) size * Integer.BYTES);
         int row = 0;
         for (ColumnVector part : parts) {
             IntVector vector = (IntVector) part;
@@ -117,12 +106,8 @@ final class SpanningRowVectors {
     }
 
     private static ColumnVector mergeLongs(
-            List<ColumnVector> parts,
-            int size,
-            Validity validity,
-            DecodeBufferAllocator allocator,
-            List<AutoCloseable> acquiredBuffers) {
-        MemorySegment dst = acquire(allocator, acquiredBuffers, (long) size * Long.BYTES);
+            List<ColumnVector> parts, int size, Validity validity, BatchBuffers batchBuffers) {
+        MemorySegment dst = batchBuffers.allocate((long) size * Long.BYTES);
         int row = 0;
         for (ColumnVector part : parts) {
             LongVector vector = (LongVector) part;
@@ -134,12 +119,8 @@ final class SpanningRowVectors {
     }
 
     private static ColumnVector mergeFloats(
-            List<ColumnVector> parts,
-            int size,
-            Validity validity,
-            DecodeBufferAllocator allocator,
-            List<AutoCloseable> acquiredBuffers) {
-        MemorySegment dst = acquire(allocator, acquiredBuffers, (long) size * Float.BYTES);
+            List<ColumnVector> parts, int size, Validity validity, BatchBuffers batchBuffers) {
+        MemorySegment dst = batchBuffers.allocate((long) size * Float.BYTES);
         int row = 0;
         for (ColumnVector part : parts) {
             FloatVector vector = (FloatVector) part;
@@ -151,12 +132,8 @@ final class SpanningRowVectors {
     }
 
     private static ColumnVector mergeDoubles(
-            List<ColumnVector> parts,
-            int size,
-            Validity validity,
-            DecodeBufferAllocator allocator,
-            List<AutoCloseable> acquiredBuffers) {
-        MemorySegment dst = acquire(allocator, acquiredBuffers, (long) size * Double.BYTES);
+            List<ColumnVector> parts, int size, Validity validity, BatchBuffers batchBuffers) {
+        MemorySegment dst = batchBuffers.allocate((long) size * Double.BYTES);
         int row = 0;
         for (ColumnVector part : parts) {
             DoubleVector vector = (DoubleVector) part;
@@ -168,12 +145,8 @@ final class SpanningRowVectors {
     }
 
     private static ColumnVector mergeBooleans(
-            List<ColumnVector> parts,
-            int size,
-            Validity validity,
-            DecodeBufferAllocator allocator,
-            List<AutoCloseable> acquiredBuffers) {
-        MemorySegment dst = acquire(allocator, acquiredBuffers, Math.max(1L, (size + 7) / 8));
+            List<ColumnVector> parts, int size, Validity validity, BatchBuffers batchBuffers) {
+        MemorySegment dst = batchBuffers.allocate(Math.max(1L, (size + 7) / 8));
         dst.fill((byte) 0);
         int row = 0;
         for (ColumnVector part : parts) {
@@ -190,11 +163,7 @@ final class SpanningRowVectors {
     }
 
     private static ColumnVector mergeVariableBinary(
-            List<ColumnVector> parts,
-            int size,
-            Validity validity,
-            DecodeBufferAllocator allocator,
-            List<AutoCloseable> acquiredBuffers) {
+            List<ColumnVector> parts, int size, Validity validity, BatchBuffers batchBuffers) {
         long totalBytes = 0;
         for (ColumnVector part : parts) {
             BinaryVector vector = (BinaryVector) part;
@@ -204,10 +173,8 @@ final class SpanningRowVectors {
                 }
             }
         }
-        // The valve never hands out a zero-length buffer; slice back to the true window for an all-null row.
-        MemorySegment backing =
-                acquire(allocator, acquiredBuffers, Math.max(1L, totalBytes)).asSlice(0L, totalBytes);
-        MemorySegment offsets = acquire(allocator, acquiredBuffers, (size + 1L) * Integer.BYTES);
+        MemorySegment backing = batchBuffers.allocate(totalBytes);
+        MemorySegment offsets = batchBuffers.allocate((size + 1L) * Integer.BYTES);
         long pos = 0;
         int row = 0;
         for (ColumnVector part : parts) {
@@ -226,34 +193,21 @@ final class SpanningRowVectors {
     }
 
     private static ColumnVector mergeFixedBinary(
-            List<ColumnVector> parts,
-            int size,
-            int byteWidth,
-            Validity validity,
-            DecodeBufferAllocator allocator,
-            List<AutoCloseable> acquiredBuffers) {
-        MemorySegment dst = fixedWidthSlots(parts, size, byteWidth, allocator, acquiredBuffers);
+            List<ColumnVector> parts, int size, int byteWidth, Validity validity, BatchBuffers batchBuffers) {
+        MemorySegment dst = fixedWidthSlots(parts, size, byteWidth, batchBuffers);
         return FixedLenBinaryVector.of(dst, byteWidth, validity);
     }
 
     private static ColumnVector mergeInt96(
-            List<ColumnVector> parts,
-            int size,
-            Validity validity,
-            DecodeBufferAllocator allocator,
-            List<AutoCloseable> acquiredBuffers) {
-        MemorySegment dst = fixedWidthSlots(parts, size, INT96_WIDTH, allocator, acquiredBuffers);
+            List<ColumnVector> parts, int size, Validity validity, BatchBuffers batchBuffers) {
+        MemorySegment dst = fixedWidthSlots(parts, size, INT96_WIDTH, batchBuffers);
         return Int96Vector.of(dst, validity);
     }
 
     /** Packs each part's full-width slots into one pooled backing, null slots zeroed. */
     private static MemorySegment fixedWidthSlots(
-            List<ColumnVector> parts,
-            int size,
-            int byteWidth,
-            DecodeBufferAllocator allocator,
-            List<AutoCloseable> acquiredBuffers) {
-        MemorySegment dst = acquire(allocator, acquiredBuffers, (long) size * byteWidth);
+            List<ColumnVector> parts, int size, int byteWidth, BatchBuffers batchBuffers) {
+        MemorySegment dst = batchBuffers.allocate((long) size * byteWidth);
         dst.fill((byte) 0);
         int row = 0;
         for (ColumnVector part : parts) {
@@ -282,12 +236,5 @@ final class SpanningRowVectors {
         return leaf.typeLength()
                 .orElseThrow(() -> new IllegalStateException(
                         "FIXED_LEN_BYTE_ARRAY leaf " + leaf.name() + " is missing typeLength in schema"));
-    }
-
-    private static MemorySegment acquire(
-            DecodeBufferAllocator allocator, List<AutoCloseable> acquiredBuffers, long byteSize) {
-        SegmentPool.Pooled pooled = allocator.acquireMandatory(byteSize);
-        acquiredBuffers.add(pooled);
-        return pooled.segment();
     }
 }

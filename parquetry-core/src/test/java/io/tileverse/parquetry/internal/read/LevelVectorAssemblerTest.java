@@ -124,7 +124,7 @@ class LevelVectorAssemblerTest {
         Map<ColumnPath, LevelSlice> rep = wholeSlices(Map.of(keyPath, new int[] {0}, valPath, new int[] {0}));
         Map<ColumnPath, LevelSlice> def = wholeSlices(Map.of(keyPath, new int[] {2}, valPath, new int[] {3}));
 
-        List<AutoCloseable> acquired = new ArrayList<>();
+        BatchBuffers acquired = TestDecodeBuffers.batchBuffers();
         Map<ColumnPath, ColumnVector> level = LevelVectorAssembler.assembleLevelForm(
                 schema, leaves, rep, def, 1, TestDecodeBuffers.ample(), acquired);
         assertThat(level.get(mapPath)).isInstanceOf(LevelMapVector.class);
@@ -141,7 +141,7 @@ class LevelVectorAssemblerTest {
             assertThatThrownBy(() -> row0.getInt(mapPath)).hasMessageContaining("is MAP");
         } finally {
             batch.close();
-            closeAll(acquired);
+            acquired.close();
         }
     }
 
@@ -485,11 +485,11 @@ class LevelVectorAssemblerTest {
         DecodeBufferAllocator allocator = TestDecodeBuffers.ample(pool);
         long baseline = pool.stats().outstandingBorrows();
 
-        List<AutoCloseable> acquired = new ArrayList<>();
+        BatchBuffers acquired = new BatchBuffers(allocator);
         LevelVectorAssembler.assembleLevelForm(schema, leaves, rep, def, 2, allocator, acquired);
         assertThat(pool.stats().outstandingBorrows()).isGreaterThan(baseline);
 
-        closeAll(acquired);
+        acquired.close();
         assertThat(pool.stats().outstandingBorrows()).isEqualTo(baseline);
     }
 
@@ -505,14 +505,14 @@ class LevelVectorAssemblerTest {
 
         Map<ColumnPath, ColumnVector> eager = NestedVectorAssembler.assembleNested(schema, leaves, rep, def, numRows);
 
-        List<AutoCloseable> acquired = new ArrayList<>();
+        BatchBuffers acquired = TestDecodeBuffers.batchBuffers();
         Map<ColumnPath, ColumnVector> level = LevelVectorAssembler.assembleLevelForm(
                 schema, leaves, wholeSlices(rep), wholeSlices(def), numRows, TestDecodeBuffers.ample(), acquired);
         try {
             assertRecordParity(schema, eager, level, numRows, topLevelPaths);
             assertArrowFormParity(schema, eager, level, numRows, topLevelPaths);
         } finally {
-            closeAll(acquired);
+            acquired.close();
         }
     }
 
@@ -620,16 +620,6 @@ class LevelVectorAssemblerTest {
             Object levelKey = levelKeys.get(i);
             assertDeepEqual(eagerKey, levelKey);
             assertDeepEqual(eager.get(eagerKey), level.get(levelKey));
-        }
-    }
-
-    private static void closeAll(List<AutoCloseable> closeables) {
-        for (AutoCloseable closeable : closeables) {
-            try {
-                closeable.close();
-            } catch (Exception e) {
-                throw new IllegalStateException(e);
-            }
         }
     }
 
