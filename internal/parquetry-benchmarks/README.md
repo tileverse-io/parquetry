@@ -91,6 +91,7 @@ smoke). CI splits the two phases into `make build-benchmarks` and
 | `WkbEnvelopeBenchmark` | Per-geometry cost of the WKB envelope paths a read pays on every row, over a batch-shaped fixture (one backing segment holding 1,024 building-like WKB values addressed per row by offset and length, the shape in which a decoded page reaches the decimation gate and the bbox predicate). `compute` is the decimation gate's full 2D envelope; `computeThroughBatchedCaller` is the same envelope at the gate's own call depth, through the `BinaryView` handed to it by a vector, and guards the inlining budget on which the walk depends; `matchesDecidedAtFirstVertex` is a whole-world `BboxIntersects`, the bbox predicate's production shape, decided at the first vertex and therefore the fixed per-call cost; `matchesFullWalk` is a `BboxCoveredBy` with every geometry inside the box, the relation that walks every vertex; `read` is `MemorySegmentWkbReader`, the materializer's path, which must not regress. The defaults pin the buildings point; pass the other values with `-p`. The reported time is per geometry. | `vertices` (`12`; also `5`/`40`/`200`), `shape` (`POLYGON`; also `MULTIPOLYGON`), `byteOrder` (`LE`; also `BE`), `memory` (`NATIVE`; also `HEAP`) |
 | `JtsSpatialFilterBenchmark` | End-to-end cost of three query strategies using the real JTS geometry engine and a non-axis-aligned diamond query polygon whose bbox over-selects. `BBOX_ONLY` reads all bbox-candidates (coarse superset); `IN_CORE_GATE` pushes `JtsGeometryFilter.intersects` into the read pipeline and avoids materialising the other columns of rows the exact JTS test rejects; `APP_SIDE_FILTER` reads with `BBOX_ONLY` (full materialization of all candidates) and then re-applies the exact JTS test in the stream. `IN_CORE_GATE` and `APP_SIDE_FILTER` return the same exact rows; `BBOX_ONLY` returns a superset. The `layout` axis shows row-group pruning effectiveness; `selectivity` (HIGH small diamond, LOW large diamond) scales how many rows the exact test rejects; `geometrySize` scales per-row WKB decode cost; `output` (`WKB`/`JTS`) selects whether the geometry output column is kept as raw bytes or parsed into a JTS `Geometry` (the JTS-minus-WKB gap on `IN_CORE_GATE` is the surviving rows' output parse, bounding what reusing the gate's decoded geometry as output would save). | `mode` (`BBOX_ONLY`/`IN_CORE_GATE`/`APP_SIDE_FILTER`), `layout` (`CLUSTERED`/`SHUFFLED`), `selectivity` (`HIGH`/`LOW`), `geometrySize` (`SMALL`/`LARGE`), `output` (`WKB`/`JTS`) |
 | `CountBenchmark` | The optimized `ParquetFileReader.count(predicate)` path against the `read(predicate).count()` baseline over a sorted `id INT64 + value DOUBLE` table of several row groups. The two `@Benchmark` methods (`optimizedCount`, `readCountBaseline`) form the optimized-vs-baseline axis; the `path` parameter selects how the count resolves. `ALWAYS_TRUE` sums per-row-group counts from metadata; `MATCHED` (`id >= 0`, sorted non-null) proves every row group matches and again counts from metadata; `ELIMINATED` (`id` above every group's max) prunes all row groups; `RESIDUAL` (`id > rows / 2`) forces record-level evaluation on the undecided middle groups; `IS_NOT_NULL` settles from the metadata null counts. COMPARISON, SPATIAL, IS_NULL, and PARTIAL paths are deferred: they need non-sorted, nullable, or geometry fixtures that do not exist, and this class does not cover them. | `path` (`ALWAYS_TRUE`/`MATCHED`/`ELIMINATED`/`RESIDUAL`/`IS_NOT_NULL`) |
+| `SegmentPoolBenchmark` | The segment pool under the borrow traffic of a loaded reader. A filtered read of a page-indexed file borrows about four hundred buffers per query, most of them 8 KiB, and 32 clients at a thousand queries per second put close to a million borrows and returns per second through the pool. `borrowReturn` draws one capacity per operation from the measured mix; `pageLoad` borrows the four buffers of a page load and returns them in reverse order, the shape of a decode worker's page loop. `retained` is how many idle buffers of the mix sit in the free lists meanwhile, the steady state of a loaded server. Run with `-t 32` for the loaded-server shape and `-t 1` for the uncontended cost. | `retained` (`0`/`4000`) |
 | `FetchSpillBenchmark` | The resident-memory cost of reading a large-row-group file under a deliberately tiny fetch budget. A mandatory fetch buffers a whole row group; pinning the fetch budget tiny (via `ResourceLimits.fixed`, whose derived budget is ten percent of the stated memory) forces every mandatory fetch off pooled native RAM and onto a mapped on-disk file (reclaimable page cache). The signal is peak resident set size (RSS), reported as the `peakRssKib` secondary counter: the `concurrency x row-group-span` overflow lands on reclaimable mmap rather than anonymous RAM. RSS is read from the OS with `ps` because file-backed mappings are invisible to the JVM's heap and allocation counters; it includes the JVM's own resident baseline (heap, metaspace, code cache), which dominates a small smoke fixture. This is a sizing tool, not a correctness check. | `concurrency` (`1`/`2`/`4`, overlapping reads per op) |
 
 ## Decode baseline
@@ -227,6 +228,46 @@ A forked default run on the 128 MiB fixture is the real measurement; the table
 above proves the benchmark executes and reports a per-concurrency RSS number.
 Re-run with the default fixture and add a labeled measured row when a
 representative host is available.
+
+## Segment pool baseline
+
+`SegmentPoolBenchmark`, 16-core Apple M-series workstation, Temurin 25; operations per
+millisecond, five 2 s iterations after three of warm-up. A `borrowReturn` operation is one borrow
+and one return; a `pageLoad` operation is four of each. "sorted list" is the free list as a
+capacity-sorted `ArrayList` scanned per borrow under the pool's single lock; "spin lock" keeps the
+idle backings grouped by capacity under that single lock, tried for about a microsecond before
+parking on it; "lock-free" is one lock-free deque per capacity with atomic counters; "striped" is
+the shipped pool, the small class split over sixteen stripes with a lock and a share of the cap
+each, the large class under one lock. The first three were measured on 2026-10-27 and the striped
+pool on 2026-10-29, on the same machine.
+
+| benchmark | threads | retained | sorted list | spin lock | lock-free | striped |
+|---|---|---|---|---|---|---|
+| `borrowReturn` | 1 | 0 | 25,515 | 26,887 | 20,225 | 25,026 |
+| `borrowReturn` | 1 | 4000 |  | 25,698 | 19,282 | 24,204 |
+| `borrowReturn` | 4 | 0 | 13,669 | 14,451 | 6,684 | 29,990 |
+| `borrowReturn` | 4 | 4000 | 413 | 14,423 | 7,117 | 27,982 |
+| `borrowReturn` | 32 | 0 | 10,931 | 14,729 | 3,492 | 18,014 |
+| `borrowReturn` | 32 | 4000 | 408 | 14,030 | 3,624 | 16,625 |
+| `borrowReturn` | 128 | 0 | 7,485 | 12,761 | 3,634 | 18,798 |
+| `borrowReturn` | 128 | 4000 | 375 | 12,497 | 3,671 | 18,603 |
+| `pageLoad` | 1 | 0 | 7,762 | 7,789 | 5,393 | 6,444 |
+| `pageLoad` | 4 | 4000 | 75 | 4,081 | 1,741 | 6,888 |
+| `pageLoad` | 32 | 4000 | 79 | 4,198 | 744 | 4,289 |
+| `pageLoad` | 128 | 4000 | 65 | 3,620 | 922 | 4,380 |
+
+With four thousand idle buffers the sorted list cost the lock a linear scan and an `ArrayList`
+shift per operation, and the pool fell to 408 thousand borrow-and-return per second at 32 threads,
+the ceiling hit by a 32-client server on a 32-core Linux box. Grouping the idle backings removed
+that cost, but on a loaded server the single lock still cost most of the decode threads' time: the
+pool's structures are cold between two operations of one thread, a critical section then takes
+several cache misses, and a million operations per second queue behind it, handed from thread to
+thread through the scheduler (82,000 context switches per second measured on the Linux box). This
+benchmark keeps the structures hot and does not show that wait. The lock-free deques removed it
+there at twice the CPU per query; hardware counters later put that CPU to 30 of 32 hardware threads
+busy instead of 14, each stalling about twice as long on memory, with the same instructions and
+fewer cache fills per query, not to the pool. The stripes give each thread its own lock and its own
+structures, a second level per operation whose cost the single-thread rows show.
 
 ## Probes
 

@@ -378,6 +378,111 @@ class SegmentPoolTest {
             assertThatCode(pooled::close).doesNotThrowAnyException();
         }
 
+        // The most recently returned backing is reused first; the oldest stay at the tail for the sweep
+        @Test
+        void reusesNewestBackingFirst() {
+            DefaultSegmentPool pool = new DefaultSegmentPool(8192, 1 << 20, 1 << 20, 1024);
+            SegmentPool.Pooled older = pool.borrow(512);
+            SegmentPool.Pooled newer = pool.borrow(512);
+            long newest = newer.segment().address();
+            older.close();
+            newer.close();
+            try (SegmentPool.Pooled next = pool.borrow(512)) {
+                assertThat(next.segment().address()).isEqualTo(newest);
+            }
+        }
+
+        @Test
+        void takesTheSmallestFit() {
+            DefaultSegmentPool pool = new DefaultSegmentPool(1 << 20, 1 << 20, 1 << 20, 1024);
+            SegmentPool.Pooled small = pool.borrow(16 * 1024);
+            SegmentPool.Pooled large = pool.borrow(64 * 1024);
+            long smallest = small.segment().address();
+            large.close();
+            small.close();
+            try (SegmentPool.Pooled fit = pool.borrow(10 * 1024)) {
+                assertThat(fit.segment().address()).isEqualTo(smallest);
+            }
+        }
+
+        @Test
+        void reapsOnlyTheStaleBackings() {
+            DefaultSegmentPool pool = new DefaultSegmentPool(8192, 1 << 20, 1 << 20, 1024);
+            SegmentPool.Pooled older = pool.borrow(512);
+            SegmentPool.Pooled newer = pool.borrow(512);
+            MemorySegment stale = older.segment();
+            MemorySegment kept = newer.segment();
+            older.close();
+            long cutoff = System.nanoTime();
+            while (System.nanoTime() <= cutoff) {
+                Thread.onSpinWait();
+            }
+            newer.close();
+
+            long window = TimeUnit.SECONDS.toNanos(60);
+            pool.reapIdle(cutoff + window, window);
+            assertThat(pool.stats().freeSegments())
+                    .as("the newer backing stays")
+                    .isEqualTo(1);
+            assertThatThrownBy(() -> stale.get(ValueLayout.JAVA_BYTE, 0)).isInstanceOf(IllegalStateException.class);
+            assertThat(kept.get(ValueLayout.JAVA_BYTE, 0)).isZero();
+        }
+
+        @Test
+        void borrowsAfterAGroupIsReaped() {
+            DefaultSegmentPool pool = new DefaultSegmentPool(8192, 1 << 20, 1 << 20, 1024);
+            pool.borrow(512).close();
+            long window = TimeUnit.SECONDS.toNanos(60);
+            pool.reapIdle(System.nanoTime() + window, window);
+            assertThat(pool.stats().freeSegments()).isZero();
+            try (SegmentPool.Pooled next = pool.borrow(512)) {
+                assertThat(next.segment().byteSize()).isEqualTo(512);
+            }
+        }
+
+        // The sweep reaps while borrows and returns run: nothing is lost, double-freed or left outstanding
+        @Test
+        void sweepRacesBorrowsSafely() throws Exception {
+            DefaultSegmentPool pool = new DefaultSegmentPool(8192, 64L * 8192, 1 << 20, 1024);
+            AtomicBoolean failed = new AtomicBoolean(false);
+            AtomicBoolean done = new AtomicBoolean(false);
+            long window = TimeUnit.MILLISECONDS.toNanos(1);
+            Thread sweeper = new Thread(() -> {
+                while (!done.get()) {
+                    pool.reapIdle(System.nanoTime(), window);
+                    Thread.onSpinWait();
+                }
+            });
+            sweeper.start();
+            try (ExecutorService executor = Executors.newFixedThreadPool(8)) {
+                for (int t = 0; t < 8; t++) {
+                    executor.execute(() -> {
+                        for (int i = 0; i < 5000; i++) {
+                            try (SegmentPool.Pooled pooled = pool.borrow(256 + (i % 4) * 1024)) {
+                                MemorySegment segment = pooled.segment();
+                                segment.set(ValueLayout.JAVA_INT, 0, i);
+                                if (segment.get(ValueLayout.JAVA_INT, 0) != i) {
+                                    failed.set(true);
+                                }
+                            } catch (RuntimeException _) {
+                                failed.set(true);
+                            }
+                        }
+                    });
+                }
+                executor.shutdown();
+                assertThat(executor.awaitTermination(60, TimeUnit.SECONDS)).isTrue();
+            } finally {
+                done.set(true);
+                sweeper.join(10_000);
+            }
+            assertThat(failed).isFalse();
+            assertThat(pool.stats().outstandingBorrows()).isZero();
+            pool.reapIdle(System.nanoTime() + window, window);
+            assertThat(pool.stats().freeSegments()).isZero();
+            assertThat(pool.stats().retainedBytes()).isZero();
+        }
+
         @Test
         void reapIdleFreesBackingsPastTheIdleWindow() {
             DefaultSegmentPool pool = new DefaultSegmentPool(8192, 1 << 20, 1 << 20, 1024);
@@ -437,6 +542,148 @@ class SegmentPoolTest {
     }
 
     // the borrow shape kept by glibc in its arenas: threads, sizes below one freed earlier, a live buffer between two
+    /**
+     * Striping: the free lists are split over independent stripes, each thread works its own, and a borrow that finds
+     * nothing in its stripe takes from another before allocating. The caps, the ceiling, the sweep and close keep their
+     * meaning over all stripes together.
+     */
+    @Nested
+    class Stripes {
+
+        @Test
+        void policyPoolsHaveOneStripe() {
+            assertThat(new DefaultSegmentPool(8192, 1 << 20, 1 << 20, 1024).stripes())
+                    .as("the policy tests build a single stripe")
+                    .isEqualTo(1);
+        }
+
+        @Test
+        void optionsPickTheStripeCount() {
+            long megabyte = 1L << 20;
+            SegmentPool.Options options = new SegmentPool.Options(8192, 512 * megabyte, megabyte, 0, 8192);
+            DefaultSegmentPool pool = DefaultSegmentPool.fromOptions(options);
+            try {
+                assertThat(pool.stripes())
+                        .isEqualTo(StripedFreeLists.stripeCount(
+                                Runtime.getRuntime().availableProcessors(), 512 * megabyte, 8192));
+            } finally {
+                pool.close();
+            }
+        }
+
+        @Test
+        void aBufferReturnedOnAnotherThreadIsReused() throws Exception {
+            DefaultSegmentPool pool = stripedPool(4);
+            long[] address = new long[2];
+            onPlatformThread(() -> {
+                SegmentPool.Pooled first = pool.borrow(512);
+                address[0] = first.segment().address();
+                first.close();
+            });
+            onPlatformThread(() -> {
+                try (SegmentPool.Pooled second = pool.borrow(512)) {
+                    address[1] = second.segment().address();
+                    assertThat(pool.stats().freeSegments()).isZero();
+                }
+            });
+            assertThat(address[1]).as("taken from the other thread's stripe").isEqualTo(address[0]);
+            assertThat(pool.stats().totalBorrows()).isEqualTo(2);
+        }
+
+        @Test
+        void retentionCapHoldsAcrossThreads() throws Exception {
+            long maxPooledBytes = 4096;
+            DefaultSegmentPool pool = new DefaultSegmentPool(8192, maxPooledBytes, 1 << 20, Long.MAX_VALUE, 0, 1024, 4);
+            List<SegmentPool.Pooled> held = new ArrayList<>();
+            for (int i = 0; i < 8; i++) {
+                onPlatformThread(() -> held.add(pool.borrow(512)));
+            }
+            for (SegmentPool.Pooled pooled : held) {
+                onPlatformThread(pooled::close);
+            }
+            assertThat(pool.stats().retainedBytes()).isLessThanOrEqualTo(maxPooledBytes);
+            assertThat(pool.stats().freeSegments())
+                    .as("four 1024-byte backings under a 4096 cap")
+                    .isEqualTo(4);
+        }
+
+        // Four buffers returned on four threads land in four stripes.
+        @Test
+        void reapIdleReachesEveryStripe() throws Exception {
+            DefaultSegmentPool pool = stripedPool(4);
+            for (SegmentPool.Pooled pooled : borrowFour(pool)) {
+                onPlatformThread(pooled::close);
+            }
+            assertThat(pool.stats().freeSegments()).isEqualTo(4);
+            long window = TimeUnit.SECONDS.toNanos(60);
+            pool.reapIdle(System.nanoTime() + window + 1, window);
+            assertThat(pool.stats().freeSegments()).isZero();
+            assertThat(pool.stats().retainedBytes()).isZero();
+        }
+
+        @Test
+        void closeDrainsEveryStripe() throws Exception {
+            DefaultSegmentPool pool = stripedPool(4);
+            List<MemorySegment> segments = new ArrayList<>();
+            for (SegmentPool.Pooled pooled : borrowFour(pool)) {
+                segments.add(pooled.segment());
+                onPlatformThread(pooled::close);
+            }
+            assertThat(pool.stats().freeSegments()).isEqualTo(4);
+            pool.close();
+            assertThat(pool.stats().freeSegments()).isZero();
+            for (MemorySegment segment : segments) {
+                assertThatThrownBy(() -> segment.get(ValueLayout.JAVA_BYTE, 0))
+                        .isInstanceOf(IllegalStateException.class);
+            }
+        }
+
+        @Test
+        void virtualThreadReturnsAreReusedElsewhere() throws Exception {
+            DefaultSegmentPool pool = stripedPool(4);
+            long[] address = new long[2];
+            Thread virtual = Thread.ofVirtual().start(() -> {
+                SegmentPool.Pooled first = pool.borrow(512);
+                address[0] = first.segment().address();
+                first.close();
+            });
+            virtual.join();
+            onPlatformThread(() -> {
+                try (SegmentPool.Pooled second = pool.borrow(512)) {
+                    address[1] = second.segment().address();
+                }
+            });
+            assertThat(address[1]).isEqualTo(address[0]);
+        }
+
+        private List<SegmentPool.Pooled> borrowFour(SegmentPool pool) {
+            List<SegmentPool.Pooled> held = new ArrayList<>();
+            for (int i = 0; i < 4; i++) {
+                held.add(pool.borrow(512));
+            }
+            return held;
+        }
+
+        private DefaultSegmentPool stripedPool(int stripes) {
+            return new DefaultSegmentPool(8192, 1 << 20, 1 << 20, Long.MAX_VALUE, 0, 1024, stripes);
+        }
+
+        private void onPlatformThread(Runnable body) throws InterruptedException {
+            Throwable[] failure = new Throwable[1];
+            Thread thread = Thread.ofPlatform().start(() -> {
+                try {
+                    body.run();
+                } catch (Throwable t) {
+                    failure[0] = t;
+                }
+            });
+            thread.join();
+            if (failure[0] != null) {
+                throw new AssertionError(failure[0]);
+            }
+        }
+    }
+
     @Test
     void freedBackingsLeaveTheProcess() {
         Path status = Path.of("/proc/self/status");
