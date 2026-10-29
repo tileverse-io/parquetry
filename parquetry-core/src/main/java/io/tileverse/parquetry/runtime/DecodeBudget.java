@@ -15,6 +15,8 @@
  */
 package io.tileverse.parquetry.runtime;
 
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BooleanSupplier;
@@ -30,22 +32,34 @@ import java.util.function.BooleanSupplier;
  * <p>Every decoded row group reserves against this budget. A worker that cannot reserve a batch's heap bytes spills the
  * batch to disk rather than parking; it parks in {@link #reserve(long, BooleanSupplier)} only as a last resort, when
  * the disk budget is also full. A read that is closing calls {@link #wakeWaiters()} to release any such parked worker.
+ *
+ * <p>A reservation and a release take no lock: the decode workers of a loaded server reserve and release a buffer for
+ * each page and each batch window, a million times a second between them, and a lock handed between that many threads
+ * that often costs more than the work it guards. The headroom is an atomic counter; a reservation subtracts its bytes
+ * and adds them back when the result went negative, one atomic add each, with no retry loop to spin on under
+ * contention. The lock and its condition serve the last-resort wait only, and a release signals them only while a
+ * reserver is parked.
  */
 public final class DecodeBudget {
 
     private static final double DEFAULT_FRACTION = 0.25;
 
     private final long capacity;
+    private final AtomicLong available;
     private final ReentrantLock lock = new ReentrantLock();
     private final Condition headroomChanged = lock.newCondition();
-    private long available;
+
+    /**
+     * Reservers parked in {@link #reserve(long, BooleanSupplier)}; a release signals the condition only when positive.
+     */
+    private final AtomicInteger waiters = new AtomicInteger();
 
     private DecodeBudget(long capacity) {
         if (capacity <= 0) {
             throw new IllegalArgumentException("DecodeBudget capacity must be > 0, got " + capacity);
         }
         this.capacity = capacity;
-        this.available = capacity;
+        this.available = new AtomicLong(capacity);
     }
 
     /** A budget capped at {@code maxBytes}. */
@@ -70,22 +84,21 @@ public final class DecodeBudget {
 
     /**
      * Tries to reserve {@code bytes} without blocking. A {@code false} result is a normal outcome: the caller must not
-     * speculate further until headroom frees. A non-positive request reserves nothing and succeeds.
+     * speculate further until headroom frees. A refused request leaves the headroom as it was, and cannot make a
+     * fitting request on another thread fail. A non-positive request reserves nothing and succeeds.
      */
     public boolean tryReserve(long bytes) {
         if (bytes <= 0) {
             return true;
         }
-        lock.lock();
-        try {
-            if (available >= bytes) {
-                available -= bytes;
+        long free = available.get();
+        while (free >= bytes) {
+            if (available.compareAndSet(free, free - bytes)) {
                 return true;
             }
-            return false;
-        } finally {
-            lock.unlock();
+            free = available.get();
         }
+        return false;
     }
 
     /**
@@ -93,22 +106,27 @@ public final class DecodeBudget {
      * {@code true} if the bytes were reserved, {@code false} if it gave up first (reserving nothing). A non-positive
      * request reserves nothing and returns {@code true}. {@code giveUp} is re-checked on every wakeup; whatever flips
      * it must therefore also call {@link #wakeWaiters()}.
+     *
+     * <p>The reserver registers as a waiter before it looks at the headroom and holds the lock until it parks, and a
+     * release that sees a registered waiter takes the same lock before it signals: a release between the look and the
+     * park cannot be missed.
      */
     public boolean reserve(long bytes, BooleanSupplier giveUp) {
         if (bytes <= 0) {
             return true;
         }
         lock.lock();
+        waiters.incrementAndGet();
         try {
-            while (available < bytes) {
+            while (!tryReserve(bytes)) {
                 if (giveUp.getAsBoolean()) {
                     return false;
                 }
                 headroomChanged.awaitUninterruptibly();
             }
-            available -= bytes;
             return true;
         } finally {
+            waiters.decrementAndGet();
             lock.unlock();
         }
     }
@@ -116,20 +134,16 @@ public final class DecodeBudget {
     /**
      * Returns up to {@code bytes} of headroom to the budget and wakes any parked reservers. A release is clamped to the
      * remaining headroom; a redundant, mismatched, or oversized release can therefore neither inflate {@code available}
-     * above {@code capacity} nor overflow it.
+     * above {@code capacity} nor overflow it. The add and the clamp are one atomic update: no reservation sees headroom
+     * above the capacity.
      */
     public void release(long bytes) {
         if (bytes <= 0) {
             return;
         }
-        lock.lock();
-        try {
-            long headroom = capacity - available;
-            long grant = Math.min(bytes, headroom);
-            available += grant;
-            headroomChanged.signalAll();
-        } finally {
-            lock.unlock();
+        available.accumulateAndGet(bytes, (free, more) -> free + Math.min(more, capacity - free));
+        if (waiters.get() > 0) {
+            wakeWaiters();
         }
     }
 
@@ -151,12 +165,7 @@ public final class DecodeBudget {
     }
 
     public long available() {
-        lock.lock();
-        try {
-            return available;
-        } finally {
-            lock.unlock();
-        }
+        return available.get();
     }
 
     private static final class DefaultHolder {

@@ -19,13 +19,98 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 class DecodeBudgetTest {
+
+    // reservations from many threads never exceed the capacity between them, and every release comes back
+    @Test
+    @Timeout(30)
+    void concurrentReservesStayUnderCapacity() throws Exception {
+        long capacity = 10_000;
+        DecodeBudget budget = DecodeBudget.ofBytes(capacity);
+        AtomicLong outstanding = new AtomicLong();
+        AtomicBoolean overCommitted = new AtomicBoolean(false);
+        try (ExecutorService executor = Executors.newFixedThreadPool(8)) {
+            for (int t = 0; t < 8; t++) {
+                executor.execute(() -> {
+                    for (int i = 1; i <= 5000; i++) {
+                        long bytes = 1 + (i % 700);
+                        if (budget.tryReserve(bytes)) {
+                            if (outstanding.addAndGet(bytes) > capacity) {
+                                overCommitted.set(true);
+                            }
+                            outstanding.addAndGet(-bytes);
+                            budget.release(bytes);
+                        }
+                    }
+                });
+            }
+            executor.shutdown();
+            assertThat(executor.awaitTermination(20, TimeUnit.SECONDS)).isTrue();
+        }
+        assertThat(overCommitted)
+                .as("the reservations of all threads fit the capacity")
+                .isFalse();
+        assertThat(budget.available()).isEqualTo(capacity);
+    }
+
+    // a release made while a reserver parks wakes it, whichever of the two looks at the headroom first
+    // a reservation the headroom covers must not fail because an oversized one is failing on another thread
+    @Test
+    @Timeout(30)
+    void fittingReserveNeverFails() throws Exception {
+        DecodeBudget budget = DecodeBudget.ofBytes(100);
+        assertThat(budget.tryReserve(50)).isTrue();
+        AtomicBoolean stop = new AtomicBoolean(false);
+        AtomicLong spuriousFailures = new AtomicLong();
+        Thread oversized = Thread.ofPlatform().start(() -> {
+            while (!stop.get()) {
+                budget.tryReserve(80);
+            }
+        });
+        for (int i = 0; i < 200_000; i++) {
+            if (budget.tryReserve(40)) {
+                budget.release(40);
+            } else {
+                spuriousFailures.incrementAndGet();
+            }
+        }
+        stop.set(true);
+        oversized.join();
+        assertThat(spuriousFailures.get())
+                .as("40 bytes always fit the 50 bytes of headroom")
+                .isZero();
+    }
+
+    @Test
+    @Timeout(30)
+    void parkedReserverWakesOnEveryRelease() throws Exception {
+        DecodeBudget budget = DecodeBudget.ofBytes(100);
+        for (int round = 0; round < 200; round++) {
+            assertThat(budget.tryReserve(100)).isTrue();
+            Thread waiter = new Thread(() -> budget.reserve(60, () -> false));
+            waiter.start();
+            budget.release(60);
+            waiter.join(5_000);
+            assertThat(waiter.isAlive())
+                    .as("round " + round + ": the reserver got the released bytes")
+                    .isFalse();
+            assertThat(budget.available())
+                    .as("the reserver holds the released bytes")
+                    .isZero();
+            budget.release(40);
+            budget.release(60);
+            assertThat(budget.available()).isEqualTo(100);
+        }
+    }
 
     @Test
     void reservesWhenCapacityAvailable() {
@@ -58,6 +143,16 @@ class DecodeBudgetTest {
         budget.release(40);
         budget.release(40);
         assertThat(budget.available()).isEqualTo(100);
+    }
+
+    // Above half of Long.MAX_VALUE, the headroom plus a release can exceed the long range.
+    @Test
+    void maxCapacityReleaseNeverWraps() {
+        DecodeBudget budget = DecodeBudget.ofBytes(Long.MAX_VALUE);
+        budget.tryReserve(1);
+        budget.release(2);
+        assertThat(budget.available()).isEqualTo(Long.MAX_VALUE);
+        assertThat(budget.tryReserve(1)).isTrue();
     }
 
     @Test
