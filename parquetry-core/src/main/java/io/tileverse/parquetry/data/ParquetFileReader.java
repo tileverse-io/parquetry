@@ -24,7 +24,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.SequencedSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
@@ -37,7 +36,6 @@ import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.RowRanges;
-import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
@@ -88,7 +86,6 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
-import io.tileverse.parquetry.schema.ParquetSchemaException;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
 
@@ -311,9 +308,10 @@ public final class ParquetFileReader {
             LongConsumer pipelineNanosSink) {
 
         Predicate predicate = lowerSpatialPredicates(rawPredicate);
-        List<RowPositionColumn> rowPositionRequests = rowPositionColumns(predicate);
-        boolean recordLevel = recordLevel(options, rowPositionRequests);
-        ProjectionPlan projectionPlan = projectionPlanFor(predicate, projection, recordLevel);
+        ProjectionPlan projectionPlan =
+                ProjectionPlan.resolve(fileSchema, projection, predicate, options.useRecordLevelFilter());
+        List<RowPositionColumn> rowPositionRequests = projectionPlan.synthesizedColumns();
+        boolean recordLevel = projectionPlan.recordLevel();
         Projection scanProjection = projectionPlan.scanProjection();
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks(accumulator);
         boolean observe = observing(options);
@@ -355,19 +353,6 @@ public final class ParquetFileReader {
 
     /** A row stream and its plan. */
     private record PlannedRows<T>(ExplainPlan plan, Stream<T> rows) {}
-
-    /** Whether a read evaluates the predicate on each row: when asked to, and to synthesize row positions. */
-    private static boolean recordLevel(ReadOptions options, List<RowPositionColumn> rowPositionRequests) {
-        return options.useRecordLevelFilter() || !rowPositionRequests.isEmpty();
-    }
-
-    /**
-     * The columns produced for {@code projection} and the columns scanned to produce them. A read evaluating the
-     * predicate on each row also scans the columns of {@code predicate}.
-     */
-    private ProjectionPlan projectionPlanFor(Predicate predicate, Projection projection, boolean recordLevel) {
-        return ProjectionPlan.resolve(fileSchema, projection, recordLevel ? predicate : Predicate.ALWAYS_TRUE);
-    }
 
     /** True when an observer is attached; the read paths skip every observability allocation when it is false. */
     private static boolean observing(ReadOptions options) {
@@ -451,113 +436,6 @@ public final class ParquetFileReader {
     }
 
     /**
-     * The caller-named row-position columns the predicate references, after rejecting any the reader cannot synthesize.
-     * Empty when the predicate has no positional delete. Validating here, before the read fans out, lets {@link #read},
-     * {@link #readBatches}, and {@link #count} reject a bad name uniformly.
-     */
-    private List<ColumnPath> rowPositionColumnsValidated(Predicate predicate) {
-        List<ColumnPath> columns = Predicate.rowPositionColumns(predicate);
-        for (ColumnPath column : columns) {
-            validateRowPositionColumn(column);
-        }
-        return columns;
-    }
-
-    /**
-     * The row-position columns to synthesize for a count or plain passthrough read: every column the predicate
-     * references positionally, each presented as a within-file position (a {@code firstRowId} of 0). This is the
-     * shaping form with no produce set, since {@link Projection#ALL} adds no row-position outputs.
-     */
-    private List<RowPositionColumn> rowPositionColumns(Predicate predicate) {
-        return rowPositionColumns(predicate, Projection.ALL);
-    }
-
-    /**
-     * The row-position columns to synthesize for a shaping read: the predicate's positional columns (within-file
-     * positions) unioned with the produce set's {@link Projection.Column.RowPosition} outputs (each offset by its own
-     * {@code firstRowId}). A name shared by a positional-delete predicate and a row-position output is synthesized
-     * once; the two must agree on the offset.
-     */
-    private List<RowPositionColumn> rowPositionColumns(Predicate predicate, Projection projection) {
-        LinkedHashMap<ColumnPath, RowPositionColumn> byName = new LinkedHashMap<>();
-        for (ColumnPath column : rowPositionColumnsValidated(predicate)) {
-            byName.putIfAbsent(column, RowPositionColumn.position(column, 0L));
-        }
-        if (projection instanceof Projection.Of(SequencedSet<Projection.Column> columns)) {
-            for (Projection.Column column : columns) {
-                addSynthesizedColumn(byName, column);
-            }
-        }
-        return new ArrayList<>(byName.values());
-    }
-
-    private void addSynthesizedColumn(Map<ColumnPath, RowPositionColumn> byName, Projection.Column column) {
-        switch (column) {
-            case Projection.Column.RowPosition(ColumnPath name, long firstRowId) ->
-                addRowPositionOutput(byName, name, firstRowId);
-            case Projection.Column.Coalesce(
-                    ColumnPath name,
-                    ColumnPath sourceColumn,
-                    Projection.Column.Coalesce.Fallback f) -> byName.put(name, coalesceColumn(name, sourceColumn, f));
-            default -> {
-                // physical, constant, null, and promoted columns synthesize nothing
-            }
-        }
-    }
-
-    /**
-     * A coalesce column presented under its source name is exempt from {@link #validateRowPositionColumn}: its name
-     * deliberately equals a physical leaf (the materialized lineage column it coalesces with), which the row-position
-     * rule forbids for a pure synthesized column. A renamed coalesce presents a new output column and its name must
-     * pass the same rule.
-     */
-    private RowPositionColumn coalesceColumn(
-            ColumnPath name, ColumnPath sourceColumn, Projection.Column.Coalesce.Fallback fallback) {
-        if (!name.equals(sourceColumn)) {
-            validateRowPositionColumn(name);
-        }
-        return switch (fallback) {
-            case Projection.Column.Coalesce.Fallback.Position(long firstRowId) ->
-                RowPositionColumn.coalesceWithPosition(name, sourceColumn, firstRowId);
-            case Projection.Column.Coalesce.Fallback.Constant(Value value) ->
-                RowPositionColumn.coalesceWithConstant(name, sourceColumn, longValue(value));
-        };
-    }
-
-    private static long longValue(Value value) {
-        if (value instanceof Value.LongVal(long v)) {
-            return v;
-        }
-        throw new ParquetSchemaException("A coalesce constant fallback must be a long value, got " + value);
-    }
-
-    private void addRowPositionOutput(Map<ColumnPath, RowPositionColumn> byName, ColumnPath name, long firstRowId) {
-        validateRowPositionColumn(name);
-        RowPositionColumn previous = byName.putIfAbsent(name, RowPositionColumn.position(name, firstRowId));
-        if (previous != null && previous.firstRowId() != firstRowId) {
-            throw new ParquetSchemaException("Conflicting first row id for the row-position column " + name.dot() + ": "
-                    + previous.firstRowId() + " and " + firstRowId);
-        }
-    }
-
-    /**
-     * Rejects a caller-named synthesized column (a row position, or a renamed coalesce's presented name) the reader
-     * cannot produce: a nested path (the synthesized column is always a top-level leaf), or a name a physical column of
-     * the file already has (the produced column cannot coexist with a real column at that path). The caller must pick a
-     * free top-level name (Iceberg uses {@code _pos}).
-     */
-    private void validateRowPositionColumn(ColumnPath column) {
-        if (column.numParts() > 1) {
-            throw new ParquetSchemaException(
-                    "A synthesized column must be a top-level name, not the nested path " + column.dot());
-        }
-        if (fileSchema.find(column).isPresent()) {
-            throw new ParquetSchemaException("Cannot synthesize the " + column.dot()
-                    + " column: the file already has a physical column with that name");
-        }
-    }
-
-    /**
      * Rewrites GeoParquet bbox-relation leaves into equivalent comparisons on the geometry column's covering columns
      * when this file has covering metadata, letting the numeric stats and column-index tiers prune without decoding the
      * geometry. A file without covering keeps its spatial leaf for the record-level WKB path.
@@ -612,7 +490,7 @@ public final class ParquetFileReader {
             FetchAccumulator accumulator,
             SpillAccumulator spillAccumulator,
             LongConsumer pipelineNanosSink) {
-        List<RowPositionColumn> rowPositionRequests = rowPositionColumns(predicate);
+        List<RowPositionColumn> rowPositionRequests = ProjectionPlan.rowPositionColumns(fileSchema, predicate);
         Projection predicateProjection = predicateScanProjection(predicate);
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks(accumulator);
         boolean observe = observing(options);
@@ -863,7 +741,7 @@ public final class ParquetFileReader {
         ReadOptions options = observation.effectiveOptions();
         BoundsAccumulator accumulator = new BoundsAccumulator();
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks();
-        List<RowPositionColumn> rowPositionRequests = rowPositionColumns(predicate);
+        List<RowPositionColumn> rowPositionRequests = ProjectionPlan.rowPositionColumns(fileSchema, predicate);
         boolean observe = observing(options);
         boolean wantsTimings = observe && options.queryObserver().wantsTimings();
         ExplainPlan plan = timedFilterPipeline(
@@ -1092,9 +970,10 @@ public final class ParquetFileReader {
 
         ReadOptions options = observation.effectiveOptions();
         Predicate predicate = lowerSpatialPredicates(rawPredicate);
-        List<RowPositionColumn> rowPositionRequests = rowPositionColumns(predicate, projection);
-        boolean recordLevel = recordLevel(options, rowPositionRequests);
-        ProjectionPlan projectionPlan = projectionPlanFor(predicate, projection, recordLevel);
+        ProjectionPlan projectionPlan =
+                ProjectionPlan.resolve(fileSchema, projection, predicate, options.useRecordLevelFilter());
+        List<RowPositionColumn> rowPositionRequests = projectionPlan.synthesizedColumns();
+        boolean recordLevel = projectionPlan.recordLevel();
         Projection scanProjection = projectionPlan.scanProjection();
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks();
         boolean observe = observing(options);
@@ -1149,9 +1028,9 @@ public final class ParquetFileReader {
     public ExplainPlan explain(
             @NonNull Predicate rawPredicate, @NonNull Projection projection, @NonNull ReadOptions options) {
         Predicate predicate = lowerSpatialPredicates(rawPredicate);
-        boolean recordLevel = recordLevel(options, rowPositionColumns(predicate, projection));
-        Projection scanProjection =
-                projectionPlanFor(predicate, projection, recordLevel).scanProjection();
+        ProjectionPlan projectionPlan =
+                ProjectionPlan.resolve(fileSchema, projection, predicate, options.useRecordLevelFilter());
+        Projection scanProjection = projectionPlan.scanProjection();
         return runFilterPipeline(predicate, scanProjection, options, rowGroupChunks());
     }
 

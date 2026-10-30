@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -107,6 +108,23 @@ class ExplainAnalyzeIT {
                 file, reader -> reader.explainAnalyze(MATCHES_SUBSET, Projection.ALL, ReadOptions.DEFAULTS));
 
         assertThat(analyzeCalls).isEqualTo(readCalls);
+    }
+
+    // The drain of a projection with a row-position output must synthesize that output, as the read does.
+    @Test
+    void analyzeSynthesizesRowPositions(@TempDir Path tmp) throws Exception {
+        Path file = writeThreeRowGroups(tmp);
+        Projection.Column payload = new Projection.Column.Physical(ColumnPath.of("payload"), ColumnPath.of("payload"));
+        Projection.Column position = new Projection.Column.RowPosition(ColumnPath.of("_pos"), 0L);
+        Projection withPosition = Projection.of(new LinkedHashSet<>(List.of(payload, position)));
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+
+            ExplainPlan plan = reader.explainAnalyze(MATCHES_SUBSET, withPosition, ReadOptions.DEFAULTS);
+
+            assertThat(plan.execution().orElseThrow().rowsMatched())
+                    .isEqualTo(reader.count(MATCHES_SUBSET, ReadOptions.DEFAULTS));
+        }
     }
 
     /** The calls to the byte source made by {@code action}, once the reader has read the footer. */
