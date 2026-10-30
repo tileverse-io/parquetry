@@ -45,7 +45,6 @@ import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
-import io.tileverse.parquetry.internal.filter.PredicateNormalizer;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.footer.CompactFooter;
 import io.tileverse.parquetry.internal.read.IndexSectionLoader;
@@ -282,24 +281,40 @@ class SpatialRowGroupPlannerTest {
     @Test
     void noPlannerWithoutAProbe() throws Exception {
         Fixture fixture = fixture();
-        Predicate normalized = PredicateNormalizer.normalize(bboxIntersects(-1, -1, 100, 2));
+        Predicate predicate = bboxIntersects(-1, -1, 100, 2);
 
         assertThat(fixture.gates()
-                        .rowGroupPlanner(fixture.survivors(), normalized, ReadOptions.DEFAULTS, fixture.schema()))
+                        .rowGroupPlanner(fixture.survivors(), predicate, ReadOptions.DEFAULTS, fixture.schema()))
                 .isEmpty();
     }
 
     @Test
     void noPlannerWhenTheGeometryIsNotInTheOutput() throws Exception {
         Fixture fixture = fixture();
-        Predicate normalized = PredicateNormalizer.normalize(bboxIntersects(-1, -1, 100, 2));
+        Predicate predicate = bboxIntersects(-1, -1, 100, 2);
         ReadOptions options =
                 ReadOptions.builder().spatialReadProbe(new CellProbe()).build();
         ParquetSchema idOnly = fixture.outputSchemaOf(ID);
 
-        assertThat(fixture.gates().rowGroupPlanner(fixture.survivors(), normalized, options, idOnly))
+        assertThat(fixture.gates().rowGroupPlanner(fixture.survivors(), predicate, options, idOnly))
                 .as("only the per-row gate paints, and it paints from the geometry of the emitted batch")
                 .isEmpty();
+    }
+
+    @Test
+    void plansTheNormalizedPredicate() throws Exception {
+        Fixture fixture = fixture();
+        Predicate leaf = bboxIntersects(-1, -1, 100, 2);
+        // This And normalizes to the bare bbox leaf. Left as is, it accepts no unit because of its negated branch.
+        Predicate raw = Pred.and(leaf, Pred.not(Predicate.ALWAYS_FALSE));
+        RowGroupPlanner rawPlanner = fixture.plannerFor(new CellProbe(), raw);
+        RowGroupPlanner leafPlanner = fixture.plannerFor(new CellProbe(), leaf);
+
+        RowGroupNarrowing fromRaw = rawPlanner.plan(0);
+        RowGroupNarrowing fromLeaf = leafPlanner.plan(0);
+
+        assertThat(fromLeaf).isEqualTo(RowGroupNarrowing.dropped());
+        assertThat(fromRaw).isEqualTo(fromLeaf);
     }
 
     @Test
@@ -378,8 +393,7 @@ class SpatialRowGroupPlannerTest {
 
         RowGroupPlanner plannerFor(SpatialReadProbe probe, Predicate predicate, List<RowGroupSurvivor> survivors) {
             ReadOptions options = ReadOptions.builder().spatialReadProbe(probe).build();
-            Predicate normalized = PredicateNormalizer.normalize(predicate);
-            return gates.rowGroupPlanner(survivors, normalized, options, schema).orElseThrow();
+            return gates.rowGroupPlanner(survivors, predicate, options, schema).orElseThrow();
         }
     }
 

@@ -24,7 +24,6 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.RowGroupPlan;
-import io.tileverse.parquetry.internal.filter.PredicateNormalizer;
 import io.tileverse.parquetry.internal.read.MaskedScan;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator.DecodeObservation;
@@ -265,13 +264,10 @@ final class ReadPlan {
 
     /**
      * The per-row-group spatial planner of a read that produces rows, present only when the read supplies a probe and
-     * the output schema of {@code planning} holds the file's primary geometry column. It plans against the normalized
-     * raw predicate, before the covering rewrite: the comparisons added by that rewrite are necessary conditions of the
-     * spatial leaf that they were derived from, hence a unit accepted on the raw leaf satisfies them too.
+     * the output schema of {@code planning} holds the file's primary geometry column.
      */
     private Optional<RowGroupPlanner> spatialPlanner(
             List<RowGroupSurvivor> survivors, DecodeShape.SpatialPlanning planning, ReadOptions options) {
-        Predicate normalizedRaw = PredicateNormalizer.normalize(planning.rawPredicate());
-        return spatialReadGates.rowGroupPlanner(survivors, normalizedRaw, options, planning.outputSchema());
+        return spatialReadGates.rowGroupPlanner(survivors, planning.rawPredicate(), options, planning.outputSchema());
     }
 }
