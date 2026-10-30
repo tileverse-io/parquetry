@@ -86,6 +86,20 @@ class SchemaElementWriterTest {
         assertThat(id.logicalType()).contains(new LogicalType.StringType());
     }
 
+    // FILE (union field 19) postdates the reader: its content was skipped and cannot be written back.
+    @Test
+    void unrecognizedTypeIsDropped() {
+        LogicalType unrecognized = new LogicalType.Unrecognized(19);
+        SchemaNode.Group file = group("file", unrecognized, primitive("bytes", PrimitiveKind.BYTE_ARRAY, unrecognized));
+        SchemaNode.Group root =
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(file), Optional.empty(), -1);
+
+        List<SchemaElement> elements = SchemaElementWriter.flatten(new ParquetSchema(root));
+
+        assertThat(elementNamed(elements, "file").logicalType()).isEmpty();
+        assertThat(elementNamed(elements, "bytes").logicalType()).isEmpty();
+    }
+
     private static ParquetSchema sampleSchema() {
         SchemaNode.Primitive id = string("id");
         SchemaNode.Group tags = group("tags", new LogicalType.ListType(), group("list", null, string("element")));

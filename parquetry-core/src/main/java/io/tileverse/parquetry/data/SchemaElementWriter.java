@@ -63,7 +63,7 @@ final class SchemaElementWriter {
         String name = isRoot && group.name().isEmpty() ? "schema" : group.name();
         Optional<FieldRepetitionType> repetition = isRoot ? Optional.empty() : Optional.of(mapRepetition(group));
         OptionalInt fieldId = group.fieldId() >= 0 ? OptionalInt.of(group.fieldId()) : OptionalInt.empty();
-        Optional<LogicalType> logicalType = group.logicalType();
+        Optional<LogicalType> logicalType = writtenLogicalType(group.logicalType());
         return new SchemaElement(
                 Optional.empty(),
                 OptionalInt.empty(),
@@ -79,7 +79,7 @@ final class SchemaElementWriter {
 
     private static SchemaElement toPrimitiveElement(SchemaNode.Primitive primitive) {
         OptionalInt fieldId = primitive.fieldId() >= 0 ? OptionalInt.of(primitive.fieldId()) : OptionalInt.empty();
-        Optional<LogicalType> logicalType = primitive.logicalType();
+        Optional<LogicalType> logicalType = writtenLogicalType(primitive.logicalType());
         return new SchemaElement(
                 Optional.of(toPhysicalType(primitive.kind())),
                 primitive.typeLength(),
@@ -91,6 +91,14 @@ final class SchemaElementWriter {
                 decimalPrecision(logicalType),
                 logicalType,
                 fieldId);
+    }
+
+    /**
+     * The annotation written for a node. An annotation unrecognized by the reader is left out, because its content was
+     * never read: the column is written as its physical type, the way it was read.
+     */
+    private static Optional<LogicalType> writtenLogicalType(Optional<LogicalType> logicalType) {
+        return logicalType.filter(annotation -> !(annotation instanceof LogicalType.Unrecognized));
     }
 
     /**

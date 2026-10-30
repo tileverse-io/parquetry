@@ -65,16 +65,27 @@ class StatisticsValueDecoderOrderTest {
         assertThat(decoded).isEmpty();
     }
 
-    /**
-     * UNKNOWN annotates a column of nulls, and stands for an annotation of a later version of the format too: the order
-     * of the bounds of such a column is not known to this reader.
-     */
+    /** UNKNOWN annotates a column holding only nulls. Bounds found for such a column are not trusted. */
     @ParameterizedTest(name = "{0} annotated UNKNOWN")
     @EnumSource(PrimitiveKind.class)
     void boundOfUnknownTypeIsDeclined(PrimitiveKind kind) {
         LogicalType unknown = new LogicalType.UnknownType();
 
         Optional<Value> decoded = StatisticsValueDecoder.decode(kind, Optional.of(unknown), TWELVE_BYTES);
+
+        assertThat(decoded).isEmpty();
+    }
+
+    /**
+     * An annotation of a later version of the format, such as FILE (union field 19), may order the values of its column
+     * unlike their physical type. The order of the bounds is not known to this reader.
+     */
+    @ParameterizedTest(name = "{0} with an unrecognized annotation")
+    @EnumSource(PrimitiveKind.class)
+    void boundOfUnrecognizedIsDeclined(PrimitiveKind kind) {
+        LogicalType unrecognized = new LogicalType.Unrecognized(19);
+
+        Optional<Value> decoded = StatisticsValueDecoder.decode(kind, Optional.of(unrecognized), TWELVE_BYTES);
 
         assertThat(decoded).isEmpty();
     }

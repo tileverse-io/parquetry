@@ -75,7 +75,9 @@ class BoundsOrderTest {
                         PrimitiveKind.FIXED_LEN_BYTE_ARRAY, new LogicalType.UuidType(), BoundsOrder.UNSIGNED_BYTES),
                 Arguments.of(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, FLOAT16, BoundsOrder.HALF_FLOAT),
                 Arguments.of(PrimitiveKind.INT32, new LogicalType.UnknownType(), BoundsOrder.SIGNED_INT32),
-                Arguments.of(PrimitiveKind.FLOAT, new LogicalType.UnknownType(), BoundsOrder.FLOAT));
+                Arguments.of(PrimitiveKind.FLOAT, new LogicalType.UnknownType(), BoundsOrder.FLOAT),
+                // The writer leaves an unrecognized annotation out.
+                Arguments.of(PrimitiveKind.BYTE_ARRAY, new LogicalType.Unrecognized(19), BoundsOrder.UNSIGNED_BYTES));
     }
 
     @ParameterizedTest(name = "{0} annotated {1} orders as {2}")

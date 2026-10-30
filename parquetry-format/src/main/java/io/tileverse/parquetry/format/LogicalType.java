@@ -38,6 +38,7 @@ public sealed interface LogicalType
                 LogicalType.Timestamp,
                 LogicalType.IntType,
                 LogicalType.UnknownType,
+                LogicalType.Unrecognized,
                 LogicalType.JsonType,
                 LogicalType.BsonType,
                 LogicalType.UuidType,
@@ -113,7 +114,21 @@ public sealed interface LogicalType
 
     record DateType() implements LogicalType {}
 
+    /**
+     * The UNKNOWN annotation of the format. It marks a column that holds only nulls. The physical type of such a column
+     * may be a guess.
+     */
     record UnknownType() implements LogicalType {}
+
+    /**
+     * An annotation unknown to this reader, such as one added by a later version of the format. The column reads as its
+     * physical type. Its statistics stay out of pruning, because the annotation defines their order. The reader skips
+     * the content of the annotation, and the annotation cannot be written back.
+     *
+     * @param fieldId the field id of the annotation in the {@code LogicalType} union of the format, or 0 for a union
+     *     naming no annotation
+     */
+    record Unrecognized(int fieldId) implements LogicalType {}
 
     record JsonType() implements LogicalType {}
 

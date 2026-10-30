@@ -158,7 +158,8 @@ enum BoundsOrder {
                 kind == PrimitiveKind.BYTE_ARRAY ? UNSIGNED_BYTES : UNDEFINED;
             case LogicalType.UuidType _ -> kind == PrimitiveKind.FIXED_LEN_BYTE_ARRAY ? UNSIGNED_BYTES : UNDEFINED;
             case LogicalType.Float16Type _ -> isHalfFloat(leaf) ? HALF_FLOAT : UNDEFINED;
-            case LogicalType.UnknownType _ -> physicalOrder(kind);
+            // The writer leaves an unrecognized annotation out and writes the column as its physical type.
+            case LogicalType.UnknownType _, LogicalType.Unrecognized _ -> physicalOrder(kind);
             case LogicalType.Geometry _,
                     LogicalType.Geography _,
                     LogicalType.MapType _,

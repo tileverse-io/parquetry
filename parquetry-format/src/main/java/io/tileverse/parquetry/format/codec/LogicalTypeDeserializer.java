@@ -59,6 +59,9 @@ import tools.jackson.databind.json.JsonMapper;
  *   18: GeographyType GEOGRAPHY
  * }
  * </pre>
+ *
+ * <p>A case unknown to this reader reads as {@link LogicalType.Unrecognized}, never as UNKNOWN: field 11 marks a column
+ * holding only nulls.
  */
 final class LogicalTypeDeserializer {
 
@@ -80,8 +83,8 @@ final class LogicalTypeDeserializer {
         // A union has exactly one field set. Read the single field header.
         FieldHeader fh = r.readFieldHeader(0);
         if (fh.isStop()) {
-            // Empty union - should not happen but tolerate it
-            return new LogicalType.UnknownType();
+            // A writer should not produce an empty union; tolerate it as an annotation naming nothing.
+            return new LogicalType.Unrecognized(0);
         }
         LogicalType result = decodeVariant(fh.fieldId(), r);
         // Consume the trailing STOP of the union struct
@@ -154,7 +157,7 @@ final class LogicalTypeDeserializer {
             case 18 -> readGeography(r);
             default -> {
                 r.skipStruct();
-                yield new LogicalType.UnknownType();
+                yield new LogicalType.Unrecognized(fieldId);
             }
         };
     }

@@ -55,6 +55,7 @@ class LogicalTypeTest {
             new LogicalType.Timestamp(true, LogicalType.TimeUnit.MILLIS),
             new LogicalType.IntType((byte) 32, true),
             new LogicalType.UnknownType(),
+            new LogicalType.Unrecognized(19),
             new LogicalType.JsonType(),
             new LogicalType.BsonType(),
             new LogicalType.UuidType(),
@@ -63,6 +64,6 @@ class LogicalTypeTest {
             new LogicalType.Geometry(java.util.Optional.empty()),
             new LogicalType.Geography(java.util.Optional.empty(), java.util.Optional.empty())
         };
-        assertThat(all).hasSize(17);
+        assertThat(all).hasSize(18);
     }
 }

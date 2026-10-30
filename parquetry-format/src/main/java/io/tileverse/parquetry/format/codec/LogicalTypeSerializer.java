@@ -56,6 +56,7 @@ final class LogicalTypeSerializer {
             case LogicalType.Timestamp ts -> writeTimestamp(w, ts);
             case LogicalType.IntType i -> writeIntType(w, i);
             case LogicalType.UnknownType _ -> writeEmptyVariant(w, (short) 11);
+            case LogicalType.Unrecognized unrecognized -> throw unwritable(unrecognized);
             case LogicalType.JsonType _ -> writeEmptyVariant(w, (short) 12);
             case LogicalType.BsonType _ -> writeEmptyVariant(w, (short) 13);
             case LogicalType.UuidType _ -> writeEmptyVariant(w, (short) 14);
@@ -66,6 +67,11 @@ final class LogicalTypeSerializer {
         }
         w.writeFieldStop();
         w.writeStructEnd();
+    }
+
+    private static IllegalArgumentException unwritable(LogicalType.Unrecognized unrecognized) {
+        return new IllegalArgumentException("Cannot write the logical type of union field " + unrecognized.fieldId()
+                + ": the reader did not recognize it and skipped its content");
     }
 
     /** Writes a payload-less case: case field carrying an empty nested struct. */
