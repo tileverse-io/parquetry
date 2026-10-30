@@ -61,6 +61,7 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
 import io.tileverse.parquetry.testsupport.CellProbe;
 import io.tileverse.parquetry.testsupport.Wkb;
 
@@ -425,7 +426,8 @@ class SpatialRowGroupPlannerTest {
         ParquetSchema schema = reader.schema();
         Optional<GeoParquetMetadata> geo =
                 Optional.of(GeoParquetMetadata.parse(reader.keyValueMetadata().get("geo")));
-        SpatialReadGates gates = new SpatialReadGates(reader.footer().spatialBounds(), schema, geo);
+        Optional<ColumnPath> primary = GeometryColumns.primary(schema, geo);
+        SpatialReadGates gates = new SpatialReadGates(primary, reader.footer().spatialBounds(), schema, geo);
         List<RowGroupChunks> chunks =
                 rowGroupChunks(reader, source, reader.footer().compactFooter());
         List<RowGroupChunks> emptied = rowGroupChunks(reader, source, footerWithoutRowsInTheFirstGroup(reader, source));

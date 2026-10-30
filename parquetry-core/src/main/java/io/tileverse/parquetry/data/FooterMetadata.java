@@ -32,9 +32,11 @@ import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.internal.footer.CompactFooter;
 import io.tileverse.parquetry.internal.footer.LeafIndex;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaBuilder;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
 
 /**
  * Everything derived from a file's footer by a {@link ParquetFileReader}, in the immutable forms kept by the reader:
@@ -49,6 +51,8 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
  * @param fileSchema the file schema, with GeoParquet 1.x logical-type annotations folded in
  * @param leafIndex the mapping between the schema's leaf columns and the ordinals addressing them in the packed footer
  * @param geoMetadata the parsed GeoParquet {@code "geo"} metadata, empty for a file without one
+ * @param primaryGeometry the primary geometry column of the file, see {@link GeometryColumns#primary}; empty for a file
+ *     without geometry column
  * @param spatialBounds the most precise bounds tier applicable to the file, consulted for a geometry column's file and
  *     row-group extents
  * @param keyValueMetadata the file's key/value metadata, collapsed to the last value per key
@@ -61,6 +65,7 @@ record FooterMetadata(
         ParquetSchema fileSchema,
         LeafIndex leafIndex,
         Optional<GeoParquetMetadata> geoMetadata,
+        Optional<ColumnPath> primaryGeometry,
         SpatialBoundsSource spatialBounds,
         Map<String, String> keyValueMetadata,
         List<RowGroupSummary> rowGroups,
@@ -78,6 +83,7 @@ record FooterMetadata(
         Map<String, String> kvMetadata = collapseKeyValueMetadata(footer.keyValueMetadata());
         Optional<GeoParquetMetadata> geoMetadata = SchemaBuilder.geoMetadata(kvMetadata);
         ParquetSchema fileSchema = SchemaBuilder.build(footer.schema(), geoMetadata);
+        Optional<ColumnPath> primaryGeometry = GeometryColumns.primary(fileSchema, geoMetadata);
         List<RowGroupSummary> rowGroups = rowGroupView(footer);
         LeafIndex leafIndex = LeafIndex.of(fileSchema);
         CompactFooter compactFooter = CompactFooter.encode(footer, leafIndex);
@@ -88,6 +94,7 @@ record FooterMetadata(
                 fileSchema,
                 leafIndex,
                 geoMetadata,
+                primaryGeometry,
                 spatialBounds,
                 kvMetadata,
                 rowGroups,

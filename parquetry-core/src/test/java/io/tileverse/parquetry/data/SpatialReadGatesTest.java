@@ -45,6 +45,7 @@ import io.tileverse.parquetry.internal.read.RowGroupSurvivor;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
 
 /**
  * Drives the row-group gate of a decimated read over a two-point GeoParquet file through a scripted probe. The gate
@@ -139,7 +140,9 @@ class SpatialReadGatesTest {
 
     /** The row-group gate of a read over {@code reader}, taking the row group's bounds from {@code bounds}. */
     private static RowGroupGate gateOver(ParquetFileReader reader, SpatialBoundsSource bounds, SpatialReadProbe probe) {
-        SpatialReadGates gates = new SpatialReadGates(bounds, reader.schema(), geoMetadataOf(reader));
+        Optional<GeoParquetMetadata> geo = geoMetadataOf(reader);
+        Optional<ColumnPath> primary = GeometryColumns.primary(reader.schema(), geo);
+        SpatialReadGates gates = new SpatialReadGates(primary, bounds, reader.schema(), geo);
         ReadOptions options = ReadOptions.builder().spatialReadProbe(probe).build();
         return gates.rowGroupGate(survivorsOf(reader), options).orElseThrow();
     }

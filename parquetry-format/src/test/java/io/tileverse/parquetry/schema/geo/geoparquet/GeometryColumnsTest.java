@@ -102,6 +102,22 @@ class GeometryColumnsTest {
         assertThat(primary).contains(ColumnPath.of("geom_a"));
     }
 
+    // Without a usable primary column, the first geometry leaf in schema order is the primary one.
+    @Test
+    void primaryFallsBackInSchemaOrder() {
+        SchemaNode.Primitive geometryZ = primitive("geom_z", PrimitiveKind.BYTE_ARRAY, Optional.empty());
+        SchemaNode.Primitive geometryA = primitive("geom_a", PrimitiveKind.BYTE_ARRAY, Optional.empty());
+        String geoJson = "{\"version\":\"1.0.0\",\"primary_column\":\"\",\"columns\":{"
+                + "\"geom_a\":{\"encoding\":\"WKB\",\"geometry_types\":[]},"
+                + "\"geom_z\":{\"encoding\":\"WKB\",\"geometry_types\":[]}}}";
+        GeoParquetMetadata metadataOutOfOrder = GeoParquetMetadata.parse(geoJson);
+
+        Optional<ColumnPath> primary =
+                GeometryColumns.primary(schemaOf(geometryZ, geometryA), Optional.of(metadataOutOfOrder));
+
+        assertThat(primary).contains(ColumnPath.of("geom_z"));
+    }
+
     @Test
     void primaryEmptyWhenNoGeometry() {
         Optional<ColumnPath> primary = GeometryColumns.primary(nonGeometrySchema(), Optional.empty());

@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -46,6 +47,7 @@ import io.tileverse.parquetry.filter.SortedLongPositionSet;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.prune.FilePruner;
 import io.tileverse.parquetry.format.BoundingBox;
+import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
 import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
@@ -72,6 +74,7 @@ class ReaderBoundsTest {
 
     private static final ColumnPath GEOMETRY = ColumnPath.of("geometry");
     private static final ColumnPath ID = ColumnPath.of("id");
+    private static final ColumnPath OTHER = ColumnPath.of("other");
     // The caller names the synthesized row-position column; the engine mandates no fixed name (Iceberg uses _pos).
     private static final ColumnPath POS = ColumnPath.of("_pos");
 
@@ -308,6 +311,27 @@ class ReaderBoundsTest {
         }
     }
 
+    // Without a declared primary column and footer boxes, the first geometry column in schema order is the primary.
+    @Test
+    void firstGeometryIsPrimary() throws IOException {
+        Path written = writeTwoGeometries("two-geometries.parquet");
+        UnaryOperator<FileMetaData> noGeoMetadata = FooterRewrite.geoMetadataRemoved();
+        UnaryOperator<FileMetaData> noGeometryBox = FooterRewrite.geospatialBboxRemoved("geometry", 0);
+        UnaryOperator<FileMetaData> noOtherBox = FooterRewrite.geospatialBboxRemoved("other", 0);
+        UnaryOperator<FileMetaData> undeclared =
+                footer -> noOtherBox.apply(noGeometryBox.apply(noGeoMetadata.apply(footer)));
+        Path file = FooterRewrite.rewrite(written, tempDir.resolve("undeclared.parquet"), undeclared);
+        BoundingBox firstColumn =
+                BoundingBox.builder().xmin(0).xmax(10).ymin(0).ymax(10).build();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+
+            Optional<BoundingBox> unfiltered = reader.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
+
+            assertSameBox2d(unfiltered.orElseThrow(), firstColumn);
+        }
+    }
+
     /**
      * A row group without a box could hold any geometry, leaving the file without a geometry box. Bounds then scan that
      * row group, and file pruning keeps the file for a query reaching only its points.
@@ -513,6 +537,30 @@ class ReaderBoundsTest {
                         Map.of(
                                 GEOMETRY, MemorySegment.ofArray(wkbPoint(feature.x(), feature.y())),
                                 ID, feature.id()));
+            }
+        }
+        return file;
+    }
+
+    /** Two geometry columns, {@code geometry} then {@code other}, with points apart from one another. */
+    private Path writeTwoGeometries(String name) throws IOException {
+        ParquetSchema schema = flatSchema(requiredBinary("geometry"), requiredBinary("other"), requiredInt32("id"));
+        WriteOptions options = WriteOptions.builder()
+                .tempDir(tempDir)
+                .crsEpsg("geometry", 4326)
+                .crsEpsg("other", 4326)
+                .build();
+        Path file = tempDir.resolve(name);
+        try (OutputStream out = Files.newOutputStream(file);
+                ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender(1);
+            for (int id = 0; id < 2; id++) {
+                double offset = 10.0 * id;
+                Map<ColumnPath, Object> row = Map.of(
+                        GEOMETRY, MemorySegment.ofArray(wkbPoint(offset, offset)),
+                        OTHER, MemorySegment.ofArray(wkbPoint(100 + offset, 100 + offset)),
+                        ID, id);
+                WriteFixtures.appendRow(appender, schema, row);
             }
         }
         return file;

@@ -76,7 +76,6 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
-import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
 
 import lombok.NonNull;
@@ -127,7 +126,8 @@ public final class ParquetFileReader {
         this.footer = footerMetadata;
         this.runtime = runtime;
         this.readResources = new ReadResources(source, footer.fileSchema(), runtime);
-        this.spatialReadGates = new SpatialReadGates(footer.spatialBounds(), footer.fileSchema(), footer.geoMetadata());
+        this.spatialReadGates = new SpatialReadGates(
+                footer.primaryGeometry(), footer.spatialBounds(), footer.fileSchema(), footer.geoMetadata());
         this.decryptionKeyRetriever = decryptionKeyRetriever;
     }
 
@@ -541,7 +541,9 @@ public final class ParquetFileReader {
      * The exact bounding box of the primary geometry column over the rows matching {@code rawPredicate}, or empty when
      * the file has no geometry column or no matching row holds a geometry with an extent (null and empty geometries add
      * nothing). The box is 2D-exact; its Z and M extents are present only when the whole answer came from metadata
-     * boxes, and any scanned row drops them.
+     * boxes, and any scanned row drops them. The primary geometry column is the one declared by the GeoParquet metadata
+     * when it is a geometry column, else the first geometry column in schema order (see
+     * {@link GeometryColumns#primary}).
      *
      * <p>The box is exact relative to the file's declared geometry statistics, which are trusted as tight; a writer
      * that declared rounded boxes widens the answer accordingly. The box has finite edges and never wraps the
@@ -556,7 +558,7 @@ public final class ParquetFileReader {
      * <p>An unfiltered call returns the tight file-level metadata box when the file records one, visiting no row group.
      */
     public Optional<BoundingBox> bounds(@NonNull Predicate rawPredicate, @NonNull ReadOptions options) {
-        Optional<ColumnPath> geometryColumn = primaryGeometryColumn();
+        Optional<ColumnPath> geometryColumn = footer.primaryGeometry();
         if (geometryColumn.isEmpty()) {
             return Optional.empty();
         }
@@ -566,43 +568,6 @@ public final class ParquetFileReader {
             return value ? unfilteredBounds(geometry, options) : Optional.empty();
         }
         return boundsLowered(predicate, geometry, options);
-    }
-
-    /**
-     * The file's primary geometry column, or empty when the file exposes none. A GeoParquet {@code "geo"} metadata
-     * document names its primary column directly. Without that metadata, a single footer geometry bounding box
-     * identifies the column, and failing that a lone geometry logical-type leaf in the schema does.
-     */
-    private Optional<ColumnPath> primaryGeometryColumn() {
-        Optional<ColumnPath> declared = declaredPrimaryGeometryColumn();
-        if (declared.isPresent()) {
-            return declared;
-        }
-        Optional<ColumnPath> boundedGeometry =
-                fileStats().geometryBounds().keySet().stream().findFirst();
-        if (boundedGeometry.isPresent()) {
-            return boundedGeometry;
-        }
-        return soleSchemaGeometryColumn();
-    }
-
-    /**
-     * The GeoParquet metadata's declared primary geometry column, when the file has {@code "geo"} metadata naming one.
-     */
-    private Optional<ColumnPath> declaredPrimaryGeometryColumn() {
-        return footer.geoMetadata()
-                .map(GeoParquetMetadata::primaryColumn)
-                .filter(name -> !name.isBlank())
-                .map(name -> ColumnPath.of(name.split("\\.")));
-    }
-
-    /** The file schema's sole geometry logical-type leaf, or empty when there is none or more than one. */
-    private Optional<ColumnPath> soleSchemaGeometryColumn() {
-        Set<ColumnPath> geometryColumns = GeometryColumns.resolve(footer.fileSchema(), footer.geoMetadata());
-        if (geometryColumns.size() != 1) {
-            return Optional.empty();
-        }
-        return Optional.of(geometryColumns.iterator().next());
     }
 
     /**

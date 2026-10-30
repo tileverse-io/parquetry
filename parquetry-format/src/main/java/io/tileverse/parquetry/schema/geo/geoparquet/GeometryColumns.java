@@ -69,7 +69,17 @@ public final class GeometryColumns {
                 .filter(name -> !name.isBlank())
                 .map(name -> ColumnPath.of(name.split("\\.")))
                 .filter(geometryColumns::contains);
-        return declaredPrimary.or(() -> geometryColumns.stream().findFirst());
+        return declaredPrimary.or(() -> firstInSchemaOrder(schema, geometryColumns));
+    }
+
+    /** The first leaf of {@code schema} among {@code geometryColumns}, in schema order. */
+    private static Optional<ColumnPath> firstInSchemaOrder(ParquetSchema schema, Set<ColumnPath> geometryColumns) {
+        for (ColumnPath leaf : schema.leafColumns()) {
+            if (geometryColumns.contains(leaf)) {
+                return Optional.of(leaf);
+            }
+        }
+        return Optional.empty();
     }
 
     private static Optional<GeoParquetMetadata> parseGeoMetadata(Map<String, String> keyValueMetadata) {

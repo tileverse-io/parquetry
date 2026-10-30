@@ -33,7 +33,6 @@ import io.tileverse.parquetry.internal.read.SpatialDecimationGate;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
-import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
 
 /**
  * Builds the spatial decimation gates for one file. A read whose {@link ReadOptions} supplies a
@@ -58,8 +57,11 @@ final class SpatialReadGates {
     private final Optional<GeoParquetMetadata> geoMetadata;
 
     SpatialReadGates(
-            SpatialBoundsSource boundsSource, ParquetSchema fileSchema, Optional<GeoParquetMetadata> geoMetadata) {
-        this.primaryGeometry = GeometryColumns.primary(fileSchema, geoMetadata);
+            Optional<ColumnPath> primaryGeometry,
+            SpatialBoundsSource boundsSource,
+            ParquetSchema fileSchema,
+            Optional<GeoParquetMetadata> geoMetadata) {
+        this.primaryGeometry = primaryGeometry;
         this.boundsSource = boundsSource;
         this.fileSchema = fileSchema;
         this.geoMetadata = geoMetadata;

@@ -58,6 +58,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
+import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
 
 /**
  * A {@link GeoParquetDataset} composed from one or many same-schema Parquet files. Before each query it prunes files
@@ -81,6 +82,7 @@ public final class FilesetDataset implements GeoParquetDataset {
     private final List<FileStats> partitionStats;
     private final DatasetCapabilities capabilities;
     private final Optional<GeoParquetMetadata> geoMetadata;
+    private final Optional<ColumnPath> primaryGeometry;
     private final Optional<BoundingBox> aggregatedBounds;
     private final OpenOptions openOptions;
 
@@ -120,6 +122,7 @@ public final class FilesetDataset implements GeoParquetDataset {
         this.sources = List.copyOf(sources);
         this.locations = List.copyOf(locations);
         this.geoMetadata = Objects.requireNonNull(geoMetadata, "geoMetadata");
+        this.primaryGeometry = GeometryColumns.primary(fileSchema, geoMetadata);
         this.aggregatedBounds = geoMetadata.flatMap(FilesetDataset::declaredBounds);
         Objects.requireNonNull(capabilities, "capabilities");
         this.capabilities = advertisingDeclaredBounds(capabilities, aggregatedBounds.isPresent());
@@ -218,18 +221,12 @@ public final class FilesetDataset implements GeoParquetDataset {
     }
 
     /**
-     * The file's geometry box from the footer statistics gathered at open, resolved to the declared primary geometry
-     * column when the {@code "geo"} metadata names one, else the first recorded geometry-bounds entry. The fallback
-     * reads the first entry of one immutable map instance, matching the engine's own no-metadata fallback, whose
-     * iteration order, though unspecified, is fixed for the run. No file is opened.
+     * The file's geometry box from the footer statistics gathered at open, for the primary geometry column of the
+     * fileset as resolved by the engine (see {@link GeometryColumns#primary}). No file is opened.
      */
     private Optional<BoundingBox> footerStatsBox(int index) {
         Map<ColumnPath, BoundingBox> footerBounds = partitionStats.get(index).geometryBounds();
-        Optional<ColumnPath> primary = declaredPrimaryColumn();
-        if (primary.isPresent()) {
-            return Optional.ofNullable(footerBounds.get(primary.orElseThrow()));
-        }
-        return footerBounds.values().stream().findFirst();
+        return primaryGeometry.map(footerBounds::get);
     }
 
     /**
@@ -278,16 +275,6 @@ public final class FilesetDataset implements GeoParquetDataset {
     private boolean accumulatedBoundsCoverFooter(int index, BoundsAccumulator accumulator) {
         Optional<BoundingBox> footerBox = footerStatsBox(index);
         return footerBox.isPresent() && accumulator.covers(footerBox.orElseThrow());
-    }
-
-    /**
-     * The fileset's declared primary geometry column, as the engine resolves it, or empty when the metadata names none.
-     */
-    private Optional<ColumnPath> declaredPrimaryColumn() {
-        return geoMetadata
-                .map(GeoParquetMetadata::primaryColumn)
-                .filter(primary -> !primary.isBlank())
-                .map(primary -> ColumnPath.of(primary.split("\\.")));
     }
 
     @Override
@@ -378,17 +365,16 @@ public final class FilesetDataset implements GeoParquetDataset {
 
     /**
      * Proves a file inside {@code predicate} from its footer box alone: the normalized predicate, before any covering
-     * rewrite, accepts the box for the declared primary geometry column. Without a declared primary column no file is
-     * accepted, and a predicate on a partition column, which the per-file query folds later, is an attribute comparison
-     * that acceptance answers false for.
+     * rewrite, accepts the box for the primary geometry column. Without a geometry column no file is accepted, and a
+     * predicate on a partition column, which the per-file query folds later, is an attribute comparison that acceptance
+     * answers false for.
      */
     private SpatialFileVisit.Acceptance fileAcceptance(Predicate predicate) {
-        Optional<ColumnPath> primary = declaredPrimaryColumn();
-        if (primary.isEmpty()) {
+        if (primaryGeometry.isEmpty()) {
             return box -> false;
         }
         Predicate normalized = PredicateNormalizer.normalize(predicate);
-        ColumnPath geometry = primary.orElseThrow();
+        ColumnPath geometry = primaryGeometry.orElseThrow();
         return box ->
                 UnitAcceptance.accepts(normalized, geometry, Bbox.of2d(box.xmin(), box.ymin(), box.xmax(), box.ymax()));
     }
