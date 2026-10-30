@@ -15,14 +15,9 @@
  */
 package io.tileverse.parquetry.data;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-import io.tileverse.parquetry.filter.explain.ExplainPlan;
-import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
-import io.tileverse.parquetry.filter.explain.RowGroupPlan;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator.DecodeObservation;
 import io.tileverse.parquetry.observe.PhaseTimings;
 import io.tileverse.parquetry.observe.QueryObserver;
@@ -129,49 +124,15 @@ final class ReadObservation {
     }
 
     /**
-     * Builds the decode-side observation for the {@code read} and {@code readBatches} paths: the true file ordinal for
-     * each survivor, parallel to {@link ParquetFileReader#survivorsFor}'s output (every non-eliminated group). Returns
-     * {@link DecodeObservation#NONE} when no observer is attached, which keeps the decode path byte-identical.
+     * Builds the decode-side observation of a decoding path, or {@link DecodeObservation#NONE} when no observer is
+     * attached, which keeps the decode path byte-identical. {@code matchedEqualsDecoded} is {@code true} when each
+     * decoded row reaches the output, and {@code false} when the path tallies the rows it emits.
      */
     static DecodeObservation decodeObservationFor(
-            ExplainPlan plan,
-            boolean observe,
-            QueryObserver observer,
-            boolean matchedEqualsDecoded,
-            SpillAccumulator spillAccumulator) {
+            boolean observe, QueryObserver observer, boolean matchedEqualsDecoded, SpillAccumulator spillAccumulator) {
         if (!observe) {
             return DecodeObservation.NONE;
         }
-        List<Integer> indices = new ArrayList<>();
-        for (RowGroupPlan rgPlan : plan.rowGroups()) {
-            if (rgPlan.outcome() != RowGroupOutcome.ELIMINATED) {
-                indices.add(rgPlan.index());
-            }
-        }
-        return new DecodeObservation(
-                observer, indices, matchedEqualsDecoded, observer.wantsTimings(), spillAccumulator);
-    }
-
-    /**
-     * Builds the decode-side observation for the count residual path: the true file ordinal for each FULL and PARTIAL
-     * group, parallel to {@link ParquetFileReader#residualSurvivors}'s output (MATCHED groups are excluded, having been
-     * reported already by {@link ParquetFileReader#matchedRowCount}). The count path accumulates matches per group,
-     * hence {@code matchedEqualsDecoded} is {@code false}.
-     */
-    static DecodeObservation residualObservationFor(
-            ExplainPlan plan, boolean observe, QueryObserver observer, SpillAccumulator spillAccumulator) {
-        if (!observe) {
-            return DecodeObservation.NONE;
-        }
-        List<Integer> indices = new ArrayList<>();
-        for (RowGroupPlan rgPlan : plan.rowGroups()) {
-            switch (rgPlan.outcome()) {
-                case ELIMINATED, MATCHED -> {
-                    /* eliminated decodes nothing; matched is reported from metadata, never decoded */
-                }
-                case PARTIAL, FULL -> indices.add(rgPlan.index());
-            }
-        }
-        return new DecodeObservation(observer, indices, false, observer.wantsTimings(), spillAccumulator);
+        return new DecodeObservation(observer, matchedEqualsDecoded, observer.wantsTimings(), spillAccumulator);
     }
 }

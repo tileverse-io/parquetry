@@ -31,7 +31,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
-import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -162,7 +161,7 @@ class BatchPipelineRowsTest {
         try (ByteRangeSource source = ByteRangeSource.ofFile(fixture.file())) {
             ExecutorService fetchExecutor = newFetchExecutor();
             ParallelDecodeCoordinator coordinator =
-                    fixture.serialCoordinator(source, AllFull.INSTANCE, fetchExecutor, failingReadEvents(fixture));
+                    fixture.serialCoordinator(source, AllFull.INSTANCE, fetchExecutor, failingReadEvents());
             Stream<ParquetRecordBatch> stream = BatchPipeline.batches(coordinator);
             stream.iterator().next().close();
 
@@ -176,16 +175,14 @@ class BatchPipelineRowsTest {
     }
 
     /** An observation whose observer fails on each row group read event. */
-    private static ParallelDecodeCoordinator.DecodeObservation failingReadEvents(Fixture fixture) {
+    private static ParallelDecodeCoordinator.DecodeObservation failingReadEvents() {
         QueryObserver failing = new QueryObserver() {
             @Override
             public void onRowGroupRead(RowGroupRead event) {
                 throw new IllegalStateException("observer failure");
             }
         };
-        List<Integer> ordinals =
-                IntStream.range(0, fixture.rowGroupCount()).boxed().toList();
-        return new ParallelDecodeCoordinator.DecodeObservation(failing, ordinals, false, false, SpillAccumulator.NONE);
+        return new ParallelDecodeCoordinator.DecodeObservation(failing, false, false, SpillAccumulator.NONE);
     }
 
     private static List<Integer> collectYears(Fixture fixture, SurvivorMode mode, Predicate filter) {

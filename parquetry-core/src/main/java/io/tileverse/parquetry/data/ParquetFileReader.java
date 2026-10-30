@@ -330,7 +330,7 @@ public final class ParquetFileReader {
         Predicate recordFilter = (recordLevel && maskedScan.isEmpty()) ? recordFilterOf(normalized) : null;
         BatchForm rowsBatchForm = maskedScan.isPresent() ? BatchForm.LEVELS : rowsForm(recordFilter);
         DecodeObservation decodeObservation =
-                ReadObservation.decodeObservationFor(plan, observe, options.queryObserver(), false, spillAccumulator);
+                ReadObservation.decodeObservationFor(observe, options.queryObserver(), false, spillAccumulator);
         List<RowPositionSynthesis> rowPositions =
                 rowPositionSynthesesFor(survivors, rowGroupChunks, rowPositionRequests);
         Optional<RowGroupGate> rowGroupGate = spatialReadGates.rowGroupGate(survivors, options);
@@ -677,7 +677,7 @@ public final class ParquetFileReader {
         Optional<SpatialDecimationGate> leafGate = spatialReadGates.leafGate(options);
         Optional<MaskedScan> maskedScan = countMaskedScan(scanSchema, normalized, leafGate);
         DecodeObservation observation =
-                ReadObservation.residualObservationFor(plan, observe, options.queryObserver(), spillAccumulator);
+                ReadObservation.decodeObservationFor(observe, options.queryObserver(), false, spillAccumulator);
         Optional<RowGroupGate> rowGroupGate = spatialReadGates.rowGroupGate(residual, options);
         ParallelDecodeCoordinator coordinator = readResources.newDecodeCoordinator(
                 residual,
@@ -897,18 +897,16 @@ public final class ParquetFileReader {
                 case ELIMINATED -> {
                     /* pruned; contributes nothing */
                 }
-                case MATCHED -> unionOrCollectMatched(rgPlan, chunks, box, accumulator, residual);
-                case FULL -> residual.add(new ResidualGroup(RowGroupSurvivor.full(chunks), rgPlan.index(), box));
+                case MATCHED -> unionOrCollectMatched(chunks, box, accumulator, residual);
+                case FULL -> residual.add(new ResidualGroup(RowGroupSurvivor.full(chunks), box));
                 case PARTIAL ->
-                    residual.add(new ResidualGroup(
-                            new RowGroupSurvivor(chunks, rgPlan.survivingRows(), true), rgPlan.index(), box));
+                    residual.add(new ResidualGroup(new RowGroupSurvivor(chunks, rgPlan.survivingRows(), true), box));
             }
         }
         return residual;
     }
 
     private static void unionOrCollectMatched(
-            RowGroupPlan rgPlan,
             RowGroupChunks chunks,
             Optional<BoundingBox> box,
             BoundsAccumulator accumulator,
@@ -916,7 +914,7 @@ public final class ParquetFileReader {
         if (box.isPresent()) {
             accumulator.union(box.orElseThrow());
         } else {
-            residual.add(new ResidualGroup(RowGroupSurvivor.full(chunks), rgPlan.index(), Optional.empty()));
+            residual.add(new ResidualGroup(RowGroupSurvivor.full(chunks), Optional.empty()));
         }
     }
 
@@ -940,12 +938,12 @@ public final class ParquetFileReader {
             List<RowPositionColumn> rowPositionRequests) {
         Predicate predicate = plan.normalizedPredicate();
         ParquetSchema scanSchema = plan.projectedSchema();
+        DecodeObservation observation =
+                ReadObservation.decodeObservationFor(observe, options.queryObserver(), false, spillAccumulator);
         for (ResidualGroup group : orderedByDescendingArea(residual)) {
             if (isCovered(group, accumulator)) {
                 continue;
             }
-            DecodeObservation observation =
-                    boundsDecodeObservation(group.rowGroupIndex(), observe, options, spillAccumulator);
             scanResidualGroup(
                     group.survivor(),
                     predicate,
@@ -1015,17 +1013,6 @@ public final class ParquetFileReader {
                 Optional.empty());
     }
 
-    /** The read event context for one residual row group: the observer and the group's true file ordinal, or none. */
-    private static DecodeObservation boundsDecodeObservation(
-            int rowGroupIndex, boolean observe, ReadOptions options, SpillAccumulator spillAccumulator) {
-        if (!observe) {
-            return DecodeObservation.NONE;
-        }
-        QueryObserver observer = options.queryObserver();
-        return new DecodeObservation(
-                observer, List.of(rowGroupIndex), false, observer.wantsTimings(), spillAccumulator);
-    }
-
     private static List<ResidualGroup> orderedByDescendingArea(List<ResidualGroup> residual) {
         List<ResidualGroup> ordered = new ArrayList<>(residual);
         ordered.sort(Comparator.comparingDouble(ResidualGroup::area).reversed());
@@ -1038,13 +1025,12 @@ public final class ParquetFileReader {
     }
 
     /**
-     * One residual row group to fold into the bounds: its materialization-ready survivor, its file ordinal (the true
-     * index reported to an observer), and its conservative metadata box when the file records one. A box-less row group
-     * reports a {@link Double#NEGATIVE_INFINITY} area that sorts it last, and is never containment-skipped. The area of
-     * a box is that of its planar enclosure, the full longitude band for a box wrapping the antimeridian; a box without
-     * a finite area sorts with the smallest real boxes.
+     * One residual row group to fold into the bounds: its materialization-ready survivor, and its conservative metadata
+     * box when the file records one. A box-less row group reports a {@link Double#NEGATIVE_INFINITY} area that sorts it
+     * last, and is never containment-skipped. The area of a box is that of its planar enclosure, the full longitude
+     * band for a box wrapping the antimeridian; a box without a finite area sorts with the smallest real boxes.
      */
-    private record ResidualGroup(RowGroupSurvivor survivor, int rowGroupIndex, Optional<BoundingBox> box) {
+    private record ResidualGroup(RowGroupSurvivor survivor, Optional<BoundingBox> box) {
 
         double area() {
             if (box.isEmpty()) {
@@ -1115,7 +1101,7 @@ public final class ParquetFileReader {
         // tallies the rows it emits.
         boolean emitDecodedShape = recordFilter == null && leafGate.isEmpty() && maskedScan.isEmpty();
         DecodeObservation decodeObservation = ReadObservation.decodeObservationFor(
-                plan, observe, options.queryObserver(), emitDecodedShape, observation.spillAccumulator());
+                observe, options.queryObserver(), emitDecodedShape, observation.spillAccumulator());
         List<RowPositionSynthesis> rowPositions =
                 rowPositionSynthesesFor(survivors, rowGroupChunks, rowPositionRequests);
         Optional<RowGroupGate> rowGroupGate = spatialReadGates.rowGroupGate(survivors, options);

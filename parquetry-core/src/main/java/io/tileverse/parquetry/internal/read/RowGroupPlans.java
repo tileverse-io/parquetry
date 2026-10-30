@@ -101,6 +101,11 @@ public final class RowGroupPlans {
         return survivors.size();
     }
 
+    /** The survivor planned at {@code position}. */
+    public RowGroupSurvivor survivor(int position) {
+        return survivors.get(position);
+    }
+
     /** Whether the survivor at {@code position} performs no fetch and no decode. */
     public boolean dropped(int position) {
         return narrowing(position) instanceof RowGroupNarrowing.Dropped;

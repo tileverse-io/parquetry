@@ -300,18 +300,19 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     }
 
     /**
-     * The per-row-group observation context for survivor position {@code index}, or {@code null} when no observer is
-     * attached. A {@code null} keeps {@link DecodedRowGroup} on its byte-identical decode path. {@code index} is the
-     * dense survivor position; the true file ordinal it reports comes from the observation's parallel ordinal list.
-     * {@code fetchNanos} is the row group's measured fetch time, zero when timings are off.
+     * The per-row-group observation context for the survivor at {@code position}, or {@code null} when no observer is
+     * attached. A {@code null} keeps {@link DecodedRowGroup} on its byte-identical decode path. The events report the
+     * position of the survivor in the file. {@code fetchNanos} is the row group's measured fetch time, zero when
+     * timings are off.
      */
-    private DecodedRowGroup.ReadObservation observationFor(int index, long fetchNanos) {
+    private DecodedRowGroup.ReadObservation observationFor(int position, long fetchNanos) {
         if (observation == DecodeObservation.NONE) {
             return null;
         }
+        int rowGroupIndex = plans.survivor(position).index();
         return new DecodedRowGroup.ReadObservation(
                 observation.observer(),
-                observation.rowGroupIndices().get(index),
+                rowGroupIndex,
                 observation.matchedEqualsDecoded(),
                 observation.wantsTimings(),
                 fetchNanos);
@@ -331,24 +332,19 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     }
 
     /**
-     * The observation context one read threads into the coordinator: the observer and the true file ordinal per
-     * survivor (the list parallel to the survivor list). {@code NONE} is the not-observing sentinel; the coordinator
-     * builds no per-row-group observation for it, keeping the decode path byte-identical. {@code matchedEqualsDecoded}
-     * is {@code true} for the pushdown-only batches path and {@code false} for the record-filtering read and count
-     * paths. {@code wantsTimings} mirrors the observer's opt-in; when off, no decode-side clock is read.
+     * The observation context one read threads into the coordinator. {@code NONE} is the not-observing sentinel; the
+     * coordinator builds no per-row-group observation for it, keeping the decode path byte-identical.
+     * {@code matchedEqualsDecoded} is {@code true} for the pushdown-only batches path and {@code false} for the
+     * record-filtering read and count paths. {@code wantsTimings} mirrors the observer's opt-in; when off, no
+     * decode-side clock is read.
      */
     public record DecodeObservation(
             QueryObserver observer,
-            List<Integer> rowGroupIndices,
             boolean matchedEqualsDecoded,
             boolean wantsTimings,
             SpillAccumulator spillAccumulator) {
 
         public static final DecodeObservation NONE =
-                new DecodeObservation(QueryObserver.NONE, List.of(), false, false, SpillAccumulator.NONE);
-
-        public DecodeObservation {
-            rowGroupIndices = List.copyOf(rowGroupIndices);
-        }
+                new DecodeObservation(QueryObserver.NONE, false, false, SpillAccumulator.NONE);
     }
 }
