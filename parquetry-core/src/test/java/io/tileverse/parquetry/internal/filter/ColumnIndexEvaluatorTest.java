@@ -221,26 +221,6 @@ class ColumnIndexEvaluatorTest {
     }
 
     @Test
-    void consultedColumnsNamesEveryComparisonLeaf() {
-        Predicate predicate =
-                new Predicate.And(List.of(col("year").eq(2020), col("count").gt(3)));
-
-        assertThat(ColumnIndexEvaluator.consultedColumns(predicate))
-                .containsExactly(ColumnPath.of("year"), ColumnPath.of("count"));
-    }
-
-    @Test
-    void consultedColumnsOmitsALeafThisTierCannotEvaluate() {
-        Predicate spatial = new Predicate.Spatial.BboxIntersects(ColumnPath.of("geometry"), Bbox.of2d(-1, -1, 1, 1));
-        Predicate predicate =
-                new Predicate.And(List.of(spatial, col("bbox", "xmin").lt(1.0)));
-
-        assertThat(ColumnIndexEvaluator.consultedColumns(predicate))
-                .as("a spatial leaf resolves to no page statistics, hence naming it would read sections for nothing")
-                .containsExactly(ColumnPath.of("bbox", "xmin"));
-    }
-
-    @Test
     void notInKeepsThePagesHoldingOtherValues() {
         // The middle page [2018, 2022] may hold 2020, yet it also holds the rows 2018, 2019, 2021 and 2022.
         Predicate notIn = PredicateNormalizer.normalize(col("year").inInts(2020).negate());
@@ -260,24 +240,40 @@ class ColumnIndexEvaluatorTest {
         assertThat(((PruningDecision.NarrowedTo) d).ranges().ranges()).containsExactly(new Range(200, 299));
     }
 
-    @Test
-    void consultedColumnsOmitsANegation() {
-        Predicate negation = PredicateNormalizer.normalize(notInTheBox());
-
-        assertThat(ColumnIndexEvaluator.consultedColumns(negation)).isEmpty();
-    }
-
     /** A negation left as it is by normalization: a spatial relation has no complementary operator. */
     private static Predicate notInTheBox() {
-        Predicate inTheBox = new Predicate.Spatial.BboxIntersects(ColumnPath.of("geometry"), Bbox.of2d(-1, -1, 1, 1));
-        return inTheBox.negate();
+        return inTheBox().negate();
+    }
+
+    private static Predicate inTheBox() {
+        return new Predicate.Spatial.BboxIntersects(ColumnPath.of("geometry"), Bbox.of2d(-1, -1, 1, 1));
     }
 
     @Test
     void evaluateWarmsTheColumnsItIsAboutToAsk() {
         List<List<ColumnPath>> warmed = new ArrayList<>();
+
+        ColumnIndexEvaluator.evaluate(col("year").eq(2020), recordingWarms(warmed), ROW_GROUP_ROWS);
+
+        assertThat(warmed).containsExactly(List.of(ColumnPath.of("year")));
+    }
+
+    // An Or with a branch beyond this tier can match any row. Reading the index of its other branches is waste.
+    @Test
+    void orOutOfReachWarmsNothing() {
+        List<List<ColumnPath>> warmed = new ArrayList<>();
+        Predicate p = new Predicate.Or(List.of(inTheBox(), col("year").eq(2020)));
+
+        PruningDecision d = ColumnIndexEvaluator.evaluate(p, recordingWarms(warmed), ROW_GROUP_ROWS);
+
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+        assertThat(warmed).isEmpty();
+    }
+
+    /** The pages of {@link #year3Pages()}, adding each list of columns asked to warm to {@code warmed}. */
+    private static FilterPipeline.ColumnPageStatsLookup recordingWarms(List<List<ColumnPath>> warmed) {
         FilterPipeline.ColumnPageStatsLookup pages = year3Pages();
-        FilterPipeline.ColumnPageStatsLookup recording = new FilterPipeline.ColumnPageStatsLookup() {
+        return new FilterPipeline.ColumnPageStatsLookup() {
             @Override
             public Optional<FilterPipeline.ColumnPageStats> get(ColumnPath path) {
                 return pages.get(path);
@@ -288,10 +284,6 @@ class ColumnIndexEvaluatorTest {
                 warmed.add(List.copyOf(paths));
             }
         };
-
-        ColumnIndexEvaluator.evaluate(col("year").eq(2020), recording, ROW_GROUP_ROWS);
-
-        assertThat(warmed).containsExactly(List.of(ColumnPath.of("year")));
     }
 
     @Test

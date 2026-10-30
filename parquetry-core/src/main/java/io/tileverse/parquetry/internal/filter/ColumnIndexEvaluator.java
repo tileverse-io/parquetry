@@ -50,6 +50,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
 final class ColumnIndexEvaluator {
 
     private static final Tier TIER = Tier.COLUMN_INDEX;
+    private static final String NO_APPLICABLE_INDEX = "no applicable column index for predicate";
 
     private ColumnIndexEvaluator() {}
 
@@ -62,11 +63,14 @@ final class ColumnIndexEvaluator {
      */
     public static PruningDecision evaluate(
             Predicate predicate, FilterPipeline.ColumnPageStatsLookup columns, long rowGroupRowCount) {
-        List<ColumnPath> consulted = consultedColumns(predicate);
-        columns.warm(consulted);
-        Optional<RowRanges> surviving = matchRanges(predicate, columns, rowGroupRowCount);
+        Optional<Predicate> prunable = PagePrunable.part(predicate);
+        if (prunable.isEmpty()) {
+            return new PruningDecision.NotApplied(TIER, NO_APPLICABLE_INDEX);
+        }
+        columns.warm(PagePrunable.columns(prunable.orElseThrow()));
+        Optional<RowRanges> surviving = matchRanges(prunable.orElseThrow(), columns, rowGroupRowCount);
         if (surviving.isEmpty()) {
-            return new PruningDecision.NotApplied(TIER, "no applicable column index for predicate");
+            return new PruningDecision.NotApplied(TIER, NO_APPLICABLE_INDEX);
         }
         RowRanges ranges = surviving.get();
         long total = RowRanges.all(rowGroupRowCount).totalRows();
@@ -81,57 +85,16 @@ final class ColumnIndexEvaluator {
     }
 
     /**
-     * The leaf columns consulted by {@link #matchRanges} for page statistics, in encounter order. A leaf for which this
-     * tier resolves no ranges - a negation, a spatial relation, a geometry filter, a row-position delete, a quantified
-     * leaf - names no column here, because reading its index sections would fetch bytes never looked at by the tier.
-     *
-     * <p>An upper bound, not an exact set: a conjunction stops early once its intersection empties, and asks for fewer
-     * columns.
-     */
-    static List<ColumnPath> consultedColumns(Predicate predicate) {
-        List<ColumnPath> columns = new ArrayList<>();
-        collectConsultedColumns(predicate, columns);
-        return columns;
-    }
-
-    private static void collectConsultedColumns(Predicate predicate, List<ColumnPath> columns) {
-        switch (predicate) {
-            case Predicate.And and -> and.children().forEach(child -> collectConsultedColumns(child, columns));
-            case Predicate.Or or -> or.children().forEach(child -> collectConsultedColumns(child, columns));
-            case Predicate.Eq eq -> columns.add(eq.col());
-            case Predicate.NotEq notEq -> columns.add(notEq.col());
-            case Predicate.Lt lt -> columns.add(lt.col());
-            case Predicate.LtEq ltEq -> columns.add(ltEq.col());
-            case Predicate.Gt gt -> columns.add(gt.col());
-            case Predicate.GtEq gtEq -> columns.add(gtEq.col());
-            case Predicate.In in -> columns.add(in.col());
-            case Predicate.IsNull isNull -> columns.add(isNull.col());
-            case Predicate.IsNotNull isNotNull -> columns.add(isNotNull.col());
-            case Predicate.Always _,
-                    Predicate.Not _,
-                    Predicate.Spatial _,
-                    Predicate.GeometryFilterPredicate _,
-                    Predicate.RowIndexExcluded _,
-                    Predicate.Quantified _ -> {
-                /* this tier resolves no ranges for these, hence it reads no section for them */
-            }
-        }
-    }
-
-    /**
-     * Returns the row ranges that could satisfy {@code predicate} according to the loaded ColumnIndex/OffsetIndex.
-     * Empty when no column referenced by the predicate has a column index loaded (and so the tier doesn't apply).
+     * Returns the row ranges that could satisfy {@code prunable} according to the loaded ColumnIndex/OffsetIndex. Empty
+     * when no column referenced by the predicate has a column index loaded (and so the tier doesn't apply).
      */
     private static Optional<RowRanges> matchRanges(
-            Predicate predicate, FilterPipeline.ColumnPageStatsLookup columns, long rowGroupRowCount) {
-        return switch (predicate) {
+            Predicate prunable, FilterPipeline.ColumnPageStatsLookup columns, long rowGroupRowCount) {
+        return switch (prunable) {
             case Predicate.Always(boolean value) ->
                 Optional.of(value ? RowRanges.all(rowGroupRowCount) : RowRanges.empty());
             case Predicate.And(List<Predicate> children) -> combineAnd(children, columns, rowGroupRowCount);
             case Predicate.Or(List<Predicate> children) -> combineOr(children, columns, rowGroupRowCount);
-            // A child's ranges are a superset of its matching rows; their complement would drop pages holding rows
-            // matched by the negation.
-            case Predicate.Not _ -> Optional.empty();
             case Predicate.Eq(ColumnPath col, Value v) ->
                 leafRanges(col, columns, rowGroupRowCount, page -> mayEqual(v, page));
             case Predicate.NotEq(ColumnPath col, Value v) ->
@@ -149,15 +112,12 @@ final class ColumnIndexEvaluator {
                         col, columns, rowGroupRowCount, page -> values.stream().anyMatch(v -> mayEqual(v, page)));
             case Predicate.IsNull(ColumnPath col) -> nullLeafRanges(col, columns, rowGroupRowCount, true);
             case Predicate.IsNotNull(ColumnPath col) -> nullLeafRanges(col, columns, rowGroupRowCount, false);
-            case Predicate.Spatial _ -> Optional.empty();
-            case Predicate.GeometryFilterPredicate _ -> Optional.empty();
-            // Row-position deletes target the synthesized position column, which has no column index. The page-skip
-            // tier cannot narrow on it; the record-level evaluator drops the deleted positions instead.
-            case Predicate.RowIndexExcluded _ -> Optional.empty();
-            // Page-range pruning of a repeated leaf is not verified sound: empty-list rows have no element on any page
-            // and the element-to-page mapping does not line up with row ranges. A quantified leaf is therefore left for
-            // the record-level tier to evaluate.
-            case Predicate.Quantified _ -> Optional.empty();
+            // Out of reach of the page tier, and left out by PagePrunable.part.
+            case Predicate.Not _,
+                    Predicate.Spatial _,
+                    Predicate.GeometryFilterPredicate _,
+                    Predicate.RowIndexExcluded _,
+                    Predicate.Quantified _ -> Optional.empty();
         };
     }
 
