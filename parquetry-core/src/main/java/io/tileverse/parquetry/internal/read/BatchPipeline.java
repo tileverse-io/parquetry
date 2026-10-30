@@ -445,8 +445,18 @@ public final class BatchPipeline {
 
         // Once the walk hands a batch here, the row group no longer owns it. This method either closes the source (no
         // match), returns a survivor that owns the source (closed downstream), or returns the source narrowed when
-        // each of its rows survives.
+        // each of its rows survives. A failure closes the source as well: the filter and the probe of the gate can
+        // throw, and nothing else would release the buffers of the source.
         private ParquetRecordBatch filter(ParquetRecordBatch source) {
+            try {
+                return matchingPart(source);
+            } catch (RuntimeException e) {
+                source.close();
+                throw e;
+            }
+        }
+
+        private ParquetRecordBatch matchingPart(ParquetRecordBatch source) {
             Predicate filter = walk.filter();
             if (eachRowSurvives(filter, gate)) {
                 return matched(FilteredRecordBatch.narrowed(source, outputSchema), source.rowCount());

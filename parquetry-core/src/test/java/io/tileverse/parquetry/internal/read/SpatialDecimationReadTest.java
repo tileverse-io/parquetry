@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -37,6 +38,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
@@ -56,7 +58,9 @@ import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.runtime.DecodeBudget;
 import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -111,6 +115,42 @@ class SpatialDecimationReadTest {
                         .as("the probe keeps exactly one point per distinct integer-X cell")
                         .containsExactlyInAnyOrderElementsOf(distinctCells)
                         .hasSize(distinctCells.size());
+            }
+        }
+
+        // The batch read hands each decoded batch to the leaf gate; a probe failure must not strand that batch.
+        @Test
+        void aFailingProbeReleasesTheBatch() throws Exception {
+            Path file = writePointFile(pointsSpreadAcrossCells());
+            SegmentPool pool = SegmentPool.create();
+            DecodeBudget offHeapBudget = DecodeBudget.ofBytes(64L << 20);
+            ParquetRuntime runtime = ParquetRuntime.builder()
+                    .segmentPool(pool)
+                    .offHeapDecodeBudget(offHeapBudget)
+                    .build();
+            ReadOptions failing = ReadOptions.builder()
+                    .spatialReadProbe((minX, minY, maxX, maxY) -> {
+                        throw new IllegalStateException("probe failed");
+                    })
+                    .build();
+
+            try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+                ParquetFileReader reader = ParquetFileReader.open(source, runtime, Optional.empty());
+                assertThatThrownBy(() -> drainBatches(reader, failing)).hasMessage("probe failed");
+            }
+
+            assertThat(pool.stats().outstandingBorrows())
+                    .as("the batch handed to the failing probe returns its buffers")
+                    .isZero();
+            assertThat(offHeapBudget.available())
+                    .as("the batch handed to the failing probe releases its decode reservation")
+                    .isEqualTo(offHeapBudget.capacity());
+        }
+
+        private static void drainBatches(ParquetFileReader reader, ReadOptions options) {
+            try (Stream<ParquetRecordBatch> batches =
+                    reader.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, options)) {
+                batches.forEach(ParquetRecordBatch::close);
             }
         }
 
