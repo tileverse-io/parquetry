@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -40,11 +41,13 @@ import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.observe.QueryObserver;
 import io.tileverse.parquetry.observe.QueryStarted;
 import io.tileverse.parquetry.observe.QueryStats;
+import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.RecordingByteRangeSource;
 
 /**
  * Verifies that {@link ParquetFileReader#explainAnalyze} annotates the explain plan with the real execution stats of
@@ -90,6 +93,35 @@ class ExplainAnalyzeIT {
             assertThat(plan.rowGroups().stream().map(RowGroupPlan::execution).anyMatch(Optional::isPresent))
                     .as("at least one decoded row group has a per-group execution record")
                     .isTrue();
+        }
+    }
+
+    // Analyze runs the plan of its drain: the index sections read by planning are read once, as by the read.
+    @Test
+    void analyzeReadsWhatTheReadReads(@TempDir Path tmp) throws Exception {
+        Path file = writeThreeRowGroups(tmp);
+
+        int readCalls =
+                sourceCallsOf(file, reader -> drain(reader.read(MATCHES_SUBSET, Projection.ALL, ReadOptions.DEFAULTS)));
+        int analyzeCalls = sourceCallsOf(
+                file, reader -> reader.explainAnalyze(MATCHES_SUBSET, Projection.ALL, ReadOptions.DEFAULTS));
+
+        assertThat(analyzeCalls).isEqualTo(readCalls);
+    }
+
+    /** The calls to the byte source made by {@code action}, once the reader has read the footer. */
+    private static int sourceCallsOf(Path file, Consumer<ParquetFileReader> action) {
+        try (RecordingByteRangeSource source = new RecordingByteRangeSource(ByteRangeSource.ofFile(file))) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            source.reset();
+            action.accept(reader);
+            return source.sourceCalls();
+        }
+    }
+
+    private static void drain(Stream<ParquetRecord> rows) {
+        try (rows) {
+            rows.forEach(_ -> {});
         }
     }
 

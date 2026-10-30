@@ -269,7 +269,7 @@ public final class ParquetFileReader {
         if (needsShaping(projection)) {
             return shapedRows(rawPredicate, projection, materializer, observation);
         }
-        return buildRowStream(
+        PlannedRows<T> planned = buildRowStream(
                 rawPredicate,
                 projection,
                 materializer,
@@ -277,6 +277,7 @@ public final class ParquetFileReader {
                 FetchAccumulator.NONE,
                 observation.spillAccumulator(),
                 observation::addPipelineNanos);
+        return planned.rows();
     }
 
     private static boolean needsShaping(Projection projection) {
@@ -295,12 +296,12 @@ public final class ParquetFileReader {
     }
 
     /**
-     * Builds the per-row decode stream shared by {@link #read} and the analyze drain. The {@code accumulator} tallies
-     * the index-section and page fetches; {@code pipelineNanosSink} receives the filter-pipeline time when the observer
-     * opted into timings. The {@code read} path passes {@link FetchAccumulator#NONE}, which keeps the decode path
-     * byte-identical to the no-accounting wiring.
+     * Builds the per-row decode stream shared by {@link #read} and the analyze drain, with its plan. The
+     * {@code accumulator} tallies the index-section and page fetches; {@code pipelineNanosSink} receives the
+     * filter-pipeline time when the observer opted into timings. The {@code read} path passes
+     * {@link FetchAccumulator#NONE}, which keeps the decode path byte-identical to the no-accounting wiring.
      */
-    private <T> Stream<T> buildRowStream(
+    private <T> PlannedRows<T> buildRowStream(
             Predicate rawPredicate,
             Projection projection,
             Materializer<T> materializer,
@@ -311,10 +312,8 @@ public final class ParquetFileReader {
 
         Predicate predicate = lowerSpatialPredicates(rawPredicate);
         List<RowPositionColumn> rowPositionRequests = rowPositionColumns(predicate);
-        boolean synthesizeRowPosition = !rowPositionRequests.isEmpty();
-        boolean recordLevel = options.useRecordLevelFilter() || synthesizeRowPosition;
-        ProjectionPlan projectionPlan =
-                ProjectionPlan.resolve(fileSchema, projection, recordLevel ? predicate : Predicate.ALWAYS_TRUE);
+        boolean recordLevel = recordLevel(options, rowPositionRequests);
+        ProjectionPlan projectionPlan = projectionPlanFor(predicate, projection, recordLevel);
         Projection scanProjection = projectionPlan.scanProjection();
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks(accumulator);
         boolean observe = observing(options);
@@ -349,8 +348,25 @@ public final class ParquetFileReader {
                 rowGroupGate,
                 rowGroupPlanner);
         Optional<SpatialDecimationGate> leafGate = spatialReadGates.leafGate(options);
-        return BatchPipeline.rows(
+        Stream<T> rows = BatchPipeline.rows(
                 coordinator, materializer, outputSchema, recordFilter, observe, wantsTimings, leafGate);
+        return new PlannedRows<>(plan, rows);
+    }
+
+    /** A row stream and its plan. */
+    private record PlannedRows<T>(ExplainPlan plan, Stream<T> rows) {}
+
+    /** Whether a read evaluates the predicate on each row: when asked to, and to synthesize row positions. */
+    private static boolean recordLevel(ReadOptions options, List<RowPositionColumn> rowPositionRequests) {
+        return options.useRecordLevelFilter() || !rowPositionRequests.isEmpty();
+    }
+
+    /**
+     * The columns produced for {@code projection} and the columns scanned to produce them. A read evaluating the
+     * predicate on each row also scans the columns of {@code predicate}.
+     */
+    private ProjectionPlan projectionPlanFor(Predicate predicate, Projection projection, boolean recordLevel) {
+        return ProjectionPlan.resolve(fileSchema, projection, recordLevel ? predicate : Predicate.ALWAYS_TRUE);
     }
 
     /** True when an observer is attached; the read paths skip every observability allocation when it is false. */
@@ -1077,10 +1093,8 @@ public final class ParquetFileReader {
         ReadOptions options = observation.effectiveOptions();
         Predicate predicate = lowerSpatialPredicates(rawPredicate);
         List<RowPositionColumn> rowPositionRequests = rowPositionColumns(predicate, projection);
-        boolean synthesizeRowPosition = !rowPositionRequests.isEmpty();
-        boolean recordLevel = options.useRecordLevelFilter() || synthesizeRowPosition;
-        ProjectionPlan projectionPlan =
-                ProjectionPlan.resolve(fileSchema, projection, recordLevel ? predicate : Predicate.ALWAYS_TRUE);
+        boolean recordLevel = recordLevel(options, rowPositionRequests);
+        ProjectionPlan projectionPlan = projectionPlanFor(predicate, projection, recordLevel);
         Projection scanProjection = projectionPlan.scanProjection();
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks();
         boolean observe = observing(options);
@@ -1128,16 +1142,22 @@ public final class ParquetFileReader {
         return produced.map(batch -> materializer.materialize(producedSchema, batch));
     }
 
-    /** Runs the filter pipeline without reading data and returns the explain plan. */
+    /**
+     * Runs the filter pipeline without reading data and returns the explain plan. The plan covers the columns scanned
+     * by a read of {@code projection}: with the record-level filter on, they include the columns of the predicate.
+     */
     public ExplainPlan explain(
             @NonNull Predicate rawPredicate, @NonNull Projection projection, @NonNull ReadOptions options) {
         Predicate predicate = lowerSpatialPredicates(rawPredicate);
-        return runFilterPipeline(predicate, projection, options, rowGroupChunks());
+        boolean recordLevel = recordLevel(options, rowPositionColumns(predicate, projection));
+        Projection scanProjection =
+                projectionPlanFor(predicate, projection, recordLevel).scanProjection();
+        return runFilterPipeline(predicate, scanProjection, options, rowGroupChunks());
     }
 
     /**
-     * Returns the explain plan annotated with the execution stats of one drain of {@code predicate} under
-     * {@code projection}. The drain decodes the projected columns (plus the column-index, offset-index, and
+     * Returns the plan executed by one drain of {@code predicate} under {@code projection}, annotated with the
+     * execution stats of the drain. The drain decodes the projected columns (plus the column-index, offset-index, and
      * bloom-filter sections the filter pipeline reads), runs the record-level filter, and discards every value; it
      * allocates no per-row output. This holds for any predicate, including an always-true full scan, whose execution
      * annotation reports the real cost of reading the projected columns.
@@ -1148,10 +1168,6 @@ public final class ParquetFileReader {
      */
     public ExplainPlan explainAnalyze(
             @NonNull Predicate predicate, @NonNull Projection projection, @NonNull ReadOptions options) {
-        // The drain below re-plans identically (planning is in-footer metadata work, no I/O); only its execution stats
-        // are kept, never its plan. This explicit plan is the one annotated and returned.
-        ExplainPlan plan = explain(predicate, projection, withoutObserver(options));
-
         QueryStatsCollector collector = new QueryStatsCollector();
         Map<Integer, RowGroupRead> perRowGroup = new LinkedHashMap<>();
         QueryObserver capture = capturingObserver(perRowGroup);
@@ -1161,7 +1177,8 @@ public final class ParquetFileReader {
         AtomicLong pipelineNanos = new AtomicLong();
         FetchAccumulator accumulator = FetchAccumulator.active();
         SpillAccumulator spillAccumulator = SpillAccumulator.active();
-        drainForAnalyze(predicate, projection, drainOptions, accumulator, spillAccumulator, pipelineNanos::addAndGet);
+        ExplainPlan plan = drainForAnalyze(
+                predicate, projection, drainOptions, accumulator, spillAccumulator, pipelineNanos::addAndGet);
         FetchStats fetch = accumulator.snapshot();
 
         collector.onQueryFinished(null);
@@ -1175,38 +1192,30 @@ public final class ParquetFileReader {
     }
 
     /**
-     * Drives the analyze drain: decodes the projected columns for every surviving row, runs the record-level filter,
-     * and discards the values. Consuming the whole stream forces the decode and fires every per-row-group read event
-     * into the {@code drainOptions} observer; the {@code accumulator} tallies the index-section and page fetches.
+     * Drives the analyze drain and returns its plan. The drain decodes the projected columns for each surviving row,
+     * runs the record-level filter, and discards the values. Consuming the whole stream forces the decode and fires
+     * each per-row-group read event into the {@code drainOptions} observer; the {@code accumulator} tallies the
+     * index-section and page fetches.
      */
-    private void drainForAnalyze(
+    private ExplainPlan drainForAnalyze(
             Predicate predicate,
             Projection projection,
             ReadOptions drainOptions,
             FetchAccumulator accumulator,
             SpillAccumulator spillAccumulator,
             LongConsumer pipelineNanosSink) {
-        try (Stream<Boolean> rows = buildRowStream(
+        PlannedRows<Boolean> planned = buildRowStream(
                 predicate,
                 projection,
                 DISCARD_MATERIALIZER,
                 drainOptions,
                 accumulator,
                 spillAccumulator,
-                pipelineNanosSink)) {
+                pipelineNanosSink);
+        try (Stream<Boolean> rows = planned.rows()) {
             rows.forEach(_ -> {});
         }
-    }
-
-    /**
-     * The options with the user observer suppressed, used to build the plan without firing the planned-decision events
-     * a second time (the drain fires them). Returns the same options unchanged when no observer is attached.
-     */
-    private static ReadOptions withoutObserver(ReadOptions options) {
-        if (options.queryObserver() == QueryObserver.NONE) {
-            return options;
-        }
-        return options.toBuilder().queryObserver(QueryObserver.NONE).build();
+        return planned.plan();
     }
 
     /** An observer that records each row-group read into {@code perRowGroup}, merging any duplicate by index. */

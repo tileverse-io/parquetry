@@ -101,6 +101,25 @@ class EstimatedBytesIT {
         }
     }
 
+    // A read also scans the columns of its predicate, and the plan of explain must count them.
+    @Test
+    void predicateColumnsAreEstimated(@TempDir Path tmp) throws Exception {
+        Path file = writeThreeRowGroups(tmp);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            Projection payloadOnly = Projection.ofPhysical(Set.of(ColumnPath.of("payload")));
+
+            ExplainPlan plan = reader.explain(MATCH_ALL, payloadOnly, ReadOptions.DEFAULTS);
+            long bothColumns = reader.explain(MATCH_ALL, Projection.ALL, ReadOptions.DEFAULTS)
+                    .estimatedBytesRead();
+
+            assertThat(plan.projectedSchema().leafColumns())
+                    .as("the columns scanned by the read")
+                    .containsExactlyInAnyOrder(ColumnPath.of("id"), ColumnPath.of("payload"));
+            assertThat(plan.estimatedBytesRead()).isEqualTo(bothColumns);
+        }
+    }
+
     @Test
     void eliminatingPredicateEstimatesFewerBytesThanFullScan(@TempDir Path tmp) throws Exception {
         Path file = writeThreeRowGroups(tmp);
