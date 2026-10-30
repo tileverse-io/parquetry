@@ -677,10 +677,11 @@ public final class StacDataset implements GeoParquetDataset {
 
     private DatasetExplainPlan buildExplain(
             Predicate predicate, Projection projection, ReadOptions options, boolean analyze) {
+        FilePruner pruner = FilePruner.of(predicate, schema());
         List<FileStats> stats = fileStats();
         List<FileExplain> files = new ArrayList<>(stats.size());
         for (int index = 0; index < stats.size(); index++) {
-            PruningDecision decision = FilePruner.evaluate(predicate, stats.get(index));
+            PruningDecision decision = pruner.evaluate(stats.get(index));
             files.add(fileExplain(index, decision, predicate, projection, options, analyze));
         }
         return new DatasetExplainPlan(predicate, files, Totals.from(files));
@@ -711,11 +712,11 @@ public final class StacDataset implements GeoParquetDataset {
     }
 
     private List<Integer> prune(Predicate predicate) {
-        Objects.requireNonNull(predicate, "predicate");
+        FilePruner pruner = FilePruner.of(predicate, schema());
         List<FileStats> stats = fileStats();
         List<Integer> survivors = new ArrayList<>();
         for (int index = 0; index < stats.size(); index++) {
-            PruningDecision decision = FilePruner.evaluate(predicate, stats.get(index));
+            PruningDecision decision = pruner.evaluate(stats.get(index));
             if (!(decision instanceof PruningDecision.Eliminated)) {
                 survivors.add(index);
             }

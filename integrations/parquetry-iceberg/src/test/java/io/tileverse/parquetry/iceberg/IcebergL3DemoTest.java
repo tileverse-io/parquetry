@@ -104,10 +104,11 @@ class IcebergL3DemoTest {
             int filesRead = 0;
             long rowsRead = 0L;
             long rowsSkipped = 0L;
+            FilePruner pruner = FilePruner.of(query, IcebergSchema.of(fields).parquetSchema());
             for (IcebergManifests.DataFileRef ref : refs) {
                 FileStats stats = IcebergFileStats.from(ref, fields, Map.of());
                 BoundingBox box = stats.geometryBounds().get(ColumnPath.of(GEOM_COLUMN));
-                PruningDecision decision = FilePruner.evaluate(query, stats);
+                PruningDecision decision = pruner.evaluate(stats);
                 boolean skip = decision instanceof PruningDecision.Eliminated;
                 if (skip) {
                     rowsSkipped += ref.recordCount();

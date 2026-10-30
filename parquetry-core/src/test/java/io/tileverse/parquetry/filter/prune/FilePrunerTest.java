@@ -16,9 +16,12 @@
 package io.tileverse.parquetry.filter.prune;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.util.OptionalInt;
 import java.util.OptionalLong;
 
 import org.junit.jupiter.api.Test;
@@ -29,7 +32,13 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.format.BoundingBox;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.ParquetSchemaException;
+import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.Repetition;
+import io.tileverse.parquetry.schema.SchemaNode;
 
 class FilePrunerTest {
 
@@ -37,6 +46,34 @@ class FilePrunerTest {
     private static final ColumnPath GEOM = ColumnPath.of("geom");
     private static final ColumnPath NAME = ColumnPath.of("name");
     private static final ColumnPath TAG = ColumnPath.of("tags", "list", "element");
+    private static final ColumnPath SCORE = ColumnPath.of("score");
+
+    private static final ParquetSchema SCHEMA = new ParquetSchema(new SchemaNode.Group(
+            "schema",
+            Repetition.REQUIRED,
+            List.of(
+                    leaf("id", PrimitiveKind.INT64, Optional.empty()),
+                    leaf("geom", PrimitiveKind.BYTE_ARRAY, Optional.of(new LogicalType.Geometry(Optional.empty()))),
+                    leaf("name", PrimitiveKind.BYTE_ARRAY, Optional.of(new LogicalType.StringType())),
+                    stringList("tags"),
+                    leaf("score", PrimitiveKind.DOUBLE, Optional.empty())),
+            Optional.empty(),
+            -1));
+
+    private static SchemaNode.Primitive leaf(String name, PrimitiveKind kind, Optional<LogicalType> logicalType) {
+        return new SchemaNode.Primitive(name, Repetition.OPTIONAL, kind, OptionalInt.empty(), logicalType, -1);
+    }
+
+    private static SchemaNode.Group stringList(String name) {
+        SchemaNode element = leaf("element", PrimitiveKind.BYTE_ARRAY, Optional.of(new LogicalType.StringType()));
+        SchemaNode list = new SchemaNode.Group("list", Repetition.REPEATED, List.of(element), Optional.empty(), -1);
+        return new SchemaNode.Group(
+                name, Repetition.OPTIONAL, List.of(list), Optional.of(new LogicalType.ListType()), -1);
+    }
+
+    private static PruningDecision prune(Predicate predicate, FileStats stats) {
+        return FilePruner.of(predicate, SCHEMA).evaluate(stats);
+    }
 
     private static BoundingBox box(double xmin, double ymin, double xmax, double ymax) {
         return new BoundingBox(
@@ -67,7 +104,7 @@ class FilePrunerTest {
                                 OptionalLong.of(100)))
                 .build();
         Predicate p = new Predicate.Gt(ID, new Value.LongVal(50));
-        assertThat(eliminated(FilePruner.evaluate(p, stats))).isTrue();
+        assertThat(eliminated(prune(p, stats))).isTrue();
     }
 
     @Test
@@ -83,28 +120,28 @@ class FilePrunerTest {
                                 OptionalLong.of(100)))
                 .build();
         Predicate p = new Predicate.Gt(ID, new Value.LongVal(50));
-        assertThat(eliminated(FilePruner.evaluate(p, stats))).isFalse();
+        assertThat(eliminated(prune(p, stats))).isFalse();
     }
 
     @Test
     void stringPredicateInsideRangeKeeps() {
         FileStats stats = stringNameStats();
         Predicate p = new Predicate.Lt(NAME, new Value.StringVal("k"));
-        assertThat(eliminated(FilePruner.evaluate(p, stats))).isFalse();
+        assertThat(eliminated(prune(p, stats))).isFalse();
     }
 
     @Test
     void stringPredicateBelowMinEliminates() {
         FileStats stats = stringNameStats();
         Predicate p = new Predicate.Lt(NAME, new Value.StringVal("a"));
-        assertThat(eliminated(FilePruner.evaluate(p, stats))).isTrue();
+        assertThat(eliminated(prune(p, stats))).isTrue();
     }
 
     @Test
     void stringPredicateAboveMaxEliminates() {
         FileStats stats = stringNameStats();
         Predicate p = new Predicate.Gt(NAME, new Value.StringVal("z"));
-        assertThat(eliminated(FilePruner.evaluate(p, stats))).isTrue();
+        assertThat(eliminated(prune(p, stats))).isTrue();
     }
 
     private static FileStats stringNameStats() {
@@ -125,29 +162,27 @@ class FilePrunerTest {
     void anyIsNotNullKeepsListValues() {
         FileStats stats = nullCountStats(TAG, OptionalLong.of(300));
         Predicate anyTag = new Predicate.Quantified(MatchAction.ANY, new Predicate.IsNotNull(TAG));
-        assertThat(eliminated(FilePruner.evaluate(anyTag, stats))).isFalse();
+        assertThat(eliminated(prune(anyTag, stats))).isFalse();
     }
 
     @Test
     void isNotNullDropsAFileOfNulls() {
         FileStats stats = nullCountStats(ID, OptionalLong.of(100));
-        assertThat(eliminated(FilePruner.evaluate(new Predicate.IsNotNull(ID), stats)))
-                .isTrue();
+        assertThat(eliminated(prune(new Predicate.IsNotNull(ID), stats))).isTrue();
     }
 
     // Without a value count, nothing proves that the column holds only nulls.
     @Test
     void isNotNullNeedsTheValueCount() {
         FileStats stats = nullCountStats(ID, OptionalLong.empty());
-        assertThat(eliminated(FilePruner.evaluate(new Predicate.IsNotNull(ID), stats)))
-                .isFalse();
+        assertThat(eliminated(prune(new Predicate.IsNotNull(ID), stats))).isFalse();
     }
 
     @Test
     void comparisonDropsAFileOfNulls() {
         FileStats stats = nullCountStats(ID, OptionalLong.of(100));
         Predicate p = new Predicate.Eq(ID, new Value.LongVal(5));
-        assertThat(eliminated(FilePruner.evaluate(p, stats))).isTrue();
+        assertThat(eliminated(prune(p, stats))).isTrue();
     }
 
     // A recorded bound proves a value: the null count of such a file cannot equal its value count.
@@ -155,7 +190,7 @@ class FilePrunerTest {
     void boundProvesAValue() {
         FileStats stats = idStats(1, 9, 100);
         Predicate p = new Predicate.Eq(ID, new Value.LongVal(5));
-        assertThat(eliminated(FilePruner.evaluate(p, stats))).isFalse();
+        assertThat(eliminated(prune(p, stats))).isFalse();
     }
 
     // A minimum above its maximum bounds nothing.
@@ -163,14 +198,34 @@ class FilePrunerTest {
     void invertedBoundsKeepAFile() {
         FileStats stats = idStats(9, 1, 0);
         Predicate p = new Predicate.Eq(ID, new Value.LongVal(20));
-        assertThat(eliminated(FilePruner.evaluate(p, stats))).isFalse();
+        assertThat(eliminated(prune(p, stats))).isFalse();
     }
 
-    // A NaN literal is no number for a string column: the read rejects the query, the pruner keeps the file.
+    // A NaN literal is no number for a string column: the pruner rejects the query, as a read does.
     @Test
-    void nanLiteralKeepsAStringFile() {
+    void nanLiteralFailsOnAString() {
         Predicate p = new Predicate.Lt(NAME, new Value.DoubleVal(Double.NaN));
-        assertThat(eliminated(FilePruner.evaluate(p, stringNameStats()))).isFalse();
+        FileStats stats = stringNameStats();
+        assertThatThrownBy(() -> prune(p, stats)).isInstanceOf(ParquetSchemaException.class);
+    }
+
+    // A file holding only nulls in the column must not turn the error of a read into an empty answer.
+    @Test
+    void mistypedLiteralFailsLikeARead() {
+        Predicate p = new Predicate.Eq(NAME, new Value.LongVal(5));
+        FileStats onlyNulls = nullCountStats(NAME, OptionalLong.of(100));
+        assertThatThrownBy(() -> prune(p, onlyNulls)).isInstanceOf(ParquetSchemaException.class);
+    }
+
+    // The schema tells the pruner that the column is DOUBLE, where no bound could: NaN orders no value.
+    @Test
+    void nanLiteralOrdersNoDouble() {
+        ColumnStatistics boundless =
+                new ColumnStatistics(Optional.empty(), Optional.empty(), OptionalLong.of(0), OptionalLong.of(100));
+        FileStats stats =
+                FileStats.builder().recordCount(100).column(SCORE, boundless).build();
+        Predicate p = new Predicate.Lt(SCORE, new Value.DoubleVal(Double.NaN));
+        assertThat(eliminated(prune(p, stats))).isTrue();
     }
 
     /** A file of 100 records. Its {@code id} column ranges from {@code min} to {@code max} and counts the nulls. */
@@ -197,7 +252,7 @@ class FilePrunerTest {
                 .geometryBounds(GEOM, box(-10, -10, 0, 0))
                 .build();
         Predicate p = new Predicate.Spatial.BboxIntersects(GEOM, Bbox.of2d(5, 5, 10, 10));
-        assertThat(eliminated(FilePruner.evaluate(p, stats))).isTrue();
+        assertThat(eliminated(prune(p, stats))).isTrue();
     }
 
     @Test
@@ -207,7 +262,7 @@ class FilePrunerTest {
                 .geometryBounds(GEOM, box(-10, -10, 5, 5))
                 .build();
         Predicate p = new Predicate.Spatial.BboxIntersects(GEOM, Bbox.of2d(0, 0, 10, 10));
-        assertThat(eliminated(FilePruner.evaluate(p, stats))).isFalse();
+        assertThat(eliminated(prune(p, stats))).isFalse();
     }
 
     @Test
@@ -217,7 +272,7 @@ class FilePrunerTest {
                 .geometryBounds(GEOM, box(170, -10, -170, 10))
                 .build();
         Predicate p = new Predicate.Spatial.BboxIntersects(GEOM, Bbox.of2d(0, 0, 10, 10));
-        assertThat(eliminated(FilePruner.evaluate(p, stats))).isFalse();
+        assertThat(eliminated(prune(p, stats))).isFalse();
     }
 
     @Test
@@ -227,13 +282,12 @@ class FilePrunerTest {
                 .geometryBounds(GEOM, box(170, -10, -170, 10))
                 .build();
         Predicate p = new Predicate.Spatial.BboxIntersects(GEOM, Bbox.of2d(175, 20, 180, 30));
-        assertThat(eliminated(FilePruner.evaluate(p, stats))).isTrue();
+        assertThat(eliminated(prune(p, stats))).isTrue();
     }
 
     @Test
     void alwaysTrueKeeps() {
         FileStats stats = FileStats.builder().recordCount(100).build();
-        assertThat(eliminated(FilePruner.evaluate(Predicate.ALWAYS_TRUE, stats)))
-                .isFalse();
+        assertThat(eliminated(prune(Predicate.ALWAYS_TRUE, stats))).isFalse();
     }
 }

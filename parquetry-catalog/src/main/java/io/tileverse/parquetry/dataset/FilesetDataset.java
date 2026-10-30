@@ -580,9 +580,10 @@ public final class FilesetDataset implements GeoParquetDataset {
 
     private DatasetExplainPlan buildExplain(
             Predicate predicate, Projection projection, ReadOptions options, boolean analyze) {
+        FilePruner pruner = FilePruner.of(predicate, schema());
         List<FileExplain> files = new ArrayList<>(partitionStats.size());
         for (int index = 0; index < partitionStats.size(); index++) {
-            PruningDecision decision = FilePruner.evaluate(predicate, partitionStats.get(index));
+            PruningDecision decision = pruner.evaluate(partitionStats.get(index));
             files.add(fileExplain(index, decision, predicate, projection, options, analyze));
         }
         return new DatasetExplainPlan(predicate, files, Totals.from(files));
@@ -626,9 +627,10 @@ public final class FilesetDataset implements GeoParquetDataset {
     }
 
     private List<Integer> pruneSurvivors(Predicate predicate) {
+        FilePruner pruner = FilePruner.of(predicate, schema());
         List<Integer> survivors = new ArrayList<>();
         for (int index = 0; index < partitionStats.size(); index++) {
-            PruningDecision decision = FilePruner.evaluate(predicate, partitionStats.get(index));
+            PruningDecision decision = pruner.evaluate(partitionStats.get(index));
             if (!(decision instanceof PruningDecision.Eliminated)) {
                 survivors.add(index);
             }

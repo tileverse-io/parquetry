@@ -355,7 +355,8 @@ class ReaderBoundsTest {
             ParquetFileReader reader = ParquetFileReader.open(source);
 
             Optional<BoundingBox> unfiltered = reader.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
-            PruningDecision filePruning = FilePruner.evaluate(nearTheLastGroup, reader.fileStats());
+            PruningDecision filePruning =
+                    FilePruner.of(nearTheLastGroup, reader.schema()).evaluate(reader.fileStats());
 
             assertThat(reader.fileStats().geometryBounds()).doesNotContainKey(GEOMETRY);
             assertSameBox2d(unfiltered.orElseThrow(), allRows);

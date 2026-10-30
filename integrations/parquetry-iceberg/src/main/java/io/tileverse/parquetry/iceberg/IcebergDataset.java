@@ -426,9 +426,10 @@ final class IcebergDataset implements ParquetDataset {
 
     private DatasetExplainPlan buildExplain(
             Predicate predicate, Projection projection, ReadOptions options, boolean analyze) {
+        FilePruner pruner = FilePruner.of(predicate, schema());
         List<FileExplain> files = new ArrayList<>(dataFiles.size());
         for (int index = 0; index < fileStats.size(); index++) {
-            PruningDecision decision = FilePruner.evaluate(predicate, fileStats.get(index));
+            PruningDecision decision = pruner.evaluate(fileStats.get(index));
             files.add(fileExplain(index, decision, predicate, projection, options, analyze));
         }
         return new DatasetExplainPlan(predicate, files, Totals.from(files));
@@ -461,11 +462,11 @@ final class IcebergDataset implements ParquetDataset {
 
     /** Runs {@link FilePruner#evaluate} once per file, partitioning the files into survivors and eliminated. */
     private PruningResult prune(Predicate predicate) {
-        Objects.requireNonNull(predicate, "predicate");
+        FilePruner pruner = FilePruner.of(predicate, schema());
         List<Integer> survivorIndices = new ArrayList<>();
         List<EliminatedFile> eliminated = new ArrayList<>();
         for (int index = 0; index < fileStats.size(); index++) {
-            PruningDecision decision = FilePruner.evaluate(predicate, fileStats.get(index));
+            PruningDecision decision = pruner.evaluate(fileStats.get(index));
             if (decision instanceof PruningDecision.Eliminated ruledOut) {
                 eliminated.add(new EliminatedFile(dataFiles.get(index).location(), ruledOut));
             } else {
