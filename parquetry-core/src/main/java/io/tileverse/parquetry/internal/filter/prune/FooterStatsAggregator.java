@@ -22,7 +22,7 @@ import java.util.function.Function;
 
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.prune.ColumnStatistics;
-import io.tileverse.parquetry.internal.filter.StatsEvaluator.ColumnSummary;
+import io.tileverse.parquetry.internal.filter.ColumnSummary;
 import io.tileverse.parquetry.internal.filter.ValueComparison;
 
 /**

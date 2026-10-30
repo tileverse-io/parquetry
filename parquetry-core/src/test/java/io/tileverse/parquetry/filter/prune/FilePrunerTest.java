@@ -143,6 +143,46 @@ class FilePrunerTest {
                 .isFalse();
     }
 
+    @Test
+    void comparisonDropsAFileOfNulls() {
+        FileStats stats = nullCountStats(ID, OptionalLong.of(100));
+        Predicate p = new Predicate.Eq(ID, new Value.LongVal(5));
+        assertThat(eliminated(FilePruner.evaluate(p, stats))).isTrue();
+    }
+
+    // A recorded bound proves a value: the null count of such a file cannot equal its value count.
+    @Test
+    void boundProvesAValue() {
+        FileStats stats = idStats(1, 9, 100);
+        Predicate p = new Predicate.Eq(ID, new Value.LongVal(5));
+        assertThat(eliminated(FilePruner.evaluate(p, stats))).isFalse();
+    }
+
+    // A minimum above its maximum bounds nothing.
+    @Test
+    void invertedBoundsKeepAFile() {
+        FileStats stats = idStats(9, 1, 0);
+        Predicate p = new Predicate.Eq(ID, new Value.LongVal(20));
+        assertThat(eliminated(FilePruner.evaluate(p, stats))).isFalse();
+    }
+
+    // A NaN literal is no number for a string column: the read rejects the query, the pruner keeps the file.
+    @Test
+    void nanLiteralKeepsAStringFile() {
+        Predicate p = new Predicate.Lt(NAME, new Value.DoubleVal(Double.NaN));
+        assertThat(eliminated(FilePruner.evaluate(p, stringNameStats()))).isFalse();
+    }
+
+    /** A file of 100 records. Its {@code id} column ranges from {@code min} to {@code max} and counts the nulls. */
+    private static FileStats idStats(long min, long max, long nulls) {
+        ColumnStatistics ids = new ColumnStatistics(
+                Optional.of(new Value.LongVal(min)),
+                Optional.of(new Value.LongVal(max)),
+                OptionalLong.of(nulls),
+                OptionalLong.of(100));
+        return FileStats.builder().recordCount(100).column(ID, ids).build();
+    }
+
     /** A file of 100 records. Its {@code column} counts 100 nulls and {@code valueCount} values. */
     private static FileStats nullCountStats(ColumnPath column, OptionalLong valueCount) {
         ColumnStatistics nulls =

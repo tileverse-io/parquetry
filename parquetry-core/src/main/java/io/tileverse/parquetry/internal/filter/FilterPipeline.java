@@ -121,8 +121,8 @@ public final class FilterPipeline {
      * {@link ColumnIndex} (page min/max + null markers), {@link OffsetIndex} (page row offsets), and an optional
      * logical type annotation used for typed decoding of per-page min/max bounds.
      *
-     * @param boundsOrdered whether the page min/max follow an order applied by this reader; when false the tier ignores
-     *     them and consults the null markers only
+     * @param boundsOrdered whether the page min/max follow an order applied by this reader. When false the tier ignores
+     *     the bounds, and judges the pages from their null marks and counts alone.
      */
     public record ColumnPageStats(
             PrimitiveKind kind,

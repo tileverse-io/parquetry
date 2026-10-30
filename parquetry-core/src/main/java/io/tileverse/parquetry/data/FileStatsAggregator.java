@@ -21,7 +21,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import io.tileverse.parquetry.filter.prune.FileStats;
-import io.tileverse.parquetry.internal.filter.StatsEvaluator.ColumnSummary;
+import io.tileverse.parquetry.internal.filter.ColumnSummary;
 import io.tileverse.parquetry.internal.filter.prune.FooterStatsAggregator;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.internal.read.RowGroupChunks;

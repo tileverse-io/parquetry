@@ -48,8 +48,8 @@ import io.tileverse.parquetry.schema.SchemaBuilder;
  * and null counts adding up to the values of the chunk tell that it holds no number. A flat column has one value per
  * row: counts adding up to another value count come from a writer counting its values some other way, and tell nothing.
  *
- * <p>A null count contradicting the chunk reads as absent: a count above the value count, or a count equal to it
- * although the writer recorded a bound.
+ * <p>A null count contradicting the chunk reads as absent: a count above the value count, a count equal to it although
+ * the writer recorded a bound, or the count of a flat column whose value count differs from its rows.
  */
 class RowGroupChunksCountsTest {
 
@@ -82,18 +82,21 @@ class RowGroupChunksCountsTest {
 
         RowGroupChunks chunks = TestRowGroupChunks.of(footer, 0, schema, TestRowGroupChunks.noIndexSections());
 
-        assertThat(chunks.stats(V).orElseThrow().nans()).isEqualTo(expected);
+        // A chunk left without statistics tells nothing of its NaN cells.
+        NaNCells read = chunks.stats(V).map(ColumnStats::nans).orElse(NaNCells.POSSIBLE);
+        assertThat(read).isEqualTo(expected);
     }
 
     // DuckDB 1.5 counts a null struct of a list twice, beyond the values of a chunk holding values.
     @ParameterizedTest(name = "{0}")
     @MethodSource("nullCounts")
-    void nullCountAgreesWithChunk(String scenario, long nullCount, boolean recordsABound, OptionalLong expected) {
+    void nullCountAgreesWithChunk(
+            String scenario, long nullCount, boolean recordsABound, long numValues, OptionalLong expected) {
         Statistics.StatisticsBuilder statistics = Statistics.builder().nullCount(count(nullCount));
         if (recordsABound) {
             statistics.minValue(ZERO).maxValue(ZERO);
         }
-        FileMetaData footer = footer(statistics.build(), ROWS);
+        FileMetaData footer = footer(statistics.build(), numValues);
         ParquetSchema schema = SchemaBuilder.build(footer.schema());
 
         RowGroupChunks chunks = TestRowGroupChunks.of(footer, 0, schema, TestRowGroupChunks.noIndexSections());
@@ -104,10 +107,11 @@ class RowGroupChunksCountsTest {
 
     static Stream<Arguments> nullCounts() {
         return Stream.of(
-                Arguments.of("some nulls", 3L, true, count(3L)),
-                Arguments.of("only nulls", ROWS, false, count(ROWS)),
-                Arguments.of("only nulls and a bound", ROWS, true, OptionalLong.empty()),
-                Arguments.of("more nulls than values", ROWS + 1, false, OptionalLong.empty()));
+                Arguments.of("some nulls", 3L, true, ROWS, count(3L)),
+                Arguments.of("only nulls", ROWS, false, ROWS, count(ROWS)),
+                Arguments.of("only nulls and a bound", ROWS, true, ROWS, OptionalLong.empty()),
+                Arguments.of("more nulls than values", ROWS + 1, false, ROWS, OptionalLong.empty()),
+                Arguments.of("a value count short of the rows", 3L, true, ROWS - 5, OptionalLong.empty()));
     }
 
     private static OptionalLong count(long value) {

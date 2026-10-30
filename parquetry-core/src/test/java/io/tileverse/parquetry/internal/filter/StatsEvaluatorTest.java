@@ -148,16 +148,27 @@ class StatsEvaluatorTest {
 
     @Test
     void isNullWithAllNullsPassesAll() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, ROW_COUNT));
+        FilterPipeline.ColumnStatsLookup cols = single("year", onlyNullStats());
         PruningDecision d = StatsEvaluator.evaluate(col("year").isNull(), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
     }
 
     @Test
     void isNotNullWithAllNullsIsEliminated() {
-        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, ROW_COUNT));
+        FilterPipeline.ColumnStatsLookup cols = single("year", onlyNullStats());
         PruningDecision d = StatsEvaluator.evaluate(col("year").isNotNull(), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    // A recorded bound proves a value: the null count of such a chunk cannot equal its value count.
+    @Test
+    void boundContradictsOnlyNulls() {
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, ROW_COUNT));
+
+        assertThat(StatsEvaluator.evaluate(col("year").isNotNull(), cols, ROW_COUNT))
+                .isInstanceOf(PruningDecision.NotApplied.class);
+        assertThat(StatsEvaluator.evaluate(col("year").eq(2015), cols, ROW_COUNT))
+                .isInstanceOf(PruningDecision.Inconclusive.class);
     }
 
     @Test
@@ -180,6 +191,76 @@ class StatsEvaluatorTest {
         FilterPipeline.ColumnStatsLookup cols = single("year", noBounds);
         PruningDecision d = StatsEvaluator.evaluate(col("year").eq(2020), cols, ROW_COUNT);
         assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    // A null cell matches no comparison.
+    @Test
+    void onlyNullsFailEachComparison() {
+        FilterPipeline.ColumnStatsLookup cols = single("year", onlyNullStats());
+
+        assertThat(StatsEvaluator.evaluate(col("year").eq(2020), cols, ROW_COUNT))
+                .isInstanceOf(PruningDecision.Eliminated.class);
+        assertThat(StatsEvaluator.evaluate(col("year").notEq(2020), cols, ROW_COUNT))
+                .isInstanceOf(PruningDecision.Eliminated.class);
+        assertThat(StatsEvaluator.evaluate(col("year").lt(2020), cols, ROW_COUNT))
+                .isInstanceOf(PruningDecision.Eliminated.class);
+        assertThat(StatsEvaluator.evaluate(col("year").inInts(2020), cols, ROW_COUNT))
+                .isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    // The nulls do not differ from the value: they match no comparison.
+    @Test
+    void notEqOfOneValueBesideNulls() {
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2020, 2020, 3));
+
+        PruningDecision d = StatsEvaluator.evaluate(col("year").notEq(2020), cols, ROW_COUNT);
+
+        assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void nanOrdersNothingWithoutBounds() {
+        FilterPipeline.ColumnStats noBounds = new FilterPipeline.ColumnStats(
+                PrimitiveKind.DOUBLE,
+                Optional.empty(),
+                Optional.empty(),
+                OptionalLong.of(0L),
+                ROW_COUNT,
+                Optional.empty(),
+                NaNCells.POSSIBLE);
+
+        PruningDecision d = StatsEvaluator.evaluate(col("price").lt(Double.NaN), single("price", noBounds), ROW_COUNT);
+
+        assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    @Test
+    void notEqNaNWithoutBounds() {
+        Predicate p = col("price").notEq(Double.NaN);
+
+        assertThat(StatsEvaluator.evaluate(p, single("price", nanFreeWithoutBounds(0)), ROW_COUNT))
+                .isInstanceOf(PruningDecision.PassedAll.class);
+        assertThat(StatsEvaluator.evaluate(p, single("price", nanFreeWithoutBounds(3)), ROW_COUNT))
+                .isInstanceOf(PruningDecision.Inconclusive.class);
+    }
+
+    // Callers count the rows of a row group passed as a whole: a row group without rows passes nothing.
+    @Test
+    void passedAllNeedsRows() {
+        FilterPipeline.ColumnStatsLookup cols = single("year", intStats(2010, 2020, 0));
+
+        assertThat(StatsEvaluator.evaluate(col("year").isNotNull(), cols, 0))
+                .isInstanceOf(PruningDecision.Inconclusive.class);
+        assertThat(StatsEvaluator.evaluate(col("year").lt(2030), cols, 0))
+                .isInstanceOf(PruningDecision.Inconclusive.class);
+    }
+
+    @Test
+    void emptyInNeedsNoStatistics() {
+        Predicate emptyList = new Predicate.In(ColumnPath.of("year"), List.of());
+
+        assertThat(StatsEvaluator.evaluate(emptyList, empty(), ROW_COUNT))
+                .isInstanceOf(PruningDecision.Eliminated.class);
     }
 
     @Test
@@ -268,7 +349,7 @@ class StatsEvaluatorTest {
 
     @Test
     void summaryLeavesANaNBoundOut() {
-        StatsEvaluator.ColumnSummary summary = StatsEvaluator.summarize(doubleStats(1.0, Double.NaN, 0));
+        ColumnSummary summary = StatsEvaluator.summarize(doubleStats(1.0, Double.NaN, 0));
         assertThat(summary.min()).contains(new Value.DoubleVal(1.0));
         assertThat(summary.max()).isEmpty();
     }
@@ -431,7 +512,7 @@ class StatsEvaluatorTest {
                 .as("NaN bounds without a NaN count")
                 .isEqualTo(NaNCells.POSSIBLE);
 
-        StatsEvaluator.ColumnSummary onlyNaN = StatsEvaluator.summarize(onlyNaNStats(0));
+        ColumnSummary onlyNaN = StatsEvaluator.summarize(onlyNaNStats(0));
         assertThat(onlyNaN.nans()).isEqualTo(NaNCells.ALL);
         assertThat(onlyNaN.min()).isEmpty();
         assertThat(onlyNaN.max()).isEmpty();
@@ -439,8 +520,7 @@ class StatsEvaluatorTest {
 
     @Test
     void aNumberBoundContradictsACountOfOnlyNaN() {
-        StatsEvaluator.ColumnSummary summary =
-                StatsEvaluator.summarize(floatingStats(Double.NaN, 5.0, 0, NaNCells.ALL));
+        ColumnSummary summary = StatsEvaluator.summarize(floatingStats(Double.NaN, 5.0, 0, NaNCells.ALL));
 
         assertThat(summary.nans()).isEqualTo(NaNCells.POSSIBLE);
         assertThat(summary.min()).isEmpty();
@@ -449,8 +529,7 @@ class StatsEvaluatorTest {
 
     @Test
     void aNaNBoundContradictsANaNCountOfZero() {
-        StatsEvaluator.ColumnSummary summary =
-                StatsEvaluator.summarize(floatingStats(1.0, Double.NaN, 0, NaNCells.ABSENT));
+        ColumnSummary summary = StatsEvaluator.summarize(floatingStats(1.0, Double.NaN, 0, NaNCells.ABSENT));
 
         assertThat(summary.nans()).isEqualTo(NaNCells.POSSIBLE);
     }
@@ -735,7 +814,7 @@ class StatsEvaluatorTest {
 
     @Test
     void summaryLeavesInvertedBoundsOut() {
-        StatsEvaluator.ColumnSummary summary = StatsEvaluator.summarize(intStats(2020, 2010, 3));
+        ColumnSummary summary = StatsEvaluator.summarize(intStats(2020, 2010, 3));
 
         assertThat(summary.min()).isEmpty();
         assertThat(summary.max()).isEmpty();
@@ -744,7 +823,7 @@ class StatsEvaluatorTest {
 
     @Test
     void summaryKeepsEqualBounds() {
-        StatsEvaluator.ColumnSummary summary = StatsEvaluator.summarize(intStats(2020, 2020, 0));
+        ColumnSummary summary = StatsEvaluator.summarize(intStats(2020, 2020, 0));
 
         assertThat(summary.min()).contains(new Value.IntVal(2020));
         assertThat(summary.max()).contains(new Value.IntVal(2020));
@@ -862,6 +941,30 @@ class StatsEvaluatorTest {
 
     private static FilterPipeline.ColumnStatsLookup empty() {
         return path -> Optional.empty();
+    }
+
+    /** An INT32 chunk of {@link #ROW_COUNT} nulls, without bounds. */
+    private static FilterPipeline.ColumnStats onlyNullStats() {
+        return new FilterPipeline.ColumnStats(
+                PrimitiveKind.INT32,
+                Optional.empty(),
+                Optional.empty(),
+                OptionalLong.of(ROW_COUNT),
+                ROW_COUNT,
+                Optional.empty(),
+                NaNCells.POSSIBLE);
+    }
+
+    /** A DOUBLE chunk counting no NaN cell and {@code nullCount} nulls, without bounds. */
+    private static FilterPipeline.ColumnStats nanFreeWithoutBounds(long nullCount) {
+        return new FilterPipeline.ColumnStats(
+                PrimitiveKind.DOUBLE,
+                Optional.empty(),
+                Optional.empty(),
+                OptionalLong.of(nullCount),
+                ROW_COUNT,
+                Optional.empty(),
+                NaNCells.ABSENT);
     }
 
     private static FilterPipeline.ColumnStats intStats(int min, int max, long nullCount) {

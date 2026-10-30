@@ -24,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.lang.foreign.MemorySegment;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -302,6 +303,109 @@ class ColumnIndexEvaluatorTest {
         assertThat(r.ranges()).containsExactly(new Range(100, 199));
     }
 
+    // A page holding only nulls matches no comparison, whatever the order of the bounds.
+    @Test
+    void unorderedBoundsSkipNullPages() {
+        MemorySegment noBound = MemorySegment.ofArray(new byte[0]).asReadOnly();
+        ColumnIndex idx = new ColumnIndex(
+                List.of(false, true, false),
+                List.of(encodeInt(2010), noBound, encodeInt(2025)),
+                List.of(encodeInt(2015), noBound, encodeInt(2030)),
+                BoundaryOrder.UNORDERED,
+                Optional.of(List.of(0L, ROWS_PER_PAGE, 0L)),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
+
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("year").eq(1999), yearPagesInAnUnknownOrder(idx), 300);
+
+        assertThat(rangesOf(d)).containsExactly(new Range(0, 99), new Range(200, 299));
+    }
+
+    // A page not marked as holding only nulls holds a value: a null count reaching its rows cannot be trusted.
+    @Test
+    void unmarkedPageOfNullsIsKept() {
+        Optional<List<Long>> nullsFillTheMiddlePage = Optional.of(List.of(0L, ROWS_PER_PAGE, 0L));
+        double[] mins = {1.0, 3.0, 5.0};
+        double[] maxs = {2.0, 4.0, 6.0};
+        FilterPipeline.ColumnPageStatsLookup cols = pricePages(NO_NAN_COUNTS, nullsFillTheMiddlePage, mins, maxs);
+
+        PruningDecision notNull = ColumnIndexEvaluator.evaluate(col("price").isNotNull(), cols, ROW_GROUP_ROWS);
+        PruningDecision middle = ColumnIndexEvaluator.evaluate(col("price").eq(3.5), cols, ROW_GROUP_ROWS);
+
+        assertThat(notNull).isInstanceOf(PruningDecision.PassedAll.class);
+        assertThat(rangesOf(middle)).containsExactly(new Range(100, 199));
+    }
+
+    // NaN counts do not depend on the order of the bounds.
+    @Test
+    void unknownOrderSkipsOnlyNaNPages() {
+        double[] mins = {1.0, Double.NaN, 5.0};
+        double[] maxs = {2.0, Double.NaN, 6.0};
+        long[] firstRows = {0L, 100L, 200L};
+        FilterPipeline.ColumnPageStatsLookup cols =
+                pricePages(ONLY_NAN_IN_THE_MIDDLE_PAGE, NO_NULLS, mins, maxs, firstRows, false);
+
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").gt(0.0), cols, ROW_GROUP_ROWS);
+
+        assertThat(rangesOf(d)).containsExactly(new Range(0, 99), new Range(200, 299));
+    }
+
+    // A negative count describes no page, and tells nothing of its nulls.
+    @Test
+    void negativeNullCountKeepsIsNull() {
+        Optional<List<Long>> negativeInTheMiddle = Optional.of(List.of(0L, -1L, 0L));
+        FilterPipeline.ColumnPageStatsLookup cols =
+                pricePages(NO_NAN_COUNTS, negativeInTheMiddle, MINS_WITH_A_NAN_PAGE, MAXS_WITH_A_NAN_PAGE);
+
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").isNull(), cols, ROW_GROUP_ROWS);
+
+        assertThat(rangesOf(d)).containsExactly(new Range(100, 199));
+    }
+
+    @Test
+    void nullCountAboveRowsKeepsPage() {
+        Optional<List<Long>> tooManyInTheMiddle = Optional.of(List.of(0L, 150L, 0L));
+        FilterPipeline.ColumnPageStatsLookup cols =
+                pricePages(NO_NAN_COUNTS, tooManyInTheMiddle, MINS_WITH_A_NAN_PAGE, MAXS_WITH_A_NAN_PAGE);
+
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").isNotNull(), cols, ROW_GROUP_ROWS);
+
+        assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
+    }
+
+    // The middle page starts at the first row of the last one: it holds no row to keep.
+    @Test
+    void isNullSkipsAPageWithoutRows() {
+        double[] mins = {1.0, 3.0, 5.0};
+        double[] maxs = {2.0, 4.0, 6.0};
+        long[] firstRows = {0L, 100L, 100L};
+        FilterPipeline.ColumnPageStatsLookup cols = pricePages(NO_NAN_COUNTS, NO_NULLS, mins, maxs, firstRows);
+
+        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").isNull(), cols, ROW_GROUP_ROWS);
+
+        assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    // A TIME bound outside one day decodes to nothing: its page is kept, and the other pages are judged.
+    @Test
+    void undecodedBoundKeepsItsPage() {
+        FilterPipeline.ColumnPageStatsLookup cols = singleColumn(
+                "t",
+                PrimitiveKind.INT64,
+                List.of(false, false, false),
+                List.of(encodeLong(0L), encodeLong(-1L), encodeLong(3_000_000L)),
+                List.of(encodeLong(1_000_000L), encodeLong(2_000_000L), encodeLong(4_000_000L)),
+                List.of(0L, 100L, 200L),
+                new LogicalType.Time(false, LogicalType.TimeUnit.MICROS));
+        Value halfASecond = new Value.TimeVal(LocalTime.ofNanoOfDay(500_000_000L));
+
+        PruningDecision d =
+                ColumnIndexEvaluator.evaluate(new Predicate.Eq(ColumnPath.of("t"), halfASecond), cols, ROW_GROUP_ROWS);
+
+        assertThat(rangesOf(d)).containsExactly(new Range(0, 99), new Range(100, 199));
+    }
+
     @Test
     void halfFloatPageBoundsLeaveValueComparisonsUnpruned() {
         // 0x3C00 is 1.0 and 0xC000 is -2.0: an unsigned byte order would put -2.0 above 1.0.
@@ -326,7 +430,7 @@ class ColumnIndexEvaluatorTest {
         // The page bounds decode to timestamps, while the scan compares the literal with the stored integers.
         PruningDecision d = ColumnIndexEvaluator.evaluate(predicate, timestampPagesOfOneInstant(), ROW_GROUP_ROWS);
 
-        assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
+        assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
     }
 
     static Stream<Arguments> comparisonsOfATimestampColumnWithAnInteger() {
@@ -642,8 +746,8 @@ class ColumnIndexEvaluatorTest {
         PruningDecision isNull = ColumnIndexEvaluator.evaluate(col("price").isNull(), cols, ROW_GROUP_ROWS);
         PruningDecision isNotNull = ColumnIndexEvaluator.evaluate(col("price").isNotNull(), cols, ROW_GROUP_ROWS);
 
-        assertThat(isNull).isInstanceOf(PruningDecision.PassedAll.class);
-        assertThat(isNotNull).isInstanceOf(PruningDecision.PassedAll.class);
+        assertThat(isNull).isInstanceOf(PruningDecision.NotApplied.class);
+        assertThat(isNotNull).isInstanceOf(PruningDecision.NotApplied.class);
     }
 
     @Test
@@ -760,6 +864,20 @@ class ColumnIndexEvaluatorTest {
             double[] mins,
             double[] maxs,
             long[] firstRows) {
+        return pricePages(nanCounts, nullCounts, mins, maxs, firstRows, true);
+    }
+
+    /**
+     * DOUBLE pages, none of them a null page, with the given bounds, counts and first rows, their bounds in the order
+     * of the column when {@code boundsOrdered}.
+     */
+    private static FilterPipeline.ColumnPageStatsLookup pricePages(
+            Optional<List<Long>> nanCounts,
+            Optional<List<Long>> nullCounts,
+            double[] mins,
+            double[] maxs,
+            long[] firstRows,
+            boolean boundsOrdered) {
         List<Boolean> nullPages = new ArrayList<>();
         List<MemorySegment> minValues = new ArrayList<>();
         List<MemorySegment> maxValues = new ArrayList<>();
@@ -781,7 +899,7 @@ class ColumnIndexEvaluatorTest {
                 nanCounts);
         OffsetIndex off = new OffsetIndex(pages, Optional.empty());
         FilterPipeline.ColumnPageStats stats =
-                new FilterPipeline.ColumnPageStats(PrimitiveKind.DOUBLE, idx, off, Optional.empty(), true);
+                new FilterPipeline.ColumnPageStats(PrimitiveKind.DOUBLE, idx, off, Optional.empty(), boundsOrdered);
         return path -> path.equals(ColumnPath.of("price")) ? Optional.of(stats) : Optional.empty();
     }
 
@@ -827,6 +945,11 @@ class ColumnIndexEvaluatorTest {
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty());
+        return yearPagesInAnUnknownOrder(idx);
+    }
+
+    /** Three INT32 "year" pages of 100 rows described by {@code idx}, under a column order unknown to the reader. */
+    private static FilterPipeline.ColumnPageStatsLookup yearPagesInAnUnknownOrder(ColumnIndex idx) {
         List<PageLocation> pages =
                 List.of(new PageLocation(0L, 0, 0L), new PageLocation(0L, 0, 100L), new PageLocation(0L, 0, 200L));
         OffsetIndex off = new OffsetIndex(pages, Optional.empty());

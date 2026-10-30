@@ -29,12 +29,12 @@ import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
+import io.tileverse.parquetry.internal.filter.ColumnSummary;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnBloom;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStats;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnStats;
 import io.tileverse.parquetry.internal.filter.NaNCells;
 import io.tileverse.parquetry.internal.filter.StatsEvaluator;
-import io.tileverse.parquetry.internal.filter.StatsEvaluator.ColumnSummary;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
 import io.tileverse.parquetry.internal.footer.CompactFooter;
@@ -160,7 +160,7 @@ public final class RowGroupChunks {
         ChunkMeta chunk = maybeChunk.orElseThrow();
         Optional<MemorySegment> minValue = orderedBound(chunk, chunk.minValue());
         Optional<MemorySegment> maxValue = orderedBound(chunk, chunk.maxValue());
-        OptionalLong nullCount = consistentNullCount(chunk);
+        OptionalLong nullCount = consistentNullCount(path, chunk);
         if (!hasStatistics(minValue, maxValue, nullCount)) {
             return Optional.empty();
         }
@@ -173,12 +173,13 @@ public final class RowGroupChunks {
     /**
      * The null count of the chunk, or empty when it contradicts the chunk. A null count cannot exceed the value count.
      * It cannot equal the value count either when the writer recorded a bound, because a bound proves a value. DuckDB
-     * 1.5 counts a null struct of a list twice and writes such null counts.
+     * 1.5 counts a null struct of a list twice and writes such null counts. A writer counting the values of a flat
+     * column some other way than one per row may count its nulls that way too; see {@link #countsEachCell}.
      */
-    private static OptionalLong consistentNullCount(ChunkMeta chunk) {
+    private OptionalLong consistentNullCount(ColumnPath path, ChunkMeta chunk) {
         OptionalLong nullCount = chunk.nullCount();
-        if (nullCount.isEmpty()) {
-            return nullCount;
+        if (nullCount.isEmpty() || !countsEachCell(path, chunk)) {
+            return OptionalLong.empty();
         }
         long nulls = nullCount.getAsLong();
         long values = chunk.numValues();

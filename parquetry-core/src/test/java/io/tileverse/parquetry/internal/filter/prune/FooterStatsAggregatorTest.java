@@ -25,8 +25,8 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.prune.ColumnStatistics;
+import io.tileverse.parquetry.internal.filter.ColumnSummary;
 import io.tileverse.parquetry.internal.filter.NaNCells;
-import io.tileverse.parquetry.internal.filter.StatsEvaluator.ColumnSummary;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 class FooterStatsAggregatorTest {

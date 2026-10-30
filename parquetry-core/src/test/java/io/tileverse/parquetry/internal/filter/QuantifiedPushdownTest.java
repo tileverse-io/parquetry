@@ -118,9 +118,17 @@ class QuantifiedPushdownTest {
 
     @Test
     void anyIsNotNullDropsOnlyNulls() {
-        FilterPipeline.ColumnStatsLookup cols = intLeafWithNulls(VALUE_COUNT);
+        FilterPipeline.ColumnStatsLookup cols = intLeafOfOnlyNulls();
         Predicate quantified = new Predicate.Quantified(MatchAction.ANY, new Predicate.IsNotNull(INT_LEAF));
         PruningDecision decision = StatsEvaluator.evaluate(quantified, cols, ROW_COUNT);
+        assertThat(decision).isInstanceOf(PruningDecision.Eliminated.class);
+    }
+
+    // No element holds a value: no row has an element equal to the literal.
+    @Test
+    void anyOverOnlyNullsIsEliminated() {
+        PruningDecision decision =
+                StatsEvaluator.evaluate(quantifiedInt(MatchAction.ANY, 7), intLeafOfOnlyNulls(), ROW_COUNT);
         assertThat(decision).isInstanceOf(PruningDecision.Eliminated.class);
     }
 
@@ -197,6 +205,19 @@ class QuantifiedPushdownTest {
         Map<ColumnPath, FilterPipeline.ColumnStats> map = new HashMap<>();
         map.put(INT_LEAF, stats(PrimitiveKind.INT32, encodeInt(1), encodeInt(9), nullCount));
         return path -> Optional.ofNullable(map.get(path));
+    }
+
+    /** Stats of the int leaf without bounds, each of its elements null or an empty list. */
+    private static FilterPipeline.ColumnStatsLookup intLeafOfOnlyNulls() {
+        FilterPipeline.ColumnStats onlyNulls = new FilterPipeline.ColumnStats(
+                PrimitiveKind.INT32,
+                Optional.empty(),
+                Optional.empty(),
+                OptionalLong.of(VALUE_COUNT),
+                VALUE_COUNT,
+                Optional.empty(),
+                NaNCells.POSSIBLE);
+        return path -> path.equals(INT_LEAF) ? Optional.of(onlyNulls) : Optional.empty();
     }
 
     private static FilterPipeline.ColumnStats nullFreeStats(PrimitiveKind kind, MemorySegment min, MemorySegment max) {
