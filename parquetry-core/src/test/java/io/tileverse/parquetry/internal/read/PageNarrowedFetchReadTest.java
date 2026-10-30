@@ -581,7 +581,7 @@ class PageNarrowedFetchReadTest {
                 .defaultCompression(Compression.uncompressed())
                 .rowGroupSize(RowGroupSize.rows(ROWS_PER_ROW_GROUP))
                 .encodingPolicy(ID.dot(), EncodingPolicy.FORCE_PLAIN)
-                .encodingPolicy(NAME.dot(), EncodingPolicy.FORCE_DICTIONARY)
+                .encodingPolicy(NAME.dot(), EncodingPolicy.AUTO)
                 .encodingPolicy(PAYLOAD.dot(), EncodingPolicy.FORCE_PLAIN)
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(target), SCHEMA, options)) {

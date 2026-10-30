@@ -323,30 +323,13 @@ public record WriteOptions(
      * Per-column encoding selection policy.
      *
      * <p>{@link Auto} is the default: the writer attempts dictionary encoding and falls back to {@code PLAIN} when
-     * cardinality exceeds the dictionary byte budget. The forced variants pin a specific encoder for the entire column:
+     * cardinality exceeds the dictionary byte budget. {@link ForcePlain} never attempts a dictionary and emits
+     * {@code PLAIN} from the first page. Geometry columns take it unless overridden.
      *
-     * <ul>
-     *   <li>{@link ForcePlain} -- never attempt dictionary; emit {@code PLAIN} from the first page (geometry columns
-     *       get this implicitly unless overridden).
-     *   <li>{@link ForceDictionary} -- never fall back; cardinality overflow surfaces as a write failure.
-     *   <li>{@link ForceDelta} -- {@code DELTA_BINARY_PACKED} for integer types; {@code DELTA_LENGTH_BYTE_ARRAY} for
-     *       binary types.
-     *   <li>{@link ForceByteStreamSplit} -- valid for {@code FLOAT}/{@code DOUBLE} columns only.
-     * </ul>
-     *
-     * <p>Each variant is currently a no-arg record exposed as a singleton constant ({@link #AUTO},
-     * {@link #FORCE_PLAIN}, {@link #FORCE_DICTIONARY}, {@link #FORCE_DELTA}, {@link #FORCE_BYTE_STREAM_SPLIT}), which
-     * gives the API an enum-like feel. The sealed interface shape is intentional so individual variants can grow
-     * parameters later -- for example a future {@code ForceDictionary(int dictionaryByteBudget)} or
-     * {@code ForceDelta(int blockSize, int miniBlockSize)} can coexist with the constants without breaking call sites
-     * that only need the defaults.
+     * <p>Each policy is a no-arg record exposed as a constant, {@link #AUTO} or {@link #FORCE_PLAIN}. The sealed
+     * interface lets a policy grow parameters later without breaking the call sites that use the constants.
      */
-    public sealed interface EncodingPolicy
-            permits EncodingPolicy.Auto,
-                    EncodingPolicy.ForcePlain,
-                    EncodingPolicy.ForceDictionary,
-                    EncodingPolicy.ForceDelta,
-                    EncodingPolicy.ForceByteStreamSplit {
+    public sealed interface EncodingPolicy permits EncodingPolicy.Auto, EncodingPolicy.ForcePlain {
 
         /** No-arg singleton. The writer attempts dictionary and falls back to PLAIN on cardinality overflow. */
         EncodingPolicy AUTO = new Auto();
@@ -354,24 +337,9 @@ public record WriteOptions(
         /** No-arg singleton. Never attempt dictionary; emit PLAIN from the first page. */
         EncodingPolicy FORCE_PLAIN = new ForcePlain();
 
-        /** No-arg singleton. Never fall back from dictionary; cardinality overflow surfaces as a write failure. */
-        EncodingPolicy FORCE_DICTIONARY = new ForceDictionary();
-
-        /** No-arg singleton. DELTA_BINARY_PACKED for ints; DELTA_LENGTH_BYTE_ARRAY for binary. */
-        EncodingPolicy FORCE_DELTA = new ForceDelta();
-
-        /** No-arg singleton. Valid for FLOAT and DOUBLE columns only. */
-        EncodingPolicy FORCE_BYTE_STREAM_SPLIT = new ForceByteStreamSplit();
-
         record Auto() implements EncodingPolicy {}
 
         record ForcePlain() implements EncodingPolicy {}
-
-        record ForceDictionary() implements EncodingPolicy {}
-
-        record ForceDelta() implements EncodingPolicy {}
-
-        record ForceByteStreamSplit() implements EncodingPolicy {}
     }
 
     /**

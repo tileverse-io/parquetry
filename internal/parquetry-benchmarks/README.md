@@ -82,7 +82,7 @@ smoke). CI splits the two phases into `make build-benchmarks` and
 
 | Class | Measures | Key parameters |
 |-------|----------|----------------|
-| `DecodeBenchmark` | Raw per-column decode throughput in isolation: a single-column file read in full through `readBatches`, every decoded value folded into a sink, with no filter, projection narrowing, or record assembly in the way. This is the only benchmark that times raw decode rather than the filter, pruning, or spatial machinery around it, and the harness for confirming a change to the decode path stays neutral on throughput. The `scenario` axis pairs a primitive kind with a forced on-disk encoding (PLAIN / DICTIONARY / DELTA / BYTE_STREAM_SPLIT, only the pairings a kind supports); `nullable` contrasts the all-present PLAIN fast path (values sliced straight from the page) against the null-positioning spread plus validity bitmap. The matrix is wide on purpose -- pin `scenario`/`nullable` to time the slice a change touches. | `scenario` (`INT32`/`INT64`/`FLOAT`/`DOUBLE`/`BOOLEAN`/`BYTE_ARRAY`/`FLBA` x the encodings each supports), `nullable` (`true`/`false`) |
+| `DecodeBenchmark` | Raw per-column decode throughput in isolation: a single-column file read in full through `readBatches`, every decoded value folded into a sink, with no filter, projection narrowing, or record assembly in the way. This is the only benchmark that times raw decode rather than the filter, pruning, or spatial machinery around it, and the harness for confirming a change to the decode path stays neutral on throughput. The `scenario` axis pairs a primitive kind with an on-disk encoding written by parquetry (PLAIN / DICTIONARY, only the pairings supported by a kind); `nullable` contrasts the all-present PLAIN fast path (values sliced straight from the page) against the null-positioning spread plus validity bitmap. The matrix is wide on purpose -- pin `scenario`/`nullable` to time the slice a change touches. | `scenario` (`INT32`/`INT64`/`FLOAT`/`DOUBLE`/`BOOLEAN`/`BYTE_ARRAY`/`FLBA` x PLAIN, and DICTIONARY where supported), `nullable` (`true`/`false`) |
 | `PagePruningBenchmark` | What column-index page pruning buys a filtered read: writes one row group with many small pages, then reads a 1%-selective band predicate with the COLUMN_INDEX tier on vs. off. | `layout` (`SORTED` clusters matches into a few pages; `SHUFFLED` scatters them across every page, leaving nothing to prune), `useColumnIndex` (`true`/`false`) |
 | `FilterTierBenchmark` | How far each metadata tier reduces a selective point lookup over a ten-row-group file. The result shows page pruning (COLUMN_INDEX) dominating for point lookups while row-group pruning (STATS/BLOOM) helps little. | `tiers` (`RECORD_ONLY`, `STATS`, `COLUMN_INDEX`, `BLOOM`, `ALL`) |
 | `SpatialPruningBenchmark` | Row-group pruning benefit of spatially clustered GeoParquet data. A parquetry-written file holds native per-row-group geometry bounding boxes; a `bboxIntersects` query skips row groups whose bbox is disjoint from the query only when the data is spatially clustered. `CLUSTERED` writes each row group into a distinct grid tile -- the query hits two of sixteen row groups; `SHUFFLED` randomises row order, making every row group's bbox span the full extent and forcing record-level WKB evaluation on every row. The `geometrySize` axis adds `LARGE` (2000-vertex dense ring) to expose how WKB-walk cost scales with vertex count on the unclusterd arm. | `layout` (`CLUSTERED` one row group per grid tile; `SHUFFLED` every bbox spans the full extent), `geometrySize` (`SMALL` 5-point rectangle; `LARGE` 2000-vertex ring) |
@@ -105,27 +105,25 @@ Re-measure on the target host before drawing conclusions.
 |----------|-----------|----------------------|
 | `INT32_PLAIN` | 2.2 | 7.0 |
 | `INT32_DICTIONARY` | 9.8 | 12.4 |
-| `INT32_DELTA` | 10.0 | 12.3 |
 | `INT64_PLAIN` | 2.5 | 8.4 |
 | `INT64_DICTIONARY` | 10.2 | 12.9 |
-| `INT64_DELTA` | 10.1 | 12.7 |
 | `FLOAT_PLAIN` | 2.2 | 7.8 |
-| `FLOAT_BYTE_STREAM_SPLIT` | 10.0 | 12.6 |
 | `DOUBLE_PLAIN` | 3.1 | 7.4 |
-| `DOUBLE_BYTE_STREAM_SPLIT` | 10.1 | 12.6 |
 | `BOOLEAN_PLAIN` | 2.2 | 6.7 |
 | `BINARY_PLAIN` | 21.2 | 19.0 |
 | `BINARY_DICTIONARY` | 5.9 | 12.5 |
-| `BINARY_DELTA` | 6.0 | 12.3 |
 | `FLBA_PLAIN` | 16.4 | 15.5 |
 | `FLBA_DICTIONARY` | 8.5 | 15.3 |
 
 What the shape confirms (the benchmark discriminates the paths a decode change would touch): the all-present PLAIN
-fixed-width path is the floor (~2-3 ms), because it slices values straight from the page; dictionary, delta, and
-byte-stream-split each add ~7-8 ms of decode; variable-length `BINARY_PLAIN` is the heaviest and, tellingly, slower than
-`BINARY_DICTIONARY` (index decode beats re-parsing length-prefixed bytes); and on the fixed-width PLAIN path `nullable`
-roughly triples the time, the cost of the null-positioning spread and the validity bitmap over the all-valid live-page
-slice.
+fixed-width path is the floor (~2-3 ms), because it slices values straight from the page; dictionary decode adds ~7-8
+ms; variable-length `BINARY_PLAIN` is the heaviest and, tellingly, slower than `BINARY_DICTIONARY` (index decode beats
+re-parsing length-prefixed bytes); and on the fixed-width PLAIN path `nullable` roughly triples the time, the cost of
+the null-positioning spread and the validity bitmap over the all-valid live-page slice.
+
+An earlier version of this table had DELTA and BYTE_STREAM_SPLIT rows. They measured dictionary decode: the writer
+ignored the policies requesting those encodings and wrote dictionary pages. The policies are gone, and parquetry
+writes neither encoding.
 
 ## WKB envelope baseline
 

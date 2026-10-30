@@ -69,10 +69,9 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * decoder branches on:
  *
  * <ul>
- *   <li>{@code scenario} pairs a primitive {@link PrimitiveKind} with a forced on-disk encoding. PLAIN, DICTIONARY,
- *       DELTA (delta-binary-packed for integers, delta-byte-array for binary), and BYTE_STREAM_SPLIT each drive a
- *       distinct decoder; only the pairings a kind actually supports are listed, to avoid a write that no encoder can
- *       satisfy.
+ *   <li>{@code scenario} pairs a primitive {@link PrimitiveKind} with an on-disk encoding written by parquetry: PLAIN
+ *       when the column is forced to it, DICTIONARY from the default policy over a bounded value domain. Each drives a
+ *       distinct decoder; only the pairings supported by a kind are listed.
  *   <li>{@code nullable} selects an all-present column (the PLAIN fast path can slice values straight from the page)
  *       versus a column with roughly one null in ten (which forces the null-positioning spread and a validity bitmap).
  * </ul>
@@ -107,21 +106,16 @@ public class DecodeBenchmark {
     /** A primitive kind paired with an on-disk encoding the writer can produce for it. */
     public enum Scenario {
         INT32_PLAIN(PrimitiveKind.INT32, WriteOptions.EncodingPolicy.FORCE_PLAIN),
-        INT32_DICTIONARY(PrimitiveKind.INT32, WriteOptions.EncodingPolicy.FORCE_DICTIONARY),
-        INT32_DELTA(PrimitiveKind.INT32, WriteOptions.EncodingPolicy.FORCE_DELTA),
+        INT32_DICTIONARY(PrimitiveKind.INT32, WriteOptions.EncodingPolicy.AUTO),
         INT64_PLAIN(PrimitiveKind.INT64, WriteOptions.EncodingPolicy.FORCE_PLAIN),
-        INT64_DICTIONARY(PrimitiveKind.INT64, WriteOptions.EncodingPolicy.FORCE_DICTIONARY),
-        INT64_DELTA(PrimitiveKind.INT64, WriteOptions.EncodingPolicy.FORCE_DELTA),
+        INT64_DICTIONARY(PrimitiveKind.INT64, WriteOptions.EncodingPolicy.AUTO),
         FLOAT_PLAIN(PrimitiveKind.FLOAT, WriteOptions.EncodingPolicy.FORCE_PLAIN),
-        FLOAT_BYTE_STREAM_SPLIT(PrimitiveKind.FLOAT, WriteOptions.EncodingPolicy.FORCE_BYTE_STREAM_SPLIT),
         DOUBLE_PLAIN(PrimitiveKind.DOUBLE, WriteOptions.EncodingPolicy.FORCE_PLAIN),
-        DOUBLE_BYTE_STREAM_SPLIT(PrimitiveKind.DOUBLE, WriteOptions.EncodingPolicy.FORCE_BYTE_STREAM_SPLIT),
         BOOLEAN_PLAIN(PrimitiveKind.BOOLEAN, WriteOptions.EncodingPolicy.FORCE_PLAIN),
         BINARY_PLAIN(PrimitiveKind.BYTE_ARRAY, WriteOptions.EncodingPolicy.FORCE_PLAIN),
-        BINARY_DICTIONARY(PrimitiveKind.BYTE_ARRAY, WriteOptions.EncodingPolicy.FORCE_DICTIONARY),
-        BINARY_DELTA(PrimitiveKind.BYTE_ARRAY, WriteOptions.EncodingPolicy.FORCE_DELTA),
+        BINARY_DICTIONARY(PrimitiveKind.BYTE_ARRAY, WriteOptions.EncodingPolicy.AUTO),
         FLBA_PLAIN(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, WriteOptions.EncodingPolicy.FORCE_PLAIN),
-        FLBA_DICTIONARY(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, WriteOptions.EncodingPolicy.FORCE_DICTIONARY);
+        FLBA_DICTIONARY(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, WriteOptions.EncodingPolicy.AUTO);
 
         private final PrimitiveKind kind;
         private final WriteOptions.EncodingPolicy policy;
@@ -135,18 +129,13 @@ public class DecodeBenchmark {
     @Param({
         "INT32_PLAIN",
         "INT32_DICTIONARY",
-        "INT32_DELTA",
         "INT64_PLAIN",
         "INT64_DICTIONARY",
-        "INT64_DELTA",
         "FLOAT_PLAIN",
-        "FLOAT_BYTE_STREAM_SPLIT",
         "DOUBLE_PLAIN",
-        "DOUBLE_BYTE_STREAM_SPLIT",
         "BOOLEAN_PLAIN",
         "BINARY_PLAIN",
         "BINARY_DICTIONARY",
-        "BINARY_DELTA",
         "FLBA_PLAIN",
         "FLBA_DICTIONARY"
     })

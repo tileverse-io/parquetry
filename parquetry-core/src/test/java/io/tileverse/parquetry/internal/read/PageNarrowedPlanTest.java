@@ -667,7 +667,7 @@ class PageNarrowedPlanTest {
                 .defaultCompression(Compression.uncompressed())
                 .rowGroupSize(RowGroupSize.rows(ROW_COUNT))
                 .encodingPolicy(A.dot(), EncodingPolicy.FORCE_PLAIN)
-                .encodingPolicy(B.dot(), EncodingPolicy.FORCE_DICTIONARY)
+                .encodingPolicy(B.dot(), EncodingPolicy.AUTO)
                 .build();
         List<Map<ColumnPath, Object>> rows = new ArrayList<>(ROW_COUNT);
         for (int i = 0; i < ROW_COUNT; i++) {

@@ -557,37 +557,10 @@ class WriteOptionsTest {
         }
 
         @Test
-        void forceDictionaryConstantIsForceDictionaryRecord() {
-            assertThat(EncodingPolicy.FORCE_DICTIONARY)
-                    .isInstanceOf(EncodingPolicy.ForceDictionary.class)
-                    .isEqualTo(new EncodingPolicy.ForceDictionary());
-        }
-
-        @Test
-        void forceDeltaConstantIsForceDeltaRecord() {
-            assertThat(EncodingPolicy.FORCE_DELTA)
-                    .isInstanceOf(EncodingPolicy.ForceDelta.class)
-                    .isEqualTo(new EncodingPolicy.ForceDelta());
-        }
-
-        @Test
-        void forceByteStreamSplitConstantIsForceByteStreamSplitRecord() {
-            assertThat(EncodingPolicy.FORCE_BYTE_STREAM_SPLIT)
-                    .isInstanceOf(EncodingPolicy.ForceByteStreamSplit.class)
-                    .isEqualTo(new EncodingPolicy.ForceByteStreamSplit());
-        }
-
-        @Test
         void sealedPermitsClosure() {
             Class<?>[] permitted = EncodingPolicy.class.getPermittedSubclasses();
 
-            assertThat(permitted)
-                    .containsExactlyInAnyOrder(
-                            EncodingPolicy.Auto.class,
-                            EncodingPolicy.ForcePlain.class,
-                            EncodingPolicy.ForceDictionary.class,
-                            EncodingPolicy.ForceDelta.class,
-                            EncodingPolicy.ForceByteStreamSplit.class);
+            assertThat(permitted).containsExactlyInAnyOrder(EncodingPolicy.Auto.class, EncodingPolicy.ForcePlain.class);
             assertThat(EncodingPolicy.class.isSealed()).isTrue();
         }
 

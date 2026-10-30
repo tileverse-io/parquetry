@@ -41,14 +41,7 @@ public sealed interface Encoder<T>
                 PlainBinaryEncoder,
                 PlainFixedLenBinaryEncoder,
                 PlainInt96Encoder,
-                RleBooleanEncoder,
-                RleDictionaryEncoder,
-                DeltaBinaryPackedInt32Encoder,
-                DeltaBinaryPackedInt64Encoder,
-                DeltaLengthByteArrayEncoder,
-                DeltaByteArrayEncoder,
-                ByteStreamSplitFloatEncoder,
-                ByteStreamSplitDoubleEncoder {
+                RleDictionaryEncoder {
 
     /**
      * Encodes the first {@code n} values from {@code values} and writes the encoded byte sequence to {@code dst}.
