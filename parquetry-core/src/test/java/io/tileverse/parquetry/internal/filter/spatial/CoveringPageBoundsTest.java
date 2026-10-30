@@ -31,9 +31,8 @@ import org.junit.jupiter.api.Test;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.format.BoundaryOrder;
 import io.tileverse.parquetry.format.ColumnIndex;
-import io.tileverse.parquetry.format.OffsetIndex;
-import io.tileverse.parquetry.format.PageLocation;
-import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStats;
+import io.tileverse.parquetry.internal.filter.PageIndex;
+import io.tileverse.parquetry.internal.filter.TestPageIndexes;
 import io.tileverse.parquetry.internal.filter.spatial.CoveringPageBounds.PageUnit;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
@@ -48,16 +47,14 @@ class CoveringPageBoundsTest {
 
     @Test
     void alignedLeavesGiveOneUnitPerPageWithItsOwnBox() {
-        ColumnPageStats xmin =
-                floatLeaf(rows(0, 4, 8, 12), mins(0f, 4f, 8f, 12f), maxs(3f, 7f, 11f, 15f), nulls(0, 0, 0, 0));
-        ColumnPageStats xmax =
-                floatLeaf(rows(0, 4, 8, 12), mins(1f, 5f, 9f, 13f), maxs(4f, 8f, 12f, 16f), nulls(0, 0, 0, 0));
-        ColumnPageStats ymin =
+        PageIndex xmin = floatLeaf(rows(0, 4, 8, 12), mins(0f, 4f, 8f, 12f), maxs(3f, 7f, 11f, 15f), nulls(0, 0, 0, 0));
+        PageIndex xmax = floatLeaf(rows(0, 4, 8, 12), mins(1f, 5f, 9f, 13f), maxs(4f, 8f, 12f, 16f), nulls(0, 0, 0, 0));
+        PageIndex ymin =
                 floatLeaf(rows(0, 4, 8, 12), mins(10f, 14f, 18f, 22f), maxs(13f, 17f, 21f, 25f), nulls(0, 0, 0, 0));
-        ColumnPageStats ymax =
+        PageIndex ymax =
                 floatLeaf(rows(0, 4, 8, 12), mins(11f, 15f, 19f, 23f), maxs(14f, 18f, 22f, 26f), nulls(0, 0, 0, 0));
 
-        List<PageUnit> units = CoveringPageBounds.unitsOf(xmin, xmax, ymin, ymax, ROWS);
+        List<PageUnit> units = CoveringPageBounds.unitsOf(xmin, xmax, ymin, ymax);
 
         assertThat(units).hasSize(4);
         assertThat(units.get(1).firstRow()).isEqualTo(4L);
@@ -70,12 +67,12 @@ class CoveringPageBoundsTest {
 
     @Test
     void aMisalignedLeafContributesEveryPageOverlappingTheSpan() {
-        ColumnPageStats xmin = floatLeaf(rows(0, 8), mins(0f, 8f), maxs(7f, 15f), nulls(0, 0));
-        ColumnPageStats xmax = floatLeaf(rows(0, 6, 12), mins(1f, 7f, 13f), maxs(6f, 12f, 16f), nulls(0, 0, 0));
-        ColumnPageStats ymin = floatLeaf(rows(0, 8), mins(0f, 0f), maxs(0f, 0f), nulls(0, 0));
-        ColumnPageStats ymax = floatLeaf(rows(0, 8), mins(1f, 1f), maxs(1f, 1f), nulls(0, 0));
+        PageIndex xmin = floatLeaf(rows(0, 8), mins(0f, 8f), maxs(7f, 15f), nulls(0, 0));
+        PageIndex xmax = floatLeaf(rows(0, 6, 12), mins(1f, 7f, 13f), maxs(6f, 12f, 16f), nulls(0, 0, 0));
+        PageIndex ymin = floatLeaf(rows(0, 8), mins(0f, 0f), maxs(0f, 0f), nulls(0, 0));
+        PageIndex ymax = floatLeaf(rows(0, 8), mins(1f, 1f), maxs(1f, 1f), nulls(0, 0));
 
-        List<PageUnit> units = CoveringPageBounds.unitsOf(xmin, xmax, ymin, ymax, ROWS);
+        List<PageUnit> units = CoveringPageBounds.unitsOf(xmin, xmax, ymin, ymax);
 
         assertThat(units).hasSize(2);
         assertThat(units.get(0).box())
@@ -91,13 +88,12 @@ class CoveringPageBoundsTest {
      */
     @Test
     void aLeafPageOverlappingTwoSpansContributesToBoth() {
-        ColumnPageStats xmin =
-                floatLeaf(rows(0, 4, 8, 12), mins(0f, 4f, 8f, 12f), maxs(3f, 7f, 11f, 15f), nulls(0, 0, 0, 0));
-        ColumnPageStats xmax = floatLeaf(rows(0, 6, 10), mins(1f, 1f, 1f), maxs(5f, 30f, 20f), nulls(0, 0, 0));
-        ColumnPageStats ymin = floatLeaf(rows(0, 8), mins(0f, 0f), maxs(0f, 0f), nulls(0, 0));
-        ColumnPageStats ymax = floatLeaf(rows(0, 8), mins(1f, 1f), maxs(1f, 1f), nulls(0, 0));
+        PageIndex xmin = floatLeaf(rows(0, 4, 8, 12), mins(0f, 4f, 8f, 12f), maxs(3f, 7f, 11f, 15f), nulls(0, 0, 0, 0));
+        PageIndex xmax = floatLeaf(rows(0, 6, 10), mins(1f, 1f, 1f), maxs(5f, 30f, 20f), nulls(0, 0, 0));
+        PageIndex ymin = floatLeaf(rows(0, 8), mins(0f, 0f), maxs(0f, 0f), nulls(0, 0));
+        PageIndex ymax = floatLeaf(rows(0, 8), mins(1f, 1f), maxs(1f, 1f), nulls(0, 0));
 
-        List<PageUnit> units = CoveringPageBounds.unitsOf(xmin, xmax, ymin, ymax, ROWS);
+        List<PageUnit> units = CoveringPageBounds.unitsOf(xmin, xmax, ymin, ymax);
 
         assertThat(units).hasSize(4);
         assertThat(units.get(0).box()).contains(Bbox.of2d(0, 0, 5, 1));
@@ -114,12 +110,12 @@ class CoveringPageBoundsTest {
 
     @Test
     void aNullPageInAnyOverlappingLeafLeavesTheUnitWithoutABox() {
-        ColumnPageStats xmin = floatLeaf(rows(0, 8), mins(0f, 8f), maxs(7f, 15f), nulls(0, 0));
-        ColumnPageStats xmax = floatLeafWithNullPage(rows(0, 8), 1);
-        ColumnPageStats ymin = floatLeaf(rows(0, 8), mins(0f, 0f), maxs(0f, 0f), nulls(0, 0));
-        ColumnPageStats ymax = floatLeaf(rows(0, 8), mins(1f, 1f), maxs(1f, 1f), nulls(0, 0));
+        PageIndex xmin = floatLeaf(rows(0, 8), mins(0f, 8f), maxs(7f, 15f), nulls(0, 0));
+        PageIndex xmax = floatLeafWithNullPage(rows(0, 8), 1);
+        PageIndex ymin = floatLeaf(rows(0, 8), mins(0f, 0f), maxs(0f, 0f), nulls(0, 0));
+        PageIndex ymax = floatLeaf(rows(0, 8), mins(1f, 1f), maxs(1f, 1f), nulls(0, 0));
 
-        List<PageUnit> units = CoveringPageBounds.unitsOf(xmin, xmax, ymin, ymax, ROWS);
+        List<PageUnit> units = CoveringPageBounds.unitsOf(xmin, xmax, ymin, ymax);
 
         assertThat(units.get(0).box()).isPresent();
         assertThat(units.get(1).box()).isEmpty();
@@ -127,12 +123,12 @@ class CoveringPageBoundsTest {
 
     @Test
     void aPageWithNullsAndABoxIsAUnitWithThatBox() {
-        ColumnPageStats xmin = floatLeaf(rows(0, 8), mins(0f, 8f), maxs(7f, 15f), nulls(0, 2));
-        ColumnPageStats xmax = floatLeaf(rows(0, 8), mins(1f, 9f), maxs(8f, 16f), nulls(0, 2));
-        ColumnPageStats ymin = floatLeaf(rows(0, 8), mins(0f, 0f), maxs(0f, 0f), nulls(0, 2));
-        ColumnPageStats ymax = floatLeaf(rows(0, 8), mins(1f, 1f), maxs(1f, 1f), nulls(0, 2));
+        PageIndex xmin = floatLeaf(rows(0, 8), mins(0f, 8f), maxs(7f, 15f), nulls(0, 2));
+        PageIndex xmax = floatLeaf(rows(0, 8), mins(1f, 9f), maxs(8f, 16f), nulls(0, 2));
+        PageIndex ymin = floatLeaf(rows(0, 8), mins(0f, 0f), maxs(0f, 0f), nulls(0, 2));
+        PageIndex ymax = floatLeaf(rows(0, 8), mins(1f, 1f), maxs(1f, 1f), nulls(0, 2));
 
-        List<PageUnit> units = CoveringPageBounds.unitsOf(xmin, xmax, ymin, ymax, ROWS);
+        List<PageUnit> units = CoveringPageBounds.unitsOf(xmin, xmax, ymin, ymax);
 
         assertThat(units.get(1).box())
                 .as("statistics are computed over the non-null values, hence a box proves one exists")
@@ -141,12 +137,12 @@ class CoveringPageBoundsTest {
 
     @Test
     void aNaNPageStatisticLeavesTheUnitWithoutABox() {
-        ColumnPageStats xmin = floatLeaf(rows(0, 8), mins(0f, 8f), maxs(7f, 15f), nulls(0, 0));
-        ColumnPageStats xmax = floatLeaf(rows(0, 8), mins(1f, 9f), maxs(6f, Float.NaN), nulls(0, 0));
-        ColumnPageStats ymin = floatLeaf(rows(0, 8), mins(0f, 0f), maxs(0f, 0f), nulls(0, 0));
-        ColumnPageStats ymax = floatLeaf(rows(0, 8), mins(1f, 1f), maxs(1f, 1f), nulls(0, 0));
+        PageIndex xmin = floatLeaf(rows(0, 8), mins(0f, 8f), maxs(7f, 15f), nulls(0, 0));
+        PageIndex xmax = floatLeaf(rows(0, 8), mins(1f, 9f), maxs(6f, Float.NaN), nulls(0, 0));
+        PageIndex ymin = floatLeaf(rows(0, 8), mins(0f, 0f), maxs(0f, 0f), nulls(0, 0));
+        PageIndex ymax = floatLeaf(rows(0, 8), mins(1f, 1f), maxs(1f, 1f), nulls(0, 0));
 
-        List<PageUnit> units = CoveringPageBounds.unitsOf(xmin, xmax, ymin, ymax, ROWS);
+        List<PageUnit> units = CoveringPageBounds.unitsOf(xmin, xmax, ymin, ymax);
 
         assertThat(units.get(0).box()).contains(Bbox.of2d(0, 0, 6, 1));
         assertThat(units.get(1).box())
@@ -156,12 +152,12 @@ class CoveringPageBoundsTest {
 
     @Test
     void aSpanWhoseMaximumFallsBelowItsMinimumLeavesTheUnitWithoutABox() {
-        ColumnPageStats xmin = floatLeaf(rows(0, 8), mins(0f, 8f), maxs(7f, 15f), nulls(0, 0));
-        ColumnPageStats xmax = floatLeaf(rows(0, 8), mins(1f, 1f), maxs(6f, 2f), nulls(0, 0));
-        ColumnPageStats ymin = floatLeaf(rows(0, 8), mins(0f, 0f), maxs(0f, 0f), nulls(0, 0));
-        ColumnPageStats ymax = floatLeaf(rows(0, 8), mins(1f, 1f), maxs(1f, 1f), nulls(0, 0));
+        PageIndex xmin = floatLeaf(rows(0, 8), mins(0f, 8f), maxs(7f, 15f), nulls(0, 0));
+        PageIndex xmax = floatLeaf(rows(0, 8), mins(1f, 1f), maxs(6f, 2f), nulls(0, 0));
+        PageIndex ymin = floatLeaf(rows(0, 8), mins(0f, 0f), maxs(0f, 0f), nulls(0, 0));
+        PageIndex ymax = floatLeaf(rows(0, 8), mins(1f, 1f), maxs(1f, 1f), nulls(0, 0));
 
-        List<PageUnit> units = CoveringPageBounds.unitsOf(xmin, xmax, ymin, ymax, ROWS);
+        List<PageUnit> units = CoveringPageBounds.unitsOf(xmin, xmax, ymin, ymax);
 
         assertThat(units.get(0).box()).contains(Bbox.of2d(0, 0, 6, 1));
         assertThat(units.get(1).box())
@@ -169,45 +165,73 @@ class CoveringPageBoundsTest {
                 .isEmpty();
     }
 
+    // A page whose minimum exceeds its maximum has bounds that cannot be trusted.
+    @Test
+    void invertedPageLeavesNoBox() {
+        PageIndex xmin = floatLeaf(rows(0, 8), mins(0f, 9f), maxs(7f, 8f), nulls(0, 0));
+        PageIndex xmax = floatLeaf(rows(0, 8), mins(1f, 9f), maxs(6f, 15f), nulls(0, 0));
+        PageIndex ymin = floatLeaf(rows(0, 8), mins(0f, 0f), maxs(0f, 0f), nulls(0, 0));
+        PageIndex ymax = floatLeaf(rows(0, 8), mins(1f, 1f), maxs(1f, 1f), nulls(0, 0));
+
+        List<PageUnit> units = CoveringPageBounds.unitsOf(xmin, xmax, ymin, ymax);
+
+        assertThat(units.get(0).box()).contains(Bbox.of2d(0, 0, 6, 1));
+        assertThat(units.get(1).box())
+                .as("the xmin page of rows 8-15 has minimum 9 and maximum 8")
+                .isEmpty();
+    }
+
+    // Bounds in an order not applied by this reader bound nothing.
+    @Test
+    void unorderedBoundsGiveNoUnits() {
+        ColumnIndex index = floatIndex(mins(0f, 8f), maxs(7f, 15f), nulls(0, 0));
+        PageIndex unordered =
+                TestPageIndexes.pages(ROWS, 0, 8).withStatistics(index, PrimitiveKind.FLOAT, Optional.empty(), false);
+        PageIndex other = floatLeaf(rows(0, 8), mins(0f, 0f), maxs(1f, 1f), nulls(0, 0));
+
+        assertThat(CoveringPageBounds.unitsOf(unordered, other, other, other)).isEmpty();
+    }
+
     @Test
     void anIndexWhosePageCountsDisagreeYieldsNoUnits() {
-        ColumnPageStats xmin = new ColumnPageStats(
-                PrimitiveKind.FLOAT,
-                new ColumnIndex(
-                        List.of(false),
-                        List.of(bytes(0f)),
-                        List.of(bytes(1f)),
-                        BoundaryOrder.UNORDERED,
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty()),
-                new OffsetIndex(List.of(new PageLocation(0, 10, 0), new PageLocation(10, 10, 8)), Optional.empty()));
-        ColumnPageStats other = floatLeaf(rows(0, 8), mins(0f, 0f), maxs(1f, 1f), nulls(0, 0));
+        ColumnIndex onePage = new ColumnIndex(
+                List.of(false),
+                List.of(bytes(0f)),
+                List.of(bytes(1f)),
+                BoundaryOrder.UNORDERED,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
+        PageIndex xmin =
+                TestPageIndexes.pages(ROWS, 0, 8).withStatistics(onePage, PrimitiveKind.FLOAT, Optional.empty(), true);
+        PageIndex other = floatLeaf(rows(0, 8), mins(0f, 0f), maxs(1f, 1f), nulls(0, 0));
 
-        assertThat(CoveringPageBounds.unitsOf(xmin, other, other, other, ROWS)).isEmpty();
+        assertThat(CoveringPageBounds.unitsOf(xmin, other, other, other)).isEmpty();
     }
 
     // --- fixture builders ---
 
-    private static ColumnPageStats floatLeaf(long[] firstRows, float[] mins, float[] maxs, long[] nullCounts) {
-        List<Boolean> nullPages = Collections.nCopies(firstRows.length, false);
-        return new ColumnPageStats(
-                PrimitiveKind.FLOAT,
-                new ColumnIndex(
-                        nullPages,
-                        segments(mins),
-                        segments(maxs),
-                        BoundaryOrder.UNORDERED,
-                        Optional.of(boxed(nullCounts)),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty()),
-                offsets(firstRows));
+    private static PageIndex floatLeaf(long[] firstRows, float[] mins, float[] maxs, long[] nullCounts) {
+        return floatPages(firstRows, floatIndex(mins, maxs, nullCounts));
+    }
+
+    /** A FLOAT column index with these page bounds and null counts, and no page marked as holding only nulls. */
+    private static ColumnIndex floatIndex(float[] mins, float[] maxs, long[] nullCounts) {
+        List<Boolean> nullPages = Collections.nCopies(mins.length, false);
+        return new ColumnIndex(
+                nullPages,
+                segments(mins),
+                segments(maxs),
+                BoundaryOrder.UNORDERED,
+                Optional.of(boxed(nullCounts)),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
     }
 
     /** A leaf whose page {@code nullPage} is entirely null: no min/max for that page. */
-    private static ColumnPageStats floatLeafWithNullPage(long[] firstRows, int nullPage) {
+    private static PageIndex floatLeafWithNullPage(long[] firstRows, int nullPage) {
         List<Boolean> nullPages = new ArrayList<>();
         List<MemorySegment> mins = new ArrayList<>();
         List<MemorySegment> maxs = new ArrayList<>();
@@ -217,26 +241,22 @@ class CoveringPageBoundsTest {
             mins.add(isNull ? MemorySegment.NULL : bytes(0f));
             maxs.add(isNull ? MemorySegment.NULL : bytes(1f));
         }
-        return new ColumnPageStats(
-                PrimitiveKind.FLOAT,
-                new ColumnIndex(
-                        nullPages,
-                        mins,
-                        maxs,
-                        BoundaryOrder.UNORDERED,
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty()),
-                offsets(firstRows));
+        ColumnIndex index = new ColumnIndex(
+                nullPages,
+                mins,
+                maxs,
+                BoundaryOrder.UNORDERED,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
+        return floatPages(firstRows, index);
     }
 
-    private static OffsetIndex offsets(long[] firstRows) {
-        List<PageLocation> locations = new ArrayList<>();
-        for (int i = 0; i < firstRows.length; i++) {
-            locations.add(new PageLocation(100L * i, 100, firstRows[i]));
-        }
-        return new OffsetIndex(locations, Optional.empty());
+    /** FLOAT pages of a row group of {@link #ROWS} rows starting at {@code firstRows}, described by {@code index}. */
+    private static PageIndex floatPages(long[] firstRows, ColumnIndex index) {
+        return TestPageIndexes.pages(ROWS, firstRows)
+                .withStatistics(index, PrimitiveKind.FLOAT, Optional.empty(), true);
     }
 
     private static List<MemorySegment> segments(float[] values) {

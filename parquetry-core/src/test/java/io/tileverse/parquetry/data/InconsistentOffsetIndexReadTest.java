@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.function.Function;
 import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 
@@ -56,11 +57,12 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * A file with an offset index naming its pages out of order, by their rows or by their bytes, reads as a file without
- * that index: a filter selects the rows of a full scan.
+ * A file with an offset index naming its pages out of order, by their rows or by their bytes, or placing a page outside
+ * its chunk, reads as a file without that index: a filter selects the rows of a full scan.
  *
  * <p>The file has 300 rows in three pages of 100: an integer column holding the row number. Each case overwrites its
- * offset index in place, with the first rows or the byte locations of the last two pages swapped.
+ * offset index in place. The first rows or the byte locations of the last two pages are swapped, or the first page is
+ * moved into the magic bytes at the start of the file.
  */
 class InconsistentOffsetIndexReadTest {
 
@@ -109,9 +111,11 @@ class InconsistentOffsetIndexReadTest {
     static Stream<Arguments> editsAndFilters() {
         UnaryOperator<OffsetIndex> firstRows = InconsistentOffsetIndexReadTest::withTheLastTwoFirstRowsSwapped;
         UnaryOperator<OffsetIndex> byteLocations = InconsistentOffsetIndexReadTest::withTheLastTwoByteLocationsSwapped;
+        UnaryOperator<OffsetIndex> outsideTheChunk = InconsistentOffsetIndexReadTest::withTheFirstPageBeforeTheChunk;
         Stream<Arguments> outOfRowOrder = filtersOver("first rows swapped", firstRows);
         Stream<Arguments> outOfFileOrder = filtersOver("byte locations swapped", byteLocations);
-        return Stream.concat(outOfRowOrder, outOfFileOrder);
+        Stream<Arguments> outOfChunk = filtersOver("first page before the chunk", outsideTheChunk);
+        return Stream.of(outOfRowOrder, outOfFileOrder, outOfChunk).flatMap(Function.identity());
     }
 
     private static Stream<Arguments> filtersOver(String edit, UnaryOperator<OffsetIndex> swap) {
@@ -199,6 +203,14 @@ class InconsistentOffsetIndexReadTest {
         PageLocation third = pages.get(2);
         pages.set(1, new PageLocation(third.offset(), third.compressedPageSize(), second.firstRowIndex()));
         pages.set(2, new PageLocation(second.offset(), second.compressedPageSize(), third.firstRowIndex()));
+        return new OffsetIndex(pages, index.unencodedByteArrayDataBytes());
+    }
+
+    /** Moves the first page to offset 0, inside the magic bytes, where it still ends before the second page starts. */
+    private static OffsetIndex withTheFirstPageBeforeTheChunk(OffsetIndex index) {
+        List<PageLocation> pages = new ArrayList<>(index.pageLocations());
+        PageLocation first = pages.get(0);
+        pages.set(0, new PageLocation(0L, first.compressedPageSize(), first.firstRowIndex()));
         return new OffsetIndex(pages, index.unencodedByteArrayDataBytes());
     }
 

@@ -35,12 +35,13 @@ import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.RowRanges.Range;
-import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.internal.filter.PageIndex;
+import io.tileverse.parquetry.internal.filter.TestPageIndexes;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -66,7 +67,7 @@ class MaskedColumnReadTest {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             FileMetaData footer = ParquetFormat.readFooter(source);
             RowGroup rowGroup = footer.rowGroups().get(0);
-            OffsetIndex offsetIndex = loadOffsetIndex(source, rowGroup);
+            PageIndex pageIndex = loadPageIndex(source, rowGroup);
 
             // Pages [0,1] [2,3] [4,5] [6,7]; keep rows 4..7 -> last two pages survive, first two are skipped.
             RowRanges surviving = new RowRanges(List.of(new Range(4, 7)));
@@ -94,7 +95,7 @@ class MaskedColumnReadTest {
                     fetcher.fetch(survivor, fetcher.planFor(survivor, Optional.empty()), BudgetReservation.NONE)) {
                 FetchedColumnChunk chunk = fetch.columns().get(0);
                 BatchColumnReader colReader =
-                        new BatchColumnReader(TestDecodeBuffers.ample(), chunk, leaf(schema), surviving, offsetIndex);
+                        new BatchColumnReader(TestDecodeBuffers.ample(), chunk, leaf(schema), surviving, pageIndex);
 
                 List<Integer> emitted = drainInts(colReader);
 
@@ -102,7 +103,7 @@ class MaskedColumnReadTest {
                 assertThat(colReader.decodedDataPageCount())
                         .as("only the two surviving pages are decoded")
                         .isEqualTo(2)
-                        .isLessThan(offsetIndex.pageLocations().size());
+                        .isLessThan(pageIndex.pageCount());
                 colReader.close();
             }
         }
@@ -122,12 +123,8 @@ class MaskedColumnReadTest {
         return out;
     }
 
-    private static OffsetIndex loadOffsetIndex(ByteRangeSource source, RowGroup rowGroup) {
-        ColumnChunk chunk = rowGroup.columns().get(0);
-        return ParquetFormat.readOffsetIndex(
-                source,
-                chunk.offsetIndexOffset().getAsLong(),
-                chunk.offsetIndexLength().getAsInt());
+    private static PageIndex loadPageIndex(ByteRangeSource source, RowGroup rowGroup) {
+        return TestPageIndexes.readDeclared(source, rowGroup, 0);
     }
 
     private Path writeEightRowsAcrossFourPages() throws Exception {

@@ -41,8 +41,8 @@ import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.RowRanges.Range;
 import io.tileverse.parquetry.format.FileMetaData;
-import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
@@ -193,12 +193,12 @@ class FetchSpanReservationTest {
     }
 
     private static RowMask maskOverFirstAndLastRows(RowGroupChunks chunks) {
-        Map<ColumnPath, OffsetIndex> offsetIndexes = new HashMap<>();
-        offsetIndexes.put(A, chunks.offsetIndex(A).orElseThrow());
-        offsetIndexes.put(B, chunks.offsetIndex(B).orElseThrow());
+        Map<ColumnPath, PageIndex> pageIndexes = new HashMap<>();
+        pageIndexes.put(A, chunks.pageLocations(A).orElseThrow());
+        pageIndexes.put(B, chunks.pageLocations(B).orElseThrow());
         RowRanges firstAndLast =
                 new RowRanges(List.of(new Range(0, 9), new Range(ROWS_PER_ROW_GROUP - 10, ROWS_PER_ROW_GROUP - 1)));
-        return new RowMask(firstAndLast, offsetIndexes);
+        return new RowMask(firstAndLast, pageIndexes);
     }
 
     // -------------------------------------------------------------------------

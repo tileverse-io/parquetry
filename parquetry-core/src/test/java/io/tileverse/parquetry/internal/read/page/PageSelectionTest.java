@@ -23,22 +23,19 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.RowRanges.Range;
-import io.tileverse.parquetry.format.PageLocation;
+import io.tileverse.parquetry.internal.filter.PageIndex;
+import io.tileverse.parquetry.internal.filter.TestPageIndexes;
 
 class PageSelectionTest {
 
     /** Four pages of two rows each: [0,1] [2,3] [4,5] [6,7]. */
-    private static final List<PageLocation> FOUR_PAGES = List.of(
-            new PageLocation(100, 10, 0),
-            new PageLocation(110, 10, 2),
-            new PageLocation(120, 10, 4),
-            new PageLocation(130, 10, 6));
+    private static final PageIndex FOUR_PAGES = TestPageIndexes.pages(8, 0, 2, 4, 6);
 
     @Test
     void marksOnlyPagesThatOverlapTheSurvivingRanges() {
         RowRanges surviving = new RowRanges(List.of(new Range(4, 7)));
 
-        PageSelection selection = PageSelection.forRanges(FOUR_PAGES, 8, surviving);
+        PageSelection selection = PageSelection.forColumn(FOUR_PAGES, surviving);
 
         assertThat(selection.pageCount()).isEqualTo(4);
         assertThat(selection.isSurviving(0)).isFalse();
@@ -50,7 +47,7 @@ class PageSelectionTest {
 
     @Test
     void exposesEachPagesFirstRowIndex() {
-        PageSelection selection = PageSelection.forRanges(FOUR_PAGES, 8, RowRanges.all(8));
+        PageSelection selection = PageSelection.forColumn(FOUR_PAGES, RowRanges.all(8));
 
         assertThat(selection.firstRowIndex(0)).isZero();
         assertThat(selection.firstRowIndex(2)).isEqualTo(4L);
@@ -62,7 +59,7 @@ class PageSelectionTest {
     void aRangeTouchingOneRowOfALastPageKeepsThatPage() {
         RowRanges surviving = new RowRanges(List.of(new Range(7, 7)));
 
-        PageSelection selection = PageSelection.forRanges(FOUR_PAGES, 8, surviving);
+        PageSelection selection = PageSelection.forColumn(FOUR_PAGES, surviving);
 
         assertThat(selection.isSurviving(3)).isTrue();
         assertThat(selection.survivingPageCount()).isEqualTo(1);

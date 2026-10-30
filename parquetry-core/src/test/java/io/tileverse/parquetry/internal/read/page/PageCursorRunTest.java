@@ -46,6 +46,8 @@ import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.internal.filter.PageIndex;
+import io.tileverse.parquetry.internal.filter.TestPageIndexes;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -75,7 +77,12 @@ class PageCursorRunTest {
 
     /** The chunk's data-page region as fetched whole, with the metadata a {@link PageCursor} walk needs. */
     private record ChunkFixture(
-            MemorySegment dataPages, OffsetIndex offsetIndex, long numValues, Compression codec, long regionOffset) {}
+            MemorySegment dataPages,
+            OffsetIndex offsetIndex,
+            PageIndex pages,
+            long numValues,
+            Compression codec,
+            long regionOffset) {}
 
     @Test
     void runWalkMatchesSingleSegmentWalkAndSeedsOrdinals() throws IOException {
@@ -211,7 +218,7 @@ class PageCursorRunTest {
         long numValues = fixture.numValues();
         RowRanges surviving =
                 new RowRanges(List.of(new RowRanges.Range(0, 9), new RowRanges.Range(numValues - 10, numValues - 1)));
-        return PageSelection.forColumn(fixture.offsetIndex(), numValues, surviving);
+        return PageSelection.forColumn(fixture.pages(), surviving);
     }
 
     /**
@@ -228,7 +235,7 @@ class PageCursorRunTest {
         long pairLastRow = locations.get(4).firstRowIndex() - 1;
         RowRanges surviving = new RowRanges(
                 List.of(new RowRanges.Range(0, firstPageLastRow), new RowRanges.Range(pairFirstRow, pairLastRow)));
-        return PageSelection.forColumn(fixture.offsetIndex(), fixture.numValues(), surviving);
+        return PageSelection.forColumn(fixture.pages(), surviving);
     }
 
     private static List<Integer> survivingOrdinals(PageSelection selection) {
@@ -279,8 +286,14 @@ class PageCursorRunTest {
         assertThat(metadata.codec())
                 .as("the fixture is written uncompressed; the walk decompresses accordingly")
                 .isEqualTo(CompressionCodec.UNCOMPRESSED);
+        PageIndex pages = TestPageIndexes.readDeclared(source, rowGroup, 0);
         return new ChunkFixture(
-                dataPages.asReadOnly(), offsetIndex, metadata.numValues(), Compression.uncompressed(), regionOffset);
+                dataPages.asReadOnly(),
+                offsetIndex,
+                pages,
+                metadata.numValues(),
+                Compression.uncompressed(),
+                regionOffset);
     }
 
     private static OffsetIndex readOffsetIndex(ByteRangeSource source, ColumnChunk chunk) {

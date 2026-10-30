@@ -45,8 +45,8 @@ import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.MalformedFileException;
-import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormatException;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.read.page.DecodedPage;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.internal.read.page.FixedWidthValues;
@@ -212,8 +212,8 @@ final class BatchColumnReader {
             @NonNull FetchedColumnChunk chunk,
             @NonNull SchemaNode.Primitive leaf,
             RowRanges survivingRows,
-            OffsetIndex offsetIndex) {
-        this(decodeBufferAllocator, chunk, leaf, survivingRows, offsetIndex, ValueDecode.EAGER);
+            PageIndex pageIndex) {
+        this(decodeBufferAllocator, chunk, leaf, survivingRows, pageIndex, ValueDecode.EAGER);
     }
 
     BatchColumnReader(
@@ -221,7 +221,7 @@ final class BatchColumnReader {
             @NonNull FetchedColumnChunk chunk,
             @NonNull SchemaNode.Primitive leaf,
             RowRanges survivingRows,
-            OffsetIndex offsetIndex,
+            PageIndex pageIndex,
             @NonNull ValueDecode valueDecode) {
         this.decodeBufferAllocator = decodeBufferAllocator;
         this.repLevelScratch = new LevelScratch(decodeBufferAllocator);
@@ -237,10 +237,10 @@ final class BatchColumnReader {
         this.totalValues = chunk.numValues();
         this.dictionary = chunk.dictionary();
         if (survivingRows != null) {
-            requireOffsetIndexForRowMask(chunk, offsetIndex);
+            requirePageIndexForRowMask(chunk, pageIndex);
             requireFlatColumnForWindowedMask(chunk, valueDecode);
             this.survivingRows = survivingRows;
-            PageSelection selection = PageSelection.forColumn(offsetIndex, totalValues, survivingRows);
+            PageSelection selection = PageSelection.forColumn(pageIndex, survivingRows);
             this.pageCursor = new PageCursor(chunk.dataPageRuns(), columnPath, selection);
         } else {
             this.survivingRows = null;
@@ -249,14 +249,14 @@ final class BatchColumnReader {
     }
 
     /**
-     * Fails a masked read of a column with no offset index. A row mask states row-group row indexes, and every masked
-     * lane places them in the column's pages through the offset index; without one the reader has no way to tell which
-     * of a page's values the mask keeps.
+     * Fails a masked read of a column with no page index. A row mask states row-group row indexes, and each masked lane
+     * places them in the column's pages through the page index. Without one the reader has no way to tell which of a
+     * page's values the mask keeps.
      */
-    private static void requireOffsetIndexForRowMask(FetchedColumnChunk chunk, OffsetIndex offsetIndex) {
-        if (offsetIndex == null) {
+    private static void requirePageIndexForRowMask(FetchedColumnChunk chunk, PageIndex pageIndex) {
+        if (pageIndex == null) {
             throw new IllegalArgumentException("Column " + chunk.path().dot()
-                    + " was given a row mask without an offset index; a row mask requires the column's offset index");
+                    + " was given a row mask without a page index; a row mask requires the column's page index");
         }
     }
 

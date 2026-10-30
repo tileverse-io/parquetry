@@ -36,12 +36,13 @@ import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.RowRanges.Range;
-import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.internal.filter.PageIndex;
+import io.tileverse.parquetry.internal.filter.TestPageIndexes;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -187,7 +188,7 @@ class MaskedPageSkipParityTest {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             FileMetaData footer = ParquetFormat.readFooter(source);
             RowGroup rowGroup = footer.rowGroups().get(0);
-            OffsetIndex offsetIndex = loadOffsetIndex(source, rowGroup);
+            PageIndex pageIndex = loadPageIndex(source, rowGroup);
             RowGroupChunks chunks = TestRowGroupChunks.of(footer, 0, schema, indexLoader(source));
             RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, SegmentPool.getDefault());
             RowGroupSurvivor survivor = new RowGroupSurvivor(chunks, Optional.of(mask), true);
@@ -195,7 +196,7 @@ class MaskedPageSkipParityTest {
                     fetcher.fetch(survivor, fetcher.planFor(survivor, Optional.empty()), BudgetReservation.NONE)) {
                 FetchedColumnChunk chunk = fetch.columns().get(0);
                 BatchColumnReader reader = new BatchColumnReader(
-                        TestDecodeBuffers.ample(), chunk, leaf(schema), mask, offsetIndex, valueDecode);
+                        TestDecodeBuffers.ample(), chunk, leaf(schema), mask, pageIndex, valueDecode);
                 try {
                     return drain.over(reader);
                 } finally {
@@ -276,12 +277,8 @@ class MaskedPageSkipParityTest {
                 .build();
     }
 
-    private static OffsetIndex loadOffsetIndex(ByteRangeSource source, RowGroup rowGroup) {
-        ColumnChunk chunk = rowGroup.columns().get(0);
-        return ParquetFormat.readOffsetIndex(
-                source,
-                chunk.offsetIndexOffset().getAsLong(),
-                chunk.offsetIndexLength().getAsInt());
+    private static PageIndex loadPageIndex(ByteRangeSource source, RowGroup rowGroup) {
+        return TestPageIndexes.readDeclared(source, rowGroup, 0);
     }
 
     private static SchemaNode.Primitive leaf(ParquetSchema schema) {

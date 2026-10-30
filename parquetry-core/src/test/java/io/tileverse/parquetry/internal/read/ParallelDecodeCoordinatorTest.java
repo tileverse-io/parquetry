@@ -58,6 +58,7 @@ import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -578,9 +579,8 @@ class ParallelDecodeCoordinatorTest {
         /** The byte span of row group {@code index} from its column's second data page to the end of its chunk. */
         ByteSpan pagesAfterTheFirst(List<RowGroupSurvivor> survivors, int index) {
             ColumnPath leaf = schema.leafColumns().get(0);
-            OffsetIndex offsetIndex =
-                    survivors.get(index).chunks().offsetIndex(leaf).orElseThrow();
-            long secondPageOffset = offsetIndex.pageLocations().get(1).offset();
+            PageIndex pages = survivors.get(index).chunks().pageLocations(leaf).orElseThrow();
+            long secondPageOffset = pages.locations().get(1).offset();
             return new ByteSpan(secondPageOffset, columnChunkSpan(index).end());
         }
 

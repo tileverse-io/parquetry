@@ -15,11 +15,9 @@
  */
 package io.tileverse.parquetry.internal.filter;
 
-import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.OptionalLong;
 
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.RowRanges;
@@ -27,14 +25,12 @@ import io.tileverse.parquetry.filter.RowRanges.Range;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.explain.Tier;
-import io.tileverse.parquetry.format.ColumnIndex;
-import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.internal.filter.LeafVerdict.Matches;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
- * Tier-3 (COLUMN_INDEX) evaluator. Uses per-page min/max, null markers and NaN counts from {@code ColumnIndex} together
- * with the page row offsets from {@code OffsetIndex} to produce a {@link RowRanges} of surviving pages.
+ * Tier-3 (COLUMN_INDEX) evaluator. Judges the pages of each column from its {@link PageIndex}, and produces the
+ * {@link RowRanges} of the surviving pages.
  *
  * <p>Decision semantics:
  *
@@ -60,11 +56,11 @@ final class ColumnIndexEvaluator {
      * Evaluates {@code predicate} against per-page indexes for the columns it references.
      *
      * @param predicate the normalized predicate
-     * @param columns lookup from column path to its page-level stats
-     * @param rowGroupRowCount total rows in the row group; used to size the last page
+     * @param columns lookup from column path to its page index
+     * @param rowGroupRowCount total rows in the row group
      */
     public static PruningDecision evaluate(
-            Predicate predicate, FilterPipeline.ColumnPageStatsLookup columns, long rowGroupRowCount) {
+            Predicate predicate, FilterPipeline.PageIndexLookup columns, long rowGroupRowCount) {
         Optional<Predicate> prunable = PagePrunable.part(predicate);
         if (prunable.isEmpty()) {
             return new PruningDecision.NotApplied(TIER, NO_APPLICABLE_INDEX);
@@ -91,21 +87,21 @@ final class ColumnIndexEvaluator {
      * when the page statistics of its columns cannot judge it, and the tier does not apply.
      */
     private static Optional<RowRanges> matchRanges(
-            Predicate prunable, FilterPipeline.ColumnPageStatsLookup columns, long rowGroupRowCount) {
+            Predicate prunable, FilterPipeline.PageIndexLookup columns, long rowGroupRowCount) {
         return switch (prunable) {
             case Predicate.Always(boolean value) ->
                 Optional.of(value ? RowRanges.all(rowGroupRowCount) : RowRanges.empty());
             case Predicate.And(List<Predicate> children) -> combineAnd(children, columns, rowGroupRowCount);
             case Predicate.Or(List<Predicate> children) -> combineOr(children, columns, rowGroupRowCount);
-            case Predicate.Eq(ColumnPath col, Value _) -> leafRanges(prunable, col, columns, rowGroupRowCount);
-            case Predicate.NotEq(ColumnPath col, Value _) -> leafRanges(prunable, col, columns, rowGroupRowCount);
-            case Predicate.Lt(ColumnPath col, Value _) -> leafRanges(prunable, col, columns, rowGroupRowCount);
-            case Predicate.LtEq(ColumnPath col, Value _) -> leafRanges(prunable, col, columns, rowGroupRowCount);
-            case Predicate.Gt(ColumnPath col, Value _) -> leafRanges(prunable, col, columns, rowGroupRowCount);
-            case Predicate.GtEq(ColumnPath col, Value _) -> leafRanges(prunable, col, columns, rowGroupRowCount);
-            case Predicate.In(ColumnPath col, List<Value> _) -> leafRanges(prunable, col, columns, rowGroupRowCount);
-            case Predicate.IsNull(ColumnPath col) -> leafRanges(prunable, col, columns, rowGroupRowCount);
-            case Predicate.IsNotNull(ColumnPath col) -> leafRanges(prunable, col, columns, rowGroupRowCount);
+            case Predicate.Eq(ColumnPath col, Value _) -> leafRanges(prunable, col, columns);
+            case Predicate.NotEq(ColumnPath col, Value _) -> leafRanges(prunable, col, columns);
+            case Predicate.Lt(ColumnPath col, Value _) -> leafRanges(prunable, col, columns);
+            case Predicate.LtEq(ColumnPath col, Value _) -> leafRanges(prunable, col, columns);
+            case Predicate.Gt(ColumnPath col, Value _) -> leafRanges(prunable, col, columns);
+            case Predicate.GtEq(ColumnPath col, Value _) -> leafRanges(prunable, col, columns);
+            case Predicate.In(ColumnPath col, List<Value> _) -> leafRanges(prunable, col, columns);
+            case Predicate.IsNull(ColumnPath col) -> leafRanges(prunable, col, columns);
+            case Predicate.IsNotNull(ColumnPath col) -> leafRanges(prunable, col, columns);
             // Out of reach of the page tier, and left out by PagePrunable.part.
             case Predicate.Not _,
                     Predicate.Spatial _,
@@ -116,7 +112,7 @@ final class ColumnIndexEvaluator {
     }
 
     private static Optional<RowRanges> combineAnd(
-            List<Predicate> children, FilterPipeline.ColumnPageStatsLookup cols, long rowGroupRowCount) {
+            List<Predicate> children, FilterPipeline.PageIndexLookup cols, long rowGroupRowCount) {
         RowRanges acc = RowRanges.all(rowGroupRowCount);
         boolean anyApplied = false;
         for (Predicate child : children) {
@@ -133,7 +129,7 @@ final class ColumnIndexEvaluator {
     }
 
     private static Optional<RowRanges> combineOr(
-            List<Predicate> children, FilterPipeline.ColumnPageStatsLookup cols, long rowGroupRowCount) {
+            List<Predicate> children, FilterPipeline.PageIndexLookup cols, long rowGroupRowCount) {
         RowRanges acc = RowRanges.empty();
         for (Predicate child : children) {
             Optional<RowRanges> childRanges = matchRanges(child, cols, rowGroupRowCount);
@@ -147,36 +143,26 @@ final class ColumnIndexEvaluator {
     }
 
     /**
-     * The rows of the pages that may hold a row matching {@code leaf}. Each page is judged as a unit, and a page
-     * without rows is skipped. The result is empty when no page gets a verdict. The column then has no page statistics,
-     * or its pages cannot judge the leaf.
+     * The rows of the pages that may hold a row matching {@code leaf}, each page judged as a unit. The result is empty
+     * when no page gets a verdict. The column then has no page statistics, or its pages cannot judge the leaf.
      */
-    private static Optional<RowRanges> leafRanges(
-            Predicate leaf, ColumnPath col, FilterPipeline.ColumnPageStatsLookup cols, long rowGroupRowCount) {
-        Optional<FilterPipeline.ColumnPageStats> found = cols.get(col);
+    private static Optional<RowRanges> leafRanges(Predicate leaf, ColumnPath col, FilterPipeline.PageIndexLookup cols) {
+        Optional<PageIndex> found = cols.get(col).filter(PageIndex::hasStatistics);
         if (found.isEmpty()) {
             return Optional.empty();
         }
-        FilterPipeline.ColumnPageStats stats = found.orElseThrow();
-        List<PageLocation> pages = stats.offsetIndex().pageLocations();
-        if (stats.columnIndex().minValues().size() != pages.size()) {
-            return Optional.empty(); // index inconsistency
-        }
-        boolean readBounds = !testsNulls(leaf);
+        PageIndex pages = found.orElseThrow();
+        boolean testsNulls = testsNulls(leaf);
         List<Range> surviving = new ArrayList<>();
         boolean judged = false;
-        for (int page = 0; page < pages.size(); page++) {
-            long rows = rowsOfPage(pages, page, rowGroupRowCount);
-            if (rows <= 0) {
-                continue;
-            }
-            ColumnSummary summary = pageSummary(stats, page, rows, readBounds);
+        for (int page = 0; page < pages.pageCount(); page++) {
+            ColumnSummary summary = testsNulls ? pages.nullStatistics(page) : pages.statistics(page);
             Matches matches = LeafVerdicts.of(leaf, summary).matches();
             if (matches != Matches.UNKNOWN) {
                 judged = true;
             }
             if (matches != Matches.NONE) {
-                surviving.add(pageRange(pages, page, rowGroupRowCount));
+                surviving.add(new Range(pages.firstRow(page), pages.lastRow(page)));
             }
         }
         if (!judged) {
@@ -188,75 +174,6 @@ final class ColumnIndexEvaluator {
     /** Whether {@code leaf} tests the nulls of its column, and needs the null counts of the pages alone. */
     private static boolean testsNulls(Predicate leaf) {
         return leaf instanceof Predicate.IsNull || leaf instanceof Predicate.IsNotNull;
-    }
-
-    /**
-     * The statistics of page {@code page} as a unit of {@code rows} rows, holding one value per row. A page marked as
-     * holding only nulls counts each of its rows as null, and its bounds are not read. The bounds of the other pages
-     * are read only when {@code readBounds} is on.
-     */
-    private static ColumnSummary pageSummary(
-            FilterPipeline.ColumnPageStats stats, int page, long rows, boolean readBounds) {
-        ColumnIndex index = stats.columnIndex();
-        int pageCount = index.minValues().size();
-        OptionalLong values = OptionalLong.of(rows);
-        if (Boolean.TRUE.equals(index.nullPages().get(page))) {
-            return new ColumnSummary(
-                    stats.kind(), Optional.empty(), Optional.empty(), values, values, NaNCells.POSSIBLE);
-        }
-        OptionalLong nullCount = trustedNullCount(countOfPage(index.nullCounts(), pageCount, page), rows);
-        OptionalLong nanCount = countOfPage(index.nanCounts(), pageCount, page);
-        Optional<Value> min = readBounds ? pageBound(stats, index.minValues().get(page)) : Optional.empty();
-        Optional<Value> max = readBounds ? pageBound(stats, index.maxValues().get(page)) : Optional.empty();
-        NaNCells counted = NaNCells.ofPageCounts(nanCount, nullCount, rows);
-        return ColumnSummary.of(stats.kind(), min, max, nullCount, values, counted);
-    }
-
-    /**
-     * The null count of a page not marked as holding only nulls, or empty when it contradicts the mark. Such a page
-     * holds a value, and fewer nulls than rows.
-     */
-    private static OptionalLong trustedNullCount(OptionalLong recorded, long rows) {
-        if (recorded.isPresent() && recorded.getAsLong() >= rows) {
-            return OptionalLong.empty();
-        }
-        return recorded;
-    }
-
-    /**
-     * A bound of a page decoded to a value. It is empty when the bound does not decode, or when the bounds follow an
-     * order not applied by this reader.
-     */
-    private static Optional<Value> pageBound(FilterPipeline.ColumnPageStats stats, MemorySegment bound) {
-        if (!stats.boundsOrdered()) {
-            return Optional.empty();
-        }
-        return StatisticsValueDecoder.decode(stats.kind(), stats.logicalType(), bound);
-    }
-
-    /**
-     * The count of page {@code i} in a per-page list of the index, usable only when the list has one count per page.
-     */
-    private static OptionalLong countOfPage(Optional<List<Long>> perPageCounts, int pageCount, int i) {
-        Optional<List<Long>> counts = perPageCounts.filter(list -> list.size() == pageCount);
-        if (counts.isEmpty()) {
-            return OptionalLong.empty();
-        }
-        return OptionalLong.of(counts.orElseThrow().get(i));
-    }
-
-    /** The number of rows of page {@code i}: up to the first row of the next page, or to the end of the row group. */
-    private static long rowsOfPage(List<PageLocation> pages, int i, long rowGroupRowCount) {
-        long first = pages.get(i).firstRowIndex();
-        boolean lastPage = i + 1 == pages.size();
-        long end = lastPage ? rowGroupRowCount : pages.get(i + 1).firstRowIndex();
-        return end - first;
-    }
-
-    private static Range pageRange(List<PageLocation> pages, int i, long totalRows) {
-        long first = pages.get(i).firstRowIndex();
-        long last = (i + 1 < pages.size()) ? pages.get(i + 1).firstRowIndex() - 1 : totalRows - 1;
-        return new Range(first, last);
     }
 
     /** Returns the union of two sorted, disjoint row range sets. */

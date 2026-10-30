@@ -42,6 +42,7 @@ import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.footer.CompactFooter;
 import io.tileverse.parquetry.internal.footer.LeafIndex;
@@ -81,14 +82,14 @@ class IndexSectionBatchReadTest {
     @Test
     void warmingThreeOffsetIndexesEntersTheSourceOnce() throws Exception {
         try (Fixture fixture = openThreeColumnFile()) {
-            fixture.chunks().warmOffsetIndexes(List.of(A, B, C));
+            fixture.chunks().warmPageLocations(List.of(A, B, C));
 
             assertThat(fixture.source().sourceCalls())
                     .as("three offset indexes known together are one call")
                     .isEqualTo(1);
-            assertThat(fixture.chunks().offsetIndex(A)).isPresent();
-            assertThat(fixture.chunks().offsetIndex(B)).isPresent();
-            assertThat(fixture.chunks().offsetIndex(C)).isPresent();
+            assertThat(fixture.chunks().pageLocations(A)).isPresent();
+            assertThat(fixture.chunks().pageLocations(B)).isPresent();
+            assertThat(fixture.chunks().pageLocations(C)).isPresent();
             assertThat(fixture.source().sourceCalls())
                     .as("a warmed section is decoded from bytes already in hand")
                     .isEqualTo(1);
@@ -98,38 +99,61 @@ class IndexSectionBatchReadTest {
     @Test
     void aMemoizedSectionIsNotWarmedAgain() throws Exception {
         try (Fixture fixture = openThreeColumnFile()) {
-            assertThat(fixture.chunks().offsetIndex(A)).isPresent();
+            assertThat(fixture.chunks().pageLocations(A)).isPresent();
             assertThat(fixture.source().sourceCalls()).isEqualTo(1);
 
-            fixture.chunks().warmOffsetIndexes(List.of(A, B, C));
+            fixture.chunks().warmPageLocations(List.of(A, B, C));
 
             assertThat(fixture.source().sourceCalls())
                     .as("the warm covers the two paths with no memo entry")
                     .isEqualTo(2);
-            assertThat(fixture.chunks().offsetIndex(B)).isPresent();
-            assertThat(fixture.chunks().offsetIndex(C)).isPresent();
+            assertThat(fixture.chunks().pageLocations(B)).isPresent();
+            assertThat(fixture.chunks().pageLocations(C)).isPresent();
             assertThat(fixture.source().sourceCalls()).isEqualTo(2);
         }
     }
 
     @Test
-    void warmingPageStatsEntersTheSourceOnceForBothSectionsOfEveryColumn() throws Exception {
+    void pageIndexWarmIsOneCall() throws Exception {
         try (Fixture fixture = openThreeColumnFile()) {
-            fixture.chunks().warmPageStats(List.of(A, B));
+            fixture.chunks().warmPageIndexes(List.of(A, B));
 
             assertThat(fixture.source().sourceCalls())
                     .as("four sections across two columns are one call")
                     .isEqualTo(1);
-            assertThat(fixture.chunks().pageStats(A)).isPresent();
-            assertThat(fixture.chunks().pageStats(B)).isPresent();
+            assertThat(fixture.chunks().pageIndex(A).filter(PageIndex::hasStatistics))
+                    .isPresent();
+            assertThat(fixture.chunks().pageIndex(B).filter(PageIndex::hasStatistics))
+                    .isPresent();
             assertThat(fixture.source().sourceCalls()).isEqualTo(1);
+        }
+    }
+
+    // The offset index of A is already held: the warm adds the column index of A and both sections of B.
+    @Test
+    void pageIndexWarmSkipsHeldPages() throws Exception {
+        try (Fixture fixture = openThreeColumnFile()) {
+            assertThat(fixture.chunks().pageLocations(A)).isPresent();
+
+            fixture.chunks().warmPageIndexes(List.of(A, B));
+
+            assertThat(fixture.accumulator().snapshot().requestCount())
+                    .as("the offset index of A, then three sections")
+                    .isEqualTo(4);
+            assertThat(fixture.chunks().pageIndex(A).filter(PageIndex::hasStatistics))
+                    .isPresent();
+            assertThat(fixture.chunks().pageIndex(B).filter(PageIndex::hasStatistics))
+                    .isPresent();
+            assertThat(fixture.source().sourceCalls())
+                    .as("one call for the offset index of A, one for the warm")
+                    .isEqualTo(2);
         }
     }
 
     @Test
     void aWarmedBatchReportsOneCallAndWhatItCost() throws Exception {
         try (Fixture fixture = openThreeColumnFile()) {
-            fixture.chunks().warmPageStats(List.of(A, B));
+            fixture.chunks().warmPageIndexes(List.of(A, B));
 
             FetchStats stats = fixture.accumulator().snapshot();
             assertThat(stats.requestCount())
@@ -155,7 +179,7 @@ class IndexSectionBatchReadTest {
     @Test
     void aColumnAbsentFromTheRowGroupIsWarmedWithNoRead() throws Exception {
         try (Fixture fixture = openThreeColumnFile()) {
-            fixture.chunks().warmPageStats(List.of(ABSENT));
+            fixture.chunks().warmPageIndexes(List.of(ABSENT));
 
             assertThat(fixture.source().sourceCalls())
                     .as("a path with no chunk contributes no range")
@@ -230,9 +254,9 @@ class IndexSectionBatchReadTest {
     @Test
     void aFailedWarmStillLeavesEverySectionReadable() throws Exception {
         try (Fixture fixture = openThreeColumnFile(FailingPrefetch::new)) {
-            fixture.chunks().warmOffsetIndexes(List.of(A, B, C));
+            fixture.chunks().warmPageLocations(List.of(A, B, C));
 
-            assertThat(fixture.chunks().offsetIndex(A))
+            assertThat(fixture.chunks().pageLocations(A))
                     .as("a warm that fails reads nothing; the section still loads on its own lookup")
                     .isPresent();
         }

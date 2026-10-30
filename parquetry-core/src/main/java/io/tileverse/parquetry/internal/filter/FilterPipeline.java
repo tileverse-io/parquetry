@@ -33,9 +33,7 @@ import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
 import io.tileverse.parquetry.filter.explain.RowGroupPlan;
 import io.tileverse.parquetry.filter.explain.Tier;
 import io.tileverse.parquetry.filter.explain.TierReasons;
-import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.LogicalType;
-import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.filter.spatial.EmptyBoundsSource;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
@@ -61,26 +59,25 @@ public final class FilterPipeline {
      * @param stats lookup for the STATS tier: the decoded statistics of each column (min/max, null and value counts)
      * @param spatialBounds source for the SPATIAL tier (per-row-group geometry bounding boxes from native GeoParquet
      *     2.0 statistics); {@link EmptyBoundsSource#INSTANCE} when the file has no usable geometry bounds
-     * @param pageIndexes lookup for the COLUMN_INDEX tier (per-page min/max + offsets)
+     * @param pageIndexes lookup for the COLUMN_INDEX tier: the page index of each column, with its statistics
      * @param blooms lookup for the BLOOM_FILTER tier; returns the column's loaded split-block bloom filter when one was
      *     written
      * @param projectedCompressedBytes total compressed byte size of this row group's projected leaf column chunks; the
      *     pipeline sums it across non-eliminated row groups into {@link ExplainPlan#estimatedBytesRead()}. A group
      *     whose outcome is {@link RowGroupOutcome#ELIMINATED} contributes nothing.
+     * @param rowPositionBase the position in the file of the first row of the row group
+     * @param rowPositionPages the pages of any column of the row group, used by the row-position delete tier to find
+     *     where pages start; empty when the read leaves that tier off or no column has a page index
      */
     public record RowGroupInputs(
             long rowCount,
             StatsEvaluator.TypedColumns stats,
             SpatialBoundsSource spatialBounds,
-            ColumnPageStatsLookup pageIndexes,
+            PageIndexLookup pageIndexes,
             BloomFilterLookup blooms,
             long projectedCompressedBytes,
             long rowPositionBase,
-            List<Long> rowPositionPageFirstRows) {
-
-        public RowGroupInputs {
-            rowPositionPageFirstRows = List.copyOf(rowPositionPageFirstRows);
-        }
+            Optional<PageIndex> rowPositionPages) {
 
         /**
          * Backwards-compatible three-arg constructor for callers that don't yet wire spatial bounds or a bloom-filter
@@ -89,8 +86,16 @@ public final class FilterPipeline {
          * projected compressed bytes to zero (callers that want a byte estimate use the full constructor). The
          * row-position pruning inputs default to inert (zero base offset, no page boundaries).
          */
-        public RowGroupInputs(long rowCount, StatsEvaluator.TypedColumns stats, ColumnPageStatsLookup pageIndexes) {
-            this(rowCount, stats, EmptyBoundsSource.INSTANCE, pageIndexes, emptyBloomLookup(), 0L, 0L, List.of());
+        public RowGroupInputs(long rowCount, StatsEvaluator.TypedColumns stats, PageIndexLookup pageIndexes) {
+            this(
+                    rowCount,
+                    stats,
+                    EmptyBoundsSource.INSTANCE,
+                    pageIndexes,
+                    emptyBloomLookup(),
+                    0L,
+                    0L,
+                    Optional.empty());
         }
     }
 
@@ -117,36 +122,6 @@ public final class FilterPipeline {
             NaNCells nans) {}
 
     /**
-     * Per-column input to the COLUMN_INDEX-tier evaluator: the column's primitive kind plus its loaded
-     * {@link ColumnIndex} (page min/max + null markers), {@link OffsetIndex} (page row offsets), and an optional
-     * logical type annotation used for typed decoding of per-page min/max bounds.
-     *
-     * @param boundsOrdered whether the page min/max follow an order applied by this reader. When false the tier ignores
-     *     the bounds, and judges the pages from their null marks and counts alone.
-     */
-    public record ColumnPageStats(
-            PrimitiveKind kind,
-            ColumnIndex columnIndex,
-            OffsetIndex offsetIndex,
-            Optional<LogicalType> logicalType,
-            boolean boundsOrdered) {
-
-        /** Constructor for page bounds in the type-defined order of the column. */
-        public ColumnPageStats(
-                PrimitiveKind kind,
-                ColumnIndex columnIndex,
-                OffsetIndex offsetIndex,
-                Optional<LogicalType> logicalType) {
-            this(kind, columnIndex, offsetIndex, logicalType, true);
-        }
-
-        /** Back-compat constructor for call sites that do not pass a logical type. */
-        public ColumnPageStats(PrimitiveKind kind, ColumnIndex columnIndex, OffsetIndex offsetIndex) {
-            this(kind, columnIndex, offsetIndex, Optional.empty());
-        }
-    }
-
-    /**
      * Per-column input to the BLOOM_FILTER-tier evaluator: the column's primitive kind (drives the Parquet
      * plain-encoding hash) plus its loaded {@link SplitBlockBloomFilter}.
      */
@@ -169,13 +144,13 @@ public final class FilterPipeline {
     }
 
     /**
-     * Resolves per-column {@link ColumnPageStats} (ColumnIndex + OffsetIndex) for a given column path within a row
-     * group. Returns empty when the column has no index sections.
+     * Resolves the {@link PageIndex} of a column within a row group, with the statistics of its pages. Returns empty
+     * when the column has no page index.
      */
     @FunctionalInterface
-    public interface ColumnPageStatsLookup {
+    public interface PageIndexLookup {
 
-        Optional<ColumnPageStats> get(ColumnPath path);
+        Optional<PageIndex> get(ColumnPath path);
 
         /**
          * Reads the page statistics of every path in {@code paths} together, ahead of the {@link #get} calls that ask
@@ -362,8 +337,7 @@ public final class FilterPipeline {
         PruningDecision pageDecision = decide(
                 Tier.COLUMN_INDEX,
                 disabledTiers,
-                () -> RowPositionEvaluator.evaluatePages(
-                        normalized, base, rowCount, inputs.rowPositionPageFirstRows()));
+                () -> RowPositionEvaluator.evaluatePages(normalized, base, rowCount, inputs.rowPositionPages()));
         tierDecisions.add(pageDecision);
         if (pageDecision instanceof PruningDecision.Eliminated) {
             return new RowGroupPlan(

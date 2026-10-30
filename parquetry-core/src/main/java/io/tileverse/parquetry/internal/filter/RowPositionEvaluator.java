@@ -17,6 +17,7 @@ package io.tileverse.parquetry.internal.filter;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.RowPositionSet;
@@ -39,8 +40,7 @@ import io.tileverse.parquetry.filter.explain.Tier;
  * <p>The deleted positions are absolute, zero-based file row indexes; the base offset is what turns a row-group- or
  * page-relative span into the absolute range the {@link RowPositionSet} understands. The evaluator never consults
  * column statistics: {@code $pos} has no physical Parquet leaf, hence no min/max and no column index. Its page
- * boundaries come from the offset index row counts of a real column in the same row group, passed in as page first-row
- * indexes.
+ * boundaries come from the page index of a real column in the same row group.
  *
  * <p>Scope: this range pruning runs only when the normalized predicate is a <em>bare</em>
  * {@link Predicate.RowIndexExcluded}. That covers a full-table scan with deletes (an {@code And(ALWAYS_TRUE, deletes)}
@@ -89,44 +89,35 @@ final class RowPositionEvaluator {
      * @param predicate the normalized predicate
      * @param base the row group's absolute file row offset
      * @param rowCount the number of rows in the row group
-     * @param pageFirstRows the row-group-relative first-row index of each page, ascending, the first being zero
+     * @param pages the pages of any column of the row group, empty when no column has a page index
      */
-    static PruningDecision evaluatePages(Predicate predicate, long base, long rowCount, List<Long> pageFirstRows) {
+    static PruningDecision evaluatePages(Predicate predicate, long base, long rowCount, Optional<PageIndex> pages) {
         if (!(predicate instanceof Predicate.RowIndexExcluded leaf)) {
             return new PruningDecision.NotApplied(Tier.COLUMN_INDEX, "predicate is not a row-position delete");
         }
-        if (pageFirstRows.isEmpty()) {
+        if (pages.isEmpty()) {
             return new PruningDecision.NotApplied(Tier.COLUMN_INDEX, "no page boundaries for the row-position column");
         }
         RowPositionSet deleted = leaf.deleted();
-        List<Range> surviving = survivingPageRanges(deleted, base, rowCount, pageFirstRows);
+        List<Range> surviving = survivingPageRanges(deleted, base, pages.orElseThrow());
         return pageDecision(surviving, rowCount);
     }
 
-    private static List<Range> survivingPageRanges(
-            RowPositionSet deleted, long base, long rowCount, List<Long> pageFirstRows) {
-        int pageCount = pageFirstRows.size();
-        List<Range> surviving = new ArrayList<>(pageCount);
-        for (int page = 0; page < pageCount; page++) {
-            long pageFirstRow = pageFirstRows.get(page);
-            long pageLastRowExclusive = lastRowExclusive(page, pageCount, pageFirstRows, rowCount);
-            if (!pageIsFullyDeleted(deleted, base, pageFirstRow, pageLastRowExclusive)) {
-                surviving.add(new Range(pageFirstRow, pageLastRowExclusive - 1));
+    private static List<Range> survivingPageRanges(RowPositionSet deleted, long base, PageIndex pages) {
+        List<Range> surviving = new ArrayList<>(pages.pageCount());
+        for (int page = 0; page < pages.pageCount(); page++) {
+            Range rows = new Range(pages.firstRow(page), pages.lastRow(page));
+            if (!pageIsFullyDeleted(deleted, base, rows)) {
+                surviving.add(rows);
             }
         }
         return surviving;
     }
 
-    private static boolean pageIsFullyDeleted(
-            RowPositionSet deleted, long base, long pageFirstRow, long pageLastRowExclusive) {
-        long absoluteLo = base + pageFirstRow;
-        long absoluteHiExclusive = base + pageLastRowExclusive;
+    private static boolean pageIsFullyDeleted(RowPositionSet deleted, long base, Range rows) {
+        long absoluteLo = base + rows.first();
+        long absoluteHiExclusive = base + rows.last() + 1;
         return deleted.containsRange(absoluteLo, absoluteHiExclusive);
-    }
-
-    private static long lastRowExclusive(int page, int pageCount, List<Long> pageFirstRows, long rowCount) {
-        boolean isLastPage = page + 1 == pageCount;
-        return isLastPage ? rowCount : pageFirstRows.get(page + 1);
     }
 
     private static PruningDecision pageDecision(List<Range> surviving, long rowCount) {

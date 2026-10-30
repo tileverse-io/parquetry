@@ -45,8 +45,8 @@ import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.format.SchemaElement;
 import io.tileverse.parquetry.format.Statistics;
-import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStats;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnStats;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -120,10 +120,10 @@ class RowGroupChunksColumnOrderTest {
         FileMetaData footer =
                 footer(PhysicalType.INT64, Optional.empty(), Optional.of(List.of(new ColumnOrder.Unknown((short) 9))));
 
-        ColumnPageStats pageStats =
-                chunksOf(footer, fixedIndexSections()).pageStats(V).orElseThrow();
+        PageIndex pages = chunksOf(footer, fixedIndexSections()).pageIndex(V).orElseThrow();
 
-        assertThat(pageStats.boundsOrdered()).isFalse();
+        assertThat(pages.hasStatistics()).isTrue();
+        assertThat(pages.boundsOrdered()).isFalse();
     }
 
     @Test
@@ -131,10 +131,9 @@ class RowGroupChunksColumnOrderTest {
         FileMetaData footer =
                 footer(PhysicalType.INT64, Optional.empty(), Optional.of(List.of(new ColumnOrder.TypeDefined())));
 
-        ColumnPageStats pageStats =
-                chunksOf(footer, fixedIndexSections()).pageStats(V).orElseThrow();
+        PageIndex pages = chunksOf(footer, fixedIndexSections()).pageIndex(V).orElseThrow();
 
-        assertThat(pageStats.boundsOrdered()).isTrue();
+        assertThat(pages.boundsOrdered()).isTrue();
     }
 
     private static RowGroupChunks chunksOf(FileMetaData footer, IndexSectionLoader loader) {

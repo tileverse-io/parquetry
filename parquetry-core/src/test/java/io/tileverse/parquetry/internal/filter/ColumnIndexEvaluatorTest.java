@@ -26,9 +26,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
@@ -46,8 +44,6 @@ import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.format.BoundaryOrder;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.LogicalType;
-import io.tileverse.parquetry.format.OffsetIndex;
-import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
@@ -75,7 +71,7 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void eqInMiddlePageNarrows() {
-        FilterPipeline.ColumnPageStatsLookup cols = year3Pages();
+        FilterPipeline.PageIndexLookup cols = year3Pages();
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("year").eq(2020), cols, ROW_GROUP_ROWS);
         assertThat(d).isInstanceOf(PruningDecision.NarrowedTo.class);
         RowRanges r = ((PruningDecision.NarrowedTo) d).ranges();
@@ -84,14 +80,14 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void eqOutsideAllPagesEliminates() {
-        FilterPipeline.ColumnPageStatsLookup cols = year3Pages();
+        FilterPipeline.PageIndexLookup cols = year3Pages();
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("year").eq(1999), cols, ROW_GROUP_ROWS);
         assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
     }
 
     @Test
     void ltKeepsPagesBelow() {
-        FilterPipeline.ColumnPageStatsLookup cols = year3Pages();
+        FilterPipeline.PageIndexLookup cols = year3Pages();
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("year").lt(2020), cols, ROW_GROUP_ROWS);
         assertThat(d).isInstanceOf(PruningDecision.NarrowedTo.class);
         RowRanges r = ((PruningDecision.NarrowedTo) d).ranges();
@@ -100,7 +96,7 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void gtKeepsPagesAbove() {
-        FilterPipeline.ColumnPageStatsLookup cols = year3Pages();
+        FilterPipeline.PageIndexLookup cols = year3Pages();
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("year").gt(2023), cols, ROW_GROUP_ROWS);
         assertThat(d).isInstanceOf(PruningDecision.NarrowedTo.class);
         RowRanges r = ((PruningDecision.NarrowedTo) d).ranges();
@@ -109,7 +105,7 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void rangePredicateNarrowsToOnePage() {
-        FilterPipeline.ColumnPageStatsLookup cols = year3Pages();
+        FilterPipeline.PageIndexLookup cols = year3Pages();
         Predicate p = col("year").gtEq(2018).and(col("year").ltEq(2022));
         PruningDecision d = ColumnIndexEvaluator.evaluate(p, cols, ROW_GROUP_ROWS);
         assertThat(d).isInstanceOf(PruningDecision.NarrowedTo.class);
@@ -119,21 +115,21 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void everyPageMatchesIsPassedAll() {
-        FilterPipeline.ColumnPageStatsLookup cols = year3Pages();
+        FilterPipeline.PageIndexLookup cols = year3Pages();
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("year").gtEq(2000), cols, ROW_GROUP_ROWS);
         assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
     }
 
     @Test
     void missingIndexYieldsNotApplied() {
-        FilterPipeline.ColumnPageStatsLookup cols = empty();
+        FilterPipeline.PageIndexLookup cols = empty();
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("year").eq(2020), cols, ROW_GROUP_ROWS);
         assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
     }
 
     @Test
     void bboxYieldsNotApplied() {
-        FilterPipeline.ColumnPageStatsLookup cols = year3Pages();
+        FilterPipeline.PageIndexLookup cols = year3Pages();
         Predicate p = col("year").intersects(io.tileverse.parquetry.filter.Bbox.of2d(0, 0, 1, 1));
         PruningDecision d = ColumnIndexEvaluator.evaluate(p, cols, ROW_GROUP_ROWS);
         assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
@@ -141,7 +137,7 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void allNullPageDoesNotMatchValueComparison() {
-        FilterPipeline.ColumnPageStatsLookup cols = singleColumn(
+        FilterPipeline.PageIndexLookup cols = singleColumn(
                 "year",
                 PrimitiveKind.INT32,
                 /* nullPages */ List.of(true, false),
@@ -156,7 +152,7 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void orUnionsRanges() {
-        FilterPipeline.ColumnPageStatsLookup cols = year3Pages();
+        FilterPipeline.PageIndexLookup cols = year3Pages();
         Predicate p = col("year").lt(2016).or(col("year").gt(2023));
         PruningDecision d = ColumnIndexEvaluator.evaluate(p, cols, ROW_GROUP_ROWS);
         assertThat(d).isInstanceOf(PruningDecision.NarrowedTo.class);
@@ -166,7 +162,7 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void andIntersectsRanges() {
-        FilterPipeline.ColumnPageStatsLookup cols = year3Pages();
+        FilterPipeline.PageIndexLookup cols = year3Pages();
         Predicate p = col("year").gtEq(2010).and(col("year").ltEq(2015));
         PruningDecision d = ColumnIndexEvaluator.evaluate(p, cols, ROW_GROUP_ROWS);
         assertThat(d).isInstanceOf(PruningDecision.NarrowedTo.class);
@@ -185,7 +181,7 @@ class ColumnIndexEvaluatorTest {
         LocalDateTime t3 = LocalDateTime.of(2021, 6, 30, 0, 0, 0);
         LocalDateTime t4 = LocalDateTime.of(2022, 1, 1, 0, 0, 0);
         LocalDateTime t5 = LocalDateTime.of(2022, 6, 30, 0, 0, 0);
-        FilterPipeline.ColumnPageStatsLookup cols = singleColumn(
+        FilterPipeline.PageIndexLookup cols = singleColumn(
                 "ts",
                 PrimitiveKind.INT64,
                 List.of(false, false, false),
@@ -205,7 +201,7 @@ class ColumnIndexEvaluatorTest {
     @Test
     void flbaDecimalEqNarrowsToMiddlePage() {
         // 3 pages of 100 rows; scale=2, page ranges: [-3.00,-1.00], [0.00,2.00], [3.00,5.00]
-        FilterPipeline.ColumnPageStatsLookup cols = singleColumn(
+        FilterPipeline.PageIndexLookup cols = singleColumn(
                 "amount",
                 PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
                 List.of(false, false, false),
@@ -272,11 +268,11 @@ class ColumnIndexEvaluatorTest {
     }
 
     /** The pages of {@link #year3Pages()}, adding each list of columns asked to warm to {@code warmed}. */
-    private static FilterPipeline.ColumnPageStatsLookup recordingWarms(List<List<ColumnPath>> warmed) {
-        FilterPipeline.ColumnPageStatsLookup pages = year3Pages();
-        return new FilterPipeline.ColumnPageStatsLookup() {
+    private static FilterPipeline.PageIndexLookup recordingWarms(List<List<ColumnPath>> warmed) {
+        FilterPipeline.PageIndexLookup pages = year3Pages();
+        return new FilterPipeline.PageIndexLookup() {
             @Override
-            public Optional<FilterPipeline.ColumnPageStats> get(ColumnPath path) {
+            public Optional<PageIndex> get(ColumnPath path) {
                 return pages.get(path);
             }
 
@@ -289,14 +285,14 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void unorderedPageBoundsLeaveValueComparisonsUnpruned() {
-        FilterPipeline.ColumnPageStatsLookup cols = year3PagesInAnUnknownOrder();
+        FilterPipeline.PageIndexLookup cols = year3PagesInAnUnknownOrder();
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("year").eq(1999), cols, ROW_GROUP_ROWS);
         assertThat(d).isInstanceOf(PruningDecision.NotApplied.class);
     }
 
     @Test
     void unorderedPageBoundsKeepTheNullMarkersUsable() {
-        FilterPipeline.ColumnPageStatsLookup cols = year3PagesInAnUnknownOrder();
+        FilterPipeline.PageIndexLookup cols = year3PagesInAnUnknownOrder();
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("year").isNull(), cols, ROW_GROUP_ROWS);
         assertThat(d).isInstanceOf(PruningDecision.NarrowedTo.class);
         RowRanges r = ((PruningDecision.NarrowedTo) d).ranges();
@@ -328,7 +324,7 @@ class ColumnIndexEvaluatorTest {
         Optional<List<Long>> nullsFillTheMiddlePage = Optional.of(List.of(0L, ROWS_PER_PAGE, 0L));
         double[] mins = {1.0, 3.0, 5.0};
         double[] maxs = {2.0, 4.0, 6.0};
-        FilterPipeline.ColumnPageStatsLookup cols = pricePages(NO_NAN_COUNTS, nullsFillTheMiddlePage, mins, maxs);
+        FilterPipeline.PageIndexLookup cols = pricePages(NO_NAN_COUNTS, nullsFillTheMiddlePage, mins, maxs);
 
         PruningDecision notNull = ColumnIndexEvaluator.evaluate(col("price").isNotNull(), cols, ROW_GROUP_ROWS);
         PruningDecision middle = ColumnIndexEvaluator.evaluate(col("price").eq(3.5), cols, ROW_GROUP_ROWS);
@@ -343,7 +339,7 @@ class ColumnIndexEvaluatorTest {
         double[] mins = {1.0, Double.NaN, 5.0};
         double[] maxs = {2.0, Double.NaN, 6.0};
         long[] firstRows = {0L, 100L, 200L};
-        FilterPipeline.ColumnPageStatsLookup cols =
+        FilterPipeline.PageIndexLookup cols =
                 pricePages(ONLY_NAN_IN_THE_MIDDLE_PAGE, NO_NULLS, mins, maxs, firstRows, false);
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").gt(0.0), cols, ROW_GROUP_ROWS);
@@ -355,7 +351,7 @@ class ColumnIndexEvaluatorTest {
     @Test
     void negativeNullCountKeepsIsNull() {
         Optional<List<Long>> negativeInTheMiddle = Optional.of(List.of(0L, -1L, 0L));
-        FilterPipeline.ColumnPageStatsLookup cols =
+        FilterPipeline.PageIndexLookup cols =
                 pricePages(NO_NAN_COUNTS, negativeInTheMiddle, MINS_WITH_A_NAN_PAGE, MAXS_WITH_A_NAN_PAGE);
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").isNull(), cols, ROW_GROUP_ROWS);
@@ -366,7 +362,7 @@ class ColumnIndexEvaluatorTest {
     @Test
     void nullCountAboveRowsKeepsPage() {
         Optional<List<Long>> tooManyInTheMiddle = Optional.of(List.of(0L, 150L, 0L));
-        FilterPipeline.ColumnPageStatsLookup cols =
+        FilterPipeline.PageIndexLookup cols =
                 pricePages(NO_NAN_COUNTS, tooManyInTheMiddle, MINS_WITH_A_NAN_PAGE, MAXS_WITH_A_NAN_PAGE);
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").isNotNull(), cols, ROW_GROUP_ROWS);
@@ -374,23 +370,10 @@ class ColumnIndexEvaluatorTest {
         assertThat(d).isInstanceOf(PruningDecision.PassedAll.class);
     }
 
-    // The middle page starts at the first row of the last one: it holds no row to keep.
-    @Test
-    void isNullSkipsAPageWithoutRows() {
-        double[] mins = {1.0, 3.0, 5.0};
-        double[] maxs = {2.0, 4.0, 6.0};
-        long[] firstRows = {0L, 100L, 100L};
-        FilterPipeline.ColumnPageStatsLookup cols = pricePages(NO_NAN_COUNTS, NO_NULLS, mins, maxs, firstRows);
-
-        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").isNull(), cols, ROW_GROUP_ROWS);
-
-        assertThat(d).isInstanceOf(PruningDecision.Eliminated.class);
-    }
-
     // A TIME bound outside one day decodes to nothing: its page is kept, and the other pages are judged.
     @Test
     void undecodedBoundKeepsItsPage() {
-        FilterPipeline.ColumnPageStatsLookup cols = singleColumn(
+        FilterPipeline.PageIndexLookup cols = singleColumn(
                 "t",
                 PrimitiveKind.INT64,
                 List.of(false, false, false),
@@ -412,7 +395,7 @@ class ColumnIndexEvaluatorTest {
         MemorySegment one = MemorySegment.ofArray(new byte[] {0x00, 0x3C}).asReadOnly();
         MemorySegment minusTwo =
                 MemorySegment.ofArray(new byte[] {0x00, (byte) 0xC0}).asReadOnly();
-        FilterPipeline.ColumnPageStatsLookup cols = singleColumn(
+        FilterPipeline.PageIndexLookup cols = singleColumn(
                 "h",
                 PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
                 List.of(false),
@@ -447,7 +430,7 @@ class ColumnIndexEvaluatorTest {
     }
 
     /** Three pages of 100 rows of a TIMESTAMP column, each page holding one instant. */
-    private static FilterPipeline.ColumnPageStatsLookup timestampPagesOfOneInstant() {
+    private static FilterPipeline.PageIndexLookup timestampPagesOfOneInstant() {
         List<MemorySegment> instants = List.of(encodeLong(1_000L), encodeLong(2_000L), encodeLong(3_000L));
         return singleColumn(
                 "ts",
@@ -478,7 +461,7 @@ class ColumnIndexEvaluatorTest {
     void pageWithInvertedBoundsIsKept() {
         // 3 pages of 100 rows at scale 2. The middle page spans [-49.95, 49.91] and has the bounds left by a writer
         // ordering a binary decimal by its unsigned bytes: 5.50 as its minimum, -1.11 as its maximum.
-        FilterPipeline.ColumnPageStatsLookup cols = singleColumn(
+        FilterPipeline.PageIndexLookup cols = singleColumn(
                 "amount",
                 PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
                 List.of(false, false, false),
@@ -521,7 +504,7 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void nanLiteralKeepsThePagesCountingNaNCells() {
-        FilterPipeline.ColumnPageStatsLookup cols = pricePages(
+        FilterPipeline.PageIndexLookup cols = pricePages(
                 Optional.of(List.of(0L, 2L, 0L)), new double[] {1.0, 3.0, 5.0}, new double[] {2.0, 4.0, 6.0});
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").eq(Double.NaN), cols, ROW_GROUP_ROWS);
@@ -531,7 +514,7 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void nanLiteralIsEliminatedWhenNoPageCountsANaNCell() {
-        FilterPipeline.ColumnPageStatsLookup cols = pricePages(
+        FilterPipeline.PageIndexLookup cols = pricePages(
                 Optional.of(List.of(0L, 0L, 0L)), new double[] {1.0, 3.0, 5.0}, new double[] {2.0, 4.0, 6.0});
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").eq(Double.NaN), cols, ROW_GROUP_ROWS);
@@ -541,7 +524,7 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void nanCountsOfAnotherLengthThanThePagesAreIgnored() {
-        FilterPipeline.ColumnPageStatsLookup cols =
+        FilterPipeline.PageIndexLookup cols =
                 pricePages(Optional.of(List.of(0L)), new double[] {1.0, 3.0, 5.0}, new double[] {2.0, 4.0, 6.0});
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").eq(Double.NaN), cols, ROW_GROUP_ROWS);
@@ -551,7 +534,7 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void notEqSkipsThePageHoldingTheLiteralAlone() {
-        FilterPipeline.ColumnPageStatsLookup singleValuePages = pricePages(
+        FilterPipeline.PageIndexLookup singleValuePages = pricePages(
                 Optional.of(List.of(0L, 3L, 0L)), new double[] {2.0, 2.0, 1.0}, new double[] {2.0, 2.0, 5.0});
 
         PruningDecision notTwo =
@@ -564,7 +547,7 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void inWithANaNAndANumberKeepsThePagesMatchedByEither() {
-        FilterPipeline.ColumnPageStatsLookup cols = pricePages(
+        FilterPipeline.PageIndexLookup cols = pricePages(
                 Optional.of(List.of(0L, 2L, 0L)), new double[] {1.0, 3.0, 5.0}, new double[] {2.0, 4.0, 6.0});
         List<Value> nanOrNumber = List.of(new Value.DoubleVal(Double.NaN), new Value.DoubleVal(5.5));
         Predicate in = new Predicate.In(ColumnPath.of("price"), nanOrNumber);
@@ -578,7 +561,7 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void notEqNaNKeepsEachPageHoldingANumber() {
-        FilterPipeline.ColumnPageStatsLookup cols = pricePages(
+        FilterPipeline.PageIndexLookup cols = pricePages(
                 Optional.of(List.of(0L, 2L, 0L)), new double[] {1.0, 3.0, 5.0}, new double[] {2.0, 4.0, 6.0});
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").notEq(Double.NaN), cols, ROW_GROUP_ROWS);
@@ -591,7 +574,7 @@ class ColumnIndexEvaluatorTest {
         // A NaN count of zero and NaN bounds contradict each other: the page is trusted for neither claim.
         double[] mins = {1.0, Double.NaN, 6.0};
         double[] maxs = {2.0, Double.NaN, 7.0};
-        FilterPipeline.ColumnPageStatsLookup cols = pricePages(Optional.of(List.of(0L, 0L, 0L)), mins, maxs);
+        FilterPipeline.PageIndexLookup cols = pricePages(Optional.of(List.of(0L, 0L, 0L)), mins, maxs);
 
         PruningDecision number = ColumnIndexEvaluator.evaluate(col("price").eq(1.5), cols, ROW_GROUP_ROWS);
         PruningDecision nan = ColumnIndexEvaluator.evaluate(col("price").eq(Double.NaN), cols, ROW_GROUP_ROWS);
@@ -663,7 +646,7 @@ class ColumnIndexEvaluatorTest {
     void pageOfNaNAndNullsAddingUpToItsRowsIsSkippedByAComparisonWithANumber() {
         Optional<List<Long>> nanCounts = Optional.of(List.of(0L, 60L, 0L));
         Optional<List<Long>> nullCounts = Optional.of(List.of(0L, 40L, 0L));
-        FilterPipeline.ColumnPageStatsLookup cols =
+        FilterPipeline.PageIndexLookup cols =
                 pricePages(nanCounts, nullCounts, MINS_WITH_A_NAN_PAGE, MAXS_WITH_A_NAN_PAGE);
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").gt(0.0), cols, ROW_GROUP_ROWS);
@@ -675,7 +658,7 @@ class ColumnIndexEvaluatorTest {
     void pageBoundedByNaNWithCountsShortOfItsRowsIsKept() {
         // The bounds of a writer taking them over the NaN cells of a page holding numbers too: only the counts tell.
         Optional<List<Long>> twoNaNsAmongNumbers = Optional.of(List.of(0L, 2L, 0L));
-        FilterPipeline.ColumnPageStatsLookup cols =
+        FilterPipeline.PageIndexLookup cols =
                 pricePages(twoNaNsAmongNumbers, NO_NULLS, MINS_WITH_A_NAN_PAGE, MAXS_WITH_A_NAN_PAGE);
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").gt(0.0), cols, ROW_GROUP_ROWS);
@@ -685,7 +668,7 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void pageBoundedByNaNWithoutNaNCountsIsKept() {
-        FilterPipeline.ColumnPageStatsLookup cols =
+        FilterPipeline.PageIndexLookup cols =
                 pricePages(Optional.empty(), NO_NULLS, MINS_WITH_A_NAN_PAGE, MAXS_WITH_A_NAN_PAGE);
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").gt(0.0), cols, ROW_GROUP_ROWS);
@@ -695,7 +678,7 @@ class ColumnIndexEvaluatorTest {
 
     @Test
     void pageBoundedByNaNWithoutNullCountsIsKept() {
-        FilterPipeline.ColumnPageStatsLookup cols =
+        FilterPipeline.PageIndexLookup cols =
                 pricePages(ONLY_NAN_IN_THE_MIDDLE_PAGE, Optional.empty(), MINS_WITH_A_NAN_PAGE, MAXS_WITH_A_NAN_PAGE);
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").gt(0.0), cols, ROW_GROUP_ROWS);
@@ -706,7 +689,7 @@ class ColumnIndexEvaluatorTest {
     @Test
     void pageWithNaNCountsOfAnotherLengthThanThePagesIsKept() {
         Optional<List<Long>> twoCountsForThreePages = Optional.of(List.of(0L, 100L));
-        FilterPipeline.ColumnPageStatsLookup cols =
+        FilterPipeline.PageIndexLookup cols =
                 pricePages(twoCountsForThreePages, NO_NULLS, MINS_WITH_A_NAN_PAGE, MAXS_WITH_A_NAN_PAGE);
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").gt(0.0), cols, ROW_GROUP_ROWS);
@@ -718,7 +701,7 @@ class ColumnIndexEvaluatorTest {
     void pageWithANumberBoundWhileCountedAsOnlyNaNIsKept() {
         // A number bound contradicts counts telling of NaN cells alone: the page is trusted for neither claim.
         double[] mins = {1.0, 3.0, 5.0};
-        FilterPipeline.ColumnPageStatsLookup cols =
+        FilterPipeline.PageIndexLookup cols =
                 pricePages(ONLY_NAN_IN_THE_MIDDLE_PAGE, NO_NULLS, mins, MAXS_WITH_A_NAN_PAGE);
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").gt(0.0), cols, ROW_GROUP_ROWS);
@@ -729,7 +712,7 @@ class ColumnIndexEvaluatorTest {
     @Test
     void pageWithNullCountsOfAnotherLengthThanThePagesIsKept() {
         Optional<List<Long>> twoCountsForThreePages = Optional.of(List.of(0L, 0L));
-        FilterPipeline.ColumnPageStatsLookup cols = pricePages(
+        FilterPipeline.PageIndexLookup cols = pricePages(
                 ONLY_NAN_IN_THE_MIDDLE_PAGE, twoCountsForThreePages, MINS_WITH_A_NAN_PAGE, MAXS_WITH_A_NAN_PAGE);
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").gt(0.0), cols, ROW_GROUP_ROWS);
@@ -740,7 +723,7 @@ class ColumnIndexEvaluatorTest {
     @Test
     void nullCountsOfAnotherLengthThanThePagesTellNothingToANullTest() {
         Optional<List<Long>> twoCountsForThreePages = Optional.of(List.of(0L, 0L));
-        FilterPipeline.ColumnPageStatsLookup cols =
+        FilterPipeline.PageIndexLookup cols =
                 pricePages(NO_NAN_COUNTS, twoCountsForThreePages, MINS_WITH_A_NAN_PAGE, MAXS_WITH_A_NAN_PAGE);
 
         PruningDecision isNull = ColumnIndexEvaluator.evaluate(col("price").isNull(), cols, ROW_GROUP_ROWS);
@@ -755,7 +738,7 @@ class ColumnIndexEvaluatorTest {
         // Negative counts describe no page: they tell nothing, even when they add up to its rows.
         Optional<List<Long>> negativeNaNCount = Optional.of(List.of(0L, -100L, 0L));
         Optional<List<Long>> nullCounts = Optional.of(List.of(0L, 200L, 0L));
-        FilterPipeline.ColumnPageStatsLookup cols =
+        FilterPipeline.PageIndexLookup cols =
                 pricePages(negativeNaNCount, nullCounts, MINS_WITH_A_NAN_PAGE, MAXS_WITH_A_NAN_PAGE);
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").gt(0.0), cols, ROW_GROUP_ROWS);
@@ -767,7 +750,7 @@ class ColumnIndexEvaluatorTest {
     void pageWithANegativeNullCountIsKept() {
         Optional<List<Long>> nanCounts = Optional.of(List.of(0L, 200L, 0L));
         Optional<List<Long>> negativeNullCount = Optional.of(List.of(0L, -100L, 0L));
-        FilterPipeline.ColumnPageStatsLookup cols =
+        FilterPipeline.PageIndexLookup cols =
                 pricePages(nanCounts, negativeNullCount, MINS_WITH_A_NAN_PAGE, MAXS_WITH_A_NAN_PAGE);
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").gt(0.0), cols, ROW_GROUP_ROWS);
@@ -780,24 +763,11 @@ class ColumnIndexEvaluatorTest {
         double[] mins = {1.0, 5.0, Double.NaN};
         double[] maxs = {2.0, 6.0, Double.NaN};
         Optional<List<Long>> onlyNaNInTheLastPage = Optional.of(List.of(0L, 0L, 100L));
-        FilterPipeline.ColumnPageStatsLookup cols = pricePages(onlyNaNInTheLastPage, NO_NULLS, mins, maxs);
+        FilterPipeline.PageIndexLookup cols = pricePages(onlyNaNInTheLastPage, NO_NULLS, mins, maxs);
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").gt(0.0), cols, ROW_GROUP_ROWS);
 
         assertThat(rangesOf(d)).containsExactly(new Range(0, 99), new Range(100, 199));
-    }
-
-    @Test
-    void pageWithoutRowsInTheOffsetIndexLeavesTheOtherPagesToTheirBounds() {
-        // The middle page starts at the first row of the last one: it holds no row.
-        long[] firstRows = {0L, 100L, 100L};
-        double[] mins = {1.0, 3.0, 5.0};
-        double[] maxs = {2.0, 4.0, 6.0};
-        FilterPipeline.ColumnPageStatsLookup cols = pricePages(NO_NAN_COUNTS, NO_NULLS, mins, maxs, firstRows);
-
-        PruningDecision d = ColumnIndexEvaluator.evaluate(col("price").gt(4.5), cols, ROW_GROUP_ROWS);
-
-        assertThat(rangesOf(d)).containsExactly(new Range(100, 299));
     }
 
     @Test
@@ -813,12 +783,9 @@ class ColumnIndexEvaluatorTest {
                 Optional.empty(),
                 Optional.empty(),
                 Optional.of(List.of(ROWS_PER_PAGE)));
-        OffsetIndex off = new OffsetIndex(List.of(new PageLocation(0L, 0, 0L)), Optional.empty());
         Optional<LogicalType> halfFloat = Optional.of(new LogicalType.Float16Type());
-        FilterPipeline.ColumnPageStats stats =
-                new FilterPipeline.ColumnPageStats(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, idx, off, halfFloat);
-        FilterPipeline.ColumnPageStatsLookup cols =
-                path -> path.equals(ColumnPath.of("h")) ? Optional.of(stats) : Optional.empty();
+        PageIndex pages = indexed(idx, new long[] {0L}, PrimitiveKind.FIXED_LEN_BYTE_ARRAY, halfFloat, true);
+        FilterPipeline.PageIndexLookup cols = lookup("h", pages);
         MemorySegment one = MemorySegment.ofArray(new byte[] {0x00, 0x3C}).asReadOnly();
 
         PruningDecision d = ColumnIndexEvaluator.evaluate(col("h").eq(one), cols, ROWS_PER_PAGE);
@@ -829,7 +796,7 @@ class ColumnIndexEvaluatorTest {
     // --- helpers ---
 
     /** Three DOUBLE pages of 100 rows: [1.0, 2.0], a page of 100 NaN cells bounded by NaN, [5.0, 6.0]. */
-    private static FilterPipeline.ColumnPageStatsLookup pricePagesWithAPageOfOnlyNaN() {
+    private static FilterPipeline.PageIndexLookup pricePagesWithAPageOfOnlyNaN() {
         return pricePages(ONLY_NAN_IN_THE_MIDDLE_PAGE, NO_NULLS, MINS_WITH_A_NAN_PAGE, MAXS_WITH_A_NAN_PAGE);
     }
 
@@ -842,13 +809,13 @@ class ColumnIndexEvaluatorTest {
      * DOUBLE pages of 100 rows each, none of them a null page, with the given bounds and NaN counts and without null
      * counts.
      */
-    private static FilterPipeline.ColumnPageStatsLookup pricePages(
+    private static FilterPipeline.PageIndexLookup pricePages(
             Optional<List<Long>> nanCounts, double[] mins, double[] maxs) {
         return pricePages(nanCounts, Optional.empty(), mins, maxs);
     }
 
     /** DOUBLE pages of 100 rows each, none of them a null page, with the given bounds, NaN counts and null counts. */
-    private static FilterPipeline.ColumnPageStatsLookup pricePages(
+    private static FilterPipeline.PageIndexLookup pricePages(
             Optional<List<Long>> nanCounts, Optional<List<Long>> nullCounts, double[] mins, double[] maxs) {
         long[] firstRows = new long[mins.length];
         for (int page = 0; page < mins.length; page++) {
@@ -858,7 +825,7 @@ class ColumnIndexEvaluatorTest {
     }
 
     /** DOUBLE pages, none of them a null page, with the given bounds, counts and first rows. */
-    private static FilterPipeline.ColumnPageStatsLookup pricePages(
+    private static FilterPipeline.PageIndexLookup pricePages(
             Optional<List<Long>> nanCounts,
             Optional<List<Long>> nullCounts,
             double[] mins,
@@ -871,7 +838,7 @@ class ColumnIndexEvaluatorTest {
      * DOUBLE pages, none of them a null page, with the given bounds, counts and first rows, their bounds in the order
      * of the column when {@code boundsOrdered}.
      */
-    private static FilterPipeline.ColumnPageStatsLookup pricePages(
+    private static FilterPipeline.PageIndexLookup pricePages(
             Optional<List<Long>> nanCounts,
             Optional<List<Long>> nullCounts,
             double[] mins,
@@ -881,12 +848,10 @@ class ColumnIndexEvaluatorTest {
         List<Boolean> nullPages = new ArrayList<>();
         List<MemorySegment> minValues = new ArrayList<>();
         List<MemorySegment> maxValues = new ArrayList<>();
-        List<PageLocation> pages = new ArrayList<>();
         for (int page = 0; page < mins.length; page++) {
             nullPages.add(false);
             minValues.add(encodeDouble(mins[page]));
             maxValues.add(encodeDouble(maxs[page]));
-            pages.add(new PageLocation(0L, 0, firstRows[page]));
         }
         ColumnIndex idx = new ColumnIndex(
                 nullPages,
@@ -897,17 +862,14 @@ class ColumnIndexEvaluatorTest {
                 Optional.empty(),
                 Optional.empty(),
                 nanCounts);
-        OffsetIndex off = new OffsetIndex(pages, Optional.empty());
-        FilterPipeline.ColumnPageStats stats =
-                new FilterPipeline.ColumnPageStats(PrimitiveKind.DOUBLE, idx, off, Optional.empty(), boundsOrdered);
-        return path -> path.equals(ColumnPath.of("price")) ? Optional.of(stats) : Optional.empty();
+        return lookup("price", indexed(idx, firstRows, PrimitiveKind.DOUBLE, Optional.empty(), boundsOrdered));
     }
 
     /**
      * Three DOUBLE pages of 100 rows as left by a writer bounding a page of NaN by NaN: [1.0, 5.0], a page bounded by
      * NaN, and [-5.0, -0.0].
      */
-    private static FilterPipeline.ColumnPageStatsLookup priceWithANaNPage() {
+    private static FilterPipeline.PageIndexLookup priceWithANaNPage() {
         return singleColumn(
                 "price",
                 PrimitiveKind.DOUBLE,
@@ -918,7 +880,7 @@ class ColumnIndexEvaluatorTest {
     }
 
     /** Two DOUBLE pages of 100 rows, each bounded by -5.0 at both ends. */
-    private static FilterPipeline.ColumnPageStatsLookup singleValuePricePages() {
+    private static FilterPipeline.PageIndexLookup singleValuePricePages() {
         return singleColumn(
                 "price",
                 PrimitiveKind.DOUBLE,
@@ -935,7 +897,7 @@ class ColumnIndexEvaluatorTest {
     }
 
     /** The pages of {@link #year3Pages()} under a column order unknown to the reader; only page 1 holds nulls. */
-    private static FilterPipeline.ColumnPageStatsLookup year3PagesInAnUnknownOrder() {
+    private static FilterPipeline.PageIndexLookup year3PagesInAnUnknownOrder() {
         ColumnIndex idx = new ColumnIndex(
                 List.of(false, false, false),
                 List.of(encodeInt(2010), encodeInt(2018), encodeInt(2025)),
@@ -949,16 +911,12 @@ class ColumnIndexEvaluatorTest {
     }
 
     /** Three INT32 "year" pages of 100 rows described by {@code idx}, under a column order unknown to the reader. */
-    private static FilterPipeline.ColumnPageStatsLookup yearPagesInAnUnknownOrder(ColumnIndex idx) {
-        List<PageLocation> pages =
-                List.of(new PageLocation(0L, 0, 0L), new PageLocation(0L, 0, 100L), new PageLocation(0L, 0, 200L));
-        OffsetIndex off = new OffsetIndex(pages, Optional.empty());
-        FilterPipeline.ColumnPageStats stats =
-                new FilterPipeline.ColumnPageStats(PrimitiveKind.INT32, idx, off, Optional.empty(), false);
-        return path -> path.equals(ColumnPath.of("year")) ? Optional.of(stats) : Optional.empty();
+    private static FilterPipeline.PageIndexLookup yearPagesInAnUnknownOrder(ColumnIndex idx) {
+        long[] firstRows = {0L, 100L, 200L};
+        return lookup("year", indexed(idx, firstRows, PrimitiveKind.INT32, Optional.empty(), false));
     }
 
-    private static FilterPipeline.ColumnPageStatsLookup year3Pages() {
+    private static FilterPipeline.PageIndexLookup year3Pages() {
         return singleColumn(
                 "year",
                 PrimitiveKind.INT32,
@@ -968,7 +926,7 @@ class ColumnIndexEvaluatorTest {
                 List.of(0L, 100L, 200L));
     }
 
-    private static FilterPipeline.ColumnPageStatsLookup singleColumn(
+    private static FilterPipeline.PageIndexLookup singleColumn(
             String name,
             PrimitiveKind kind,
             List<Boolean> nullPages,
@@ -978,7 +936,7 @@ class ColumnIndexEvaluatorTest {
         return singleColumn(name, kind, nullPages, minValues, maxValues, pageFirstRowIndices, null);
     }
 
-    private static FilterPipeline.ColumnPageStatsLookup singleColumn(
+    private static FilterPipeline.PageIndexLookup singleColumn(
             String name,
             PrimitiveKind kind,
             List<Boolean> nullPages,
@@ -995,19 +953,27 @@ class ColumnIndexEvaluatorTest {
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty());
-        List<PageLocation> pages = pageFirstRowIndices.stream()
-                .map(first -> new PageLocation(0L, 0, first))
-                .toList();
-        OffsetIndex off = new OffsetIndex(pages, Optional.empty());
-        Map<ColumnPath, FilterPipeline.ColumnPageStats> map = new HashMap<>();
-        FilterPipeline.ColumnPageStats stats = (logicalType == null)
-                ? new FilterPipeline.ColumnPageStats(kind, idx, off)
-                : new FilterPipeline.ColumnPageStats(kind, idx, off, Optional.of(logicalType));
-        map.put(ColumnPath.of(name), stats);
-        return path -> Optional.ofNullable(map.get(path));
+        long[] firstRows =
+                pageFirstRowIndices.stream().mapToLong(Long::longValue).toArray();
+        return lookup(name, indexed(idx, firstRows, kind, Optional.ofNullable(logicalType), true));
     }
 
-    private static FilterPipeline.ColumnPageStatsLookup empty() {
+    /** The pages starting at {@code firstRows}, 100 rows each, with the statistics of {@code idx}. */
+    private static PageIndex indexed(
+            ColumnIndex idx,
+            long[] firstRows,
+            PrimitiveKind kind,
+            Optional<LogicalType> logicalType,
+            boolean boundsOrdered) {
+        long rowCount = firstRows[firstRows.length - 1] + ROWS_PER_PAGE;
+        return TestPageIndexes.pages(rowCount, firstRows).withStatistics(idx, kind, logicalType, boundsOrdered);
+    }
+
+    private static FilterPipeline.PageIndexLookup lookup(String column, PageIndex pages) {
+        return path -> path.equals(ColumnPath.of(column)) ? Optional.of(pages) : Optional.empty();
+    }
+
+    private static FilterPipeline.PageIndexLookup empty() {
         return path -> Optional.empty();
     }
 

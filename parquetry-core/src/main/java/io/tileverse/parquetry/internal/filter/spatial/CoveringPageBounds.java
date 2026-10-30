@@ -15,16 +15,16 @@
  */
 package io.tileverse.parquetry.internal.filter.spatial;
 
-import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalDouble;
 
 import io.tileverse.parquetry.filter.Bbox;
-import io.tileverse.parquetry.format.ColumnIndex;
-import io.tileverse.parquetry.format.PageLocation;
-import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStats;
+import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.internal.filter.ColumnSummary;
+import io.tileverse.parquetry.internal.filter.PageIndex;
+import io.tileverse.parquetry.internal.filter.ValueComparison;
 import io.tileverse.parquetry.internal.read.RowGroupChunks;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -69,32 +69,29 @@ public final class CoveringPageBounds {
      */
     public List<PageUnit> pageUnits(RowGroupChunks chunks) {
         List<ColumnPath> leaves = List.of(covering.xmin(), covering.xmax(), covering.ymin(), covering.ymax());
-        chunks.warmPageStats(leaves);
-        Optional<ColumnPageStats> xmin = chunks.pageStats(covering.xmin());
-        Optional<ColumnPageStats> xmax = chunks.pageStats(covering.xmax());
-        Optional<ColumnPageStats> ymin = chunks.pageStats(covering.ymin());
-        Optional<ColumnPageStats> ymax = chunks.pageStats(covering.ymax());
+        chunks.warmPageIndexes(leaves);
+        Optional<PageIndex> xmin = chunks.pageIndex(covering.xmin());
+        Optional<PageIndex> xmax = chunks.pageIndex(covering.xmax());
+        Optional<PageIndex> ymin = chunks.pageIndex(covering.ymin());
+        Optional<PageIndex> ymax = chunks.pageIndex(covering.ymax());
         if (xmin.isEmpty() || xmax.isEmpty() || ymin.isEmpty() || ymax.isEmpty()) {
             return List.of();
         }
-        return unitsOf(
-                xmin.orElseThrow(), xmax.orElseThrow(), ymin.orElseThrow(), ymax.orElseThrow(), chunks.numRows());
+        return unitsOf(xmin.orElseThrow(), xmax.orElseThrow(), ymin.orElseThrow(), ymax.orElseThrow());
     }
 
-    static List<PageUnit> unitsOf(
-            ColumnPageStats xmin, ColumnPageStats xmax, ColumnPageStats ymin, ColumnPageStats ymax, long numRows) {
-        if (!consistent(xmin) || !consistent(xmax) || !consistent(ymin) || !consistent(ymax)) {
+    static List<PageUnit> unitsOf(PageIndex xmin, PageIndex xmax, PageIndex ymin, PageIndex ymax) {
+        if (!usable(xmin) || !usable(xmax) || !usable(ymin) || !usable(ymax)) {
             return List.of();
         }
-        LeafFold minX = new LeafFold(xmin, numRows, Bound.MIN);
-        LeafFold maxX = new LeafFold(xmax, numRows, Bound.MAX);
-        LeafFold minY = new LeafFold(ymin, numRows, Bound.MIN);
-        LeafFold maxY = new LeafFold(ymax, numRows, Bound.MAX);
-        List<PageLocation> spans = xmin.offsetIndex().pageLocations();
-        List<PageUnit> units = new ArrayList<>(spans.size());
-        for (int page = 0; page < spans.size(); page++) {
-            long first = spans.get(page).firstRowIndex();
-            long last = lastRowOf(spans, page, numRows);
+        LeafFold minX = new LeafFold(xmin, Bound.MIN);
+        LeafFold maxX = new LeafFold(xmax, Bound.MAX);
+        LeafFold minY = new LeafFold(ymin, Bound.MIN);
+        LeafFold maxY = new LeafFold(ymax, Bound.MAX);
+        List<PageUnit> units = new ArrayList<>(xmin.pageCount());
+        for (int page = 0; page < xmin.pageCount(); page++) {
+            long first = xmin.firstRow(page);
+            long last = xmin.lastRow(page);
             Optional<Bbox> box = boxOver(first, last, minX, maxX, minY, maxY);
             units.add(new PageUnit(first, last, box));
         }
@@ -102,21 +99,11 @@ public final class CoveringPageBounds {
     }
 
     /**
-     * A page index is usable when its bounds follow an order applied by this reader, it has at least one page, and its
-     * column and offset indexes agree on the count.
+     * A page index provides page boxes when it has statistics with bounds in an order applied by this reader, and at
+     * least one page.
      */
-    private static boolean consistent(ColumnPageStats stats) {
-        if (!stats.boundsOrdered()) {
-            return false;
-        }
-        ColumnIndex index = stats.columnIndex();
-        int pages = index.minValues().size();
-        if (pages == 0) {
-            return false;
-        }
-        return index.maxValues().size() == pages
-                && index.nullPages().size() == pages
-                && stats.offsetIndex().pageLocations().size() == pages;
+    private static boolean usable(PageIndex pages) {
+        return pages.hasStatistics() && pages.boundsOrdered() && pages.pageCount() > 0;
     }
 
     /** The box over rows {@code [first, last]}, or empty when a bound is missing, is NaN, or the box is inverted. */
@@ -153,37 +140,30 @@ public final class CoveringPageBounds {
      */
     private static final class LeafFold {
 
-        private final ColumnPageStats leaf;
-        private final List<PageLocation> pages;
-        private final long numRows;
+        private final PageIndex leaf;
         private final Bound bound;
         private int firstOverlapping;
 
-        LeafFold(ColumnPageStats leaf, long numRows, Bound bound) {
+        LeafFold(PageIndex leaf, Bound bound) {
             this.leaf = leaf;
-            this.pages = leaf.offsetIndex().pageLocations();
-            this.numRows = numRows;
             this.bound = bound;
         }
 
         /**
-         * The minimum of the page minima (or the maximum of the page maxima) over every page overlapping {@code [first,
-         * last]}. Empty when an overlapping page is all-null, when its bound does not decode, or when no page overlaps
-         * the span.
+         * The minimum of the page minima (or the maximum of the page maxima) over each page overlapping {@code [first,
+         * last]}. Empty when an overlapping page has no bound, when no page overlaps the span, or when the leaf is not
+         * a floating-point column. A page holding only nulls has no bound.
          */
         OptionalDouble over(long first, long last) {
             skipPagesEndingBefore(first);
-            ColumnIndex index = leaf.columnIndex();
             double folded = bound.startingValue();
             boolean anyPageOverlaps = false;
-            for (int page = firstOverlapping; page < pages.size(); page++) {
-                if (pages.get(page).firstRowIndex() > last) {
+            for (int page = firstOverlapping; page < leaf.pageCount(); page++) {
+                if (leaf.firstRow(page) > last) {
                     break;
                 }
-                if (allNull(index, page)) {
-                    return OptionalDouble.empty();
-                }
-                OptionalDouble value = decode(bound.pageBound(index, page));
+                ColumnSummary statistics = leaf.statistics(page);
+                OptionalDouble value = floating(bound.of(statistics));
                 if (value.isEmpty()) {
                     return OptionalDouble.empty();
                 }
@@ -193,30 +173,20 @@ public final class CoveringPageBounds {
             return anyPageOverlaps ? OptionalDouble.of(folded) : OptionalDouble.empty();
         }
 
-        /** Advances the cursor past every page whose last row falls before {@code first}. */
+        /** Advances the cursor past each page whose last row falls before {@code first}. */
         private void skipPagesEndingBefore(long first) {
-            while (firstOverlapping < pages.size() && lastRowOf(pages, firstOverlapping, numRows) < first) {
+            while (firstOverlapping < leaf.pageCount() && leaf.lastRow(firstOverlapping) < first) {
                 firstOverlapping++;
             }
         }
 
-        /** Whether page {@code page} holds only nulls, which leaves it with no bound to fold. */
-        private static boolean allNull(ColumnIndex index, int page) {
-            return Boolean.TRUE.equals(index.nullPages().get(page));
+        /** The bound as a double, present for the FLOAT and DOUBLE values of a covering leaf. */
+        private static OptionalDouble floating(Optional<Value> pageBound) {
+            if (pageBound.isEmpty() || !ValueComparison.isFloating(pageBound.orElseThrow())) {
+                return OptionalDouble.empty();
+            }
+            return OptionalDouble.of(ValueComparison.floatingValue(pageBound.orElseThrow()));
         }
-
-        /** The page bound as a double, read in the leaf's own primitive kind. */
-        private OptionalDouble decode(MemorySegment pageBound) {
-            return CoveringColumnSource.decodeDouble(leaf.kind(), Optional.of(pageBound));
-        }
-    }
-
-    private static long lastRowOf(List<PageLocation> pages, int page, long numRows) {
-        boolean lastPage = page + 1 >= pages.size();
-        if (lastPage) {
-            return numRows - 1;
-        }
-        return pages.get(page + 1).firstRowIndex() - 1;
     }
 
     /** Which end of a covering leaf's per-page statistics is read by a fold, and how a fold combines them. */
@@ -233,8 +203,8 @@ public final class CoveringPageBounds {
             }
 
             @Override
-            MemorySegment pageBound(ColumnIndex index, int page) {
-                return index.minValues().get(page);
+            Optional<Value> of(ColumnSummary page) {
+                return page.min();
             }
         },
         MAX {
@@ -249,8 +219,8 @@ public final class CoveringPageBounds {
             }
 
             @Override
-            MemorySegment pageBound(ColumnIndex index, int page) {
-                return index.maxValues().get(page);
+            Optional<Value> of(ColumnSummary page) {
+                return page.max();
             }
         };
 
@@ -259,7 +229,7 @@ public final class CoveringPageBounds {
 
         abstract double fold(double folded, double pageValue);
 
-        abstract MemorySegment pageBound(ColumnIndex index, int page);
+        abstract Optional<Value> of(ColumnSummary page);
     }
 
     /**

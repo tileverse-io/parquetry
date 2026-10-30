@@ -134,7 +134,7 @@ class QuantifiedPushdownTest {
 
     @Test
     void columnIndexDoesNotPruneAnyQuantified() {
-        FilterPipeline.ColumnPageStatsLookup cols = emptyPageStats();
+        FilterPipeline.PageIndexLookup cols = emptyPageStats();
         Predicate quantified = quantifiedInt(MatchAction.ANY, 7);
         PruningDecision decision = ColumnIndexEvaluator.evaluate(quantified, cols, ROW_COUNT);
         assertThat(decision).isInstanceOf(PruningDecision.NotApplied.class);
@@ -142,7 +142,7 @@ class QuantifiedPushdownTest {
 
     @Test
     void columnIndexDoesNotPruneAllQuantified() {
-        FilterPipeline.ColumnPageStatsLookup cols = emptyPageStats();
+        FilterPipeline.PageIndexLookup cols = emptyPageStats();
         Predicate quantified = quantifiedInt(MatchAction.ALL, 7);
         PruningDecision decision = ColumnIndexEvaluator.evaluate(quantified, cols, ROW_COUNT);
         assertThat(decision).isInstanceOf(PruningDecision.NotApplied.class);
@@ -246,7 +246,7 @@ class QuantifiedPushdownTest {
         return segment.asReadOnly();
     }
 
-    private static FilterPipeline.ColumnPageStatsLookup emptyPageStats() {
+    private static FilterPipeline.PageIndexLookup emptyPageStats() {
         return path -> Optional.empty();
     }
 

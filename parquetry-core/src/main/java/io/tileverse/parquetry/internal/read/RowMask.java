@@ -18,23 +18,24 @@ package io.tileverse.parquetry.internal.read;
 import java.util.Map;
 
 import io.tileverse.parquetry.filter.RowRanges;
-import io.tileverse.parquetry.format.OffsetIndex;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 import lombok.NonNull;
 
 /**
- * The decode-time row mask for one row group: the surviving rows shared by every scanned column, plus each scanned
- * column's {@link OffsetIndex}, letting the column reader map pages to row spans. Present only when the row group
- * qualifies for page-skip (every scanned column is flat and has an offset index); absent means decode in full.
+ * The decode-time row mask for one row group. It holds the surviving rows, shared by the scanned columns, and the
+ * {@link PageIndex} of each scanned column. The column reader maps pages to row spans through that page index. A row
+ * group has a mask only when its scanned columns are flat and each has a page index. Without a mask the row group is
+ * decoded in full.
  *
  * @param survivingRows the rows that survive column-index pruning, relative to the row group
- * @param offsetIndexes one offset index per scanned leaf column, keyed by column path
+ * @param pageIndexes one page index per scanned leaf column, keyed by column path
  */
 public record RowMask(
-        @NonNull RowRanges survivingRows, @NonNull Map<ColumnPath, OffsetIndex> offsetIndexes) {
+        @NonNull RowRanges survivingRows, @NonNull Map<ColumnPath, PageIndex> pageIndexes) {
 
     public RowMask {
-        offsetIndexes = Map.copyOf(offsetIndexes);
+        pageIndexes = Map.copyOf(pageIndexes);
     }
 }

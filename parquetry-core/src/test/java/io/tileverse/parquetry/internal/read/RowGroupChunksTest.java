@@ -17,6 +17,7 @@ package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -38,10 +39,11 @@ import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
+import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
-import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStats;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.filter.bloom.BloomFilterReader;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
@@ -66,11 +68,11 @@ class RowGroupChunksTest {
     Path tempDir;
 
     /**
-     * Verifies that calling {@code pageStats(path)} twice loads the OffsetIndex and ColumnIndex exactly once each, and
-     * that a subsequent direct {@code offsetIndex(path)} call does not re-read (the memo is shared).
+     * Verifies that calling {@code pageIndex(path)} twice loads the OffsetIndex and ColumnIndex exactly once each, and
+     * that a subsequent {@code pageLocations(path)} call does not re-read (the memo is shared).
      */
     @Test
-    void pageStatsAndOffsetIndexShareMemo() throws Exception {
+    void indexAndLocationsShareMemo() throws Exception {
         Path file = writeMultiPageInt64File();
         ParquetSchema schema = flatSchema(requiredInt64("v"));
 
@@ -79,25 +81,25 @@ class RowGroupChunksTest {
             CountingLoader loader = new CountingLoader(source);
             RowGroupChunks chunks = TestRowGroupChunks.of(footer, 0, schema, loader);
 
-            Optional<ColumnPageStats> first = chunks.pageStats(V);
-            Optional<ColumnPageStats> second = chunks.pageStats(V);
+            Optional<PageIndex> first = chunks.pageIndex(V);
+            Optional<PageIndex> second = chunks.pageIndex(V);
 
-            assertThat(first)
-                    .as("pageStats should be present for a column with column+offset index")
+            assertThat(first.filter(PageIndex::hasStatistics))
+                    .as("the page index should have statistics for a column with column+offset index")
                     .isPresent();
             assertThat(first).as("second call should return the same result").isEqualTo(second);
             assertThat(loader.offsetIndexReadCount())
-                    .as("OffsetIndex should be loaded exactly once, even after two pageStats calls")
+                    .as("OffsetIndex should be loaded exactly once, even after two pageIndex calls")
                     .isEqualTo(1);
             assertThat(loader.columnIndexReadCount())
-                    .as("ColumnIndex should be loaded exactly once, even after two pageStats calls")
+                    .as("ColumnIndex should be loaded exactly once, even after two pageIndex calls")
                     .isEqualTo(1);
 
-            // A direct offsetIndex(V) call after pageStats must NOT re-read; the memo from pageStats applies.
-            Optional<OffsetIndex> oi = chunks.offsetIndex(V);
-            assertThat(oi).as("offsetIndex should be present").isPresent();
+            // A pageLocations(V) call after pageIndex must NOT re-read; the memo from pageIndex applies.
+            Optional<PageIndex> locations = chunks.pageLocations(V);
+            assertThat(locations).as("pageLocations should be present").isPresent();
             assertThat(loader.offsetIndexReadCount())
-                    .as("offsetIndex after pageStats must not issue a second read")
+                    .as("pageLocations after pageIndex must not issue a second read")
                     .isEqualTo(1);
         }
     }
@@ -123,7 +125,7 @@ class RowGroupChunksTest {
                 .build();
         ColumnChunk chunk = ColumnChunk.builder()
                 .metaData(Optional.of(meta))
-                .encryptedColumnMetadata(java.lang.foreign.MemorySegment.NULL)
+                .encryptedColumnMetadata(MemorySegment.NULL)
                 .build();
         RowGroup rowGroup = RowGroup.builder()
                 .columns(List.of(chunk))
@@ -152,14 +154,11 @@ class RowGroupChunksTest {
 
         RowGroupChunks chunks = TestRowGroupChunks.of(rowGroup, schema, assertNotCalled);
 
-        assertThat(chunks.offsetIndex(V))
-                .as("offsetIndex should be empty when the chunk has no offsetIndexOffset")
+        assertThat(chunks.pageLocations(V))
+                .as("pageLocations should be empty when the chunk has no offsetIndexOffset")
                 .isEmpty();
-        assertThat(chunks.columnIndex(V))
-                .as("columnIndex should be empty when the chunk has no columnIndexOffset")
-                .isEmpty();
-        assertThat(chunks.pageStats(V))
-                .as("pageStats should be empty when either index is absent")
+        assertThat(chunks.pageIndex(V))
+                .as("pageIndex should be empty when the chunk has no offsetIndexOffset")
                 .isEmpty();
         assertThat(chunks.bloom(V))
                 .as("bloom should be empty when the chunk has no bloomFilterOffset")
@@ -192,7 +191,7 @@ class RowGroupChunksTest {
                 .offsetIndexLength(OptionalInt.of(16))
                 .columnIndexOffset(OptionalLong.of(1015L))
                 .columnIndexLength(OptionalInt.of(16))
-                .encryptedColumnMetadata(java.lang.foreign.MemorySegment.NULL)
+                .encryptedColumnMetadata(MemorySegment.NULL)
                 .build();
         RowGroup rowGroup = RowGroup.builder()
                 .columns(List.of(chunk))
@@ -220,18 +219,40 @@ class RowGroupChunksTest {
 
         RowGroupChunks chunks = TestRowGroupChunks.of(rowGroup, schema, alwaysThrows);
 
-        assertThat(chunks.offsetIndex(V))
-                .as("offsetIndex should degrade to empty on loader failure")
+        assertThat(chunks.pageLocations(V))
+                .as("pageLocations should degrade to empty on loader failure")
                 .isEmpty();
-        assertThat(chunks.columnIndex(V))
-                .as("columnIndex should degrade to empty on loader failure")
-                .isEmpty();
-        assertThat(chunks.pageStats(V))
-                .as("pageStats should degrade to empty on loader failure")
+        assertThat(chunks.pageIndex(V))
+                .as("pageIndex should degrade to empty on loader failure")
                 .isEmpty();
         assertThat(chunks.bloom(V))
                 .as("bloom should degrade to empty on loader failure")
                 .isEmpty();
+    }
+
+    // Reading the column index of pages failing validation would be wasted: the page index is dropped whole.
+    @Test
+    void badPagesSkipTheColumnIndex() {
+        OffsetIndex beforeTheChunk = new OffsetIndex(List.of(new PageLocation(0L, 10, 0L)), Optional.empty());
+        FailingColumnIndexLoader loader = new FailingColumnIndexLoader(beforeTheChunk);
+        RowGroupChunks chunks = TestRowGroupChunks.of(oneRowWithIndexes(), flatSchema(requiredInt32("v")), loader);
+
+        assertThat(chunks.pageIndex(V)).isEmpty();
+        assertThat(loader.columnIndexReads()).isZero();
+    }
+
+    // Masks and fetches need the pages alone, and the page tier then has no statistics to judge.
+    @Test
+    void columnIndexFailureKeepsPages() {
+        OffsetIndex onePage = new OffsetIndex(List.of(new PageLocation(4L, 10, 0L)), Optional.empty());
+        FailingColumnIndexLoader loader = new FailingColumnIndexLoader(onePage);
+        RowGroupChunks chunks = TestRowGroupChunks.of(oneRowWithIndexes(), flatSchema(requiredInt32("v")), loader);
+
+        Optional<PageIndex> pages = chunks.pageIndex(V);
+
+        assertThat(loader.columnIndexReads()).isEqualTo(1);
+        assertThat(pages)
+                .hasValueSatisfying(index -> assertThat(index.hasStatistics()).isFalse());
     }
 
     /**
@@ -255,7 +276,7 @@ class RowGroupChunksTest {
                 .build();
         ColumnChunk chunk = ColumnChunk.builder()
                 .metaData(Optional.of(meta))
-                .encryptedColumnMetadata(java.lang.foreign.MemorySegment.NULL)
+                .encryptedColumnMetadata(MemorySegment.NULL)
                 .build();
         RowGroup rowGroup = RowGroup.builder()
                 .columns(List.of(chunk))
@@ -316,7 +337,7 @@ class RowGroupChunksTest {
                 .build();
         ColumnChunk chunk = ColumnChunk.builder()
                 .metaData(Optional.of(meta))
-                .encryptedColumnMetadata(java.lang.foreign.MemorySegment.NULL)
+                .encryptedColumnMetadata(MemorySegment.NULL)
                 .build();
         RowGroup rowGroup = RowGroup.builder()
                 .columns(List.of(chunk))
@@ -381,6 +402,66 @@ class RowGroupChunksTest {
     private static SchemaNode.Primitive requiredInt64(String name) {
         return new SchemaNode.Primitive(
                 name, Repetition.REQUIRED, PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty(), -1);
+    }
+
+    /** One row of an INT32 column in the bytes [4, 14), with an offset index and a column index. */
+    private static RowGroup oneRowWithIndexes() {
+        ColumnMetaData meta = ColumnMetaData.builder()
+                .type(PhysicalType.INT32)
+                .encodings(List.of())
+                .pathInSchema(List.of("v"))
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .numValues(1L)
+                .totalUncompressedSize(10L)
+                .totalCompressedSize(10L)
+                .keyValueMetadata(List.of())
+                .dataPageOffset(4L)
+                .encodingStats(List.of())
+                .build();
+        ColumnChunk chunk = ColumnChunk.builder()
+                .metaData(Optional.of(meta))
+                .offsetIndexOffset(OptionalLong.of(999L))
+                .offsetIndexLength(OptionalInt.of(16))
+                .columnIndexOffset(OptionalLong.of(1015L))
+                .columnIndexLength(OptionalInt.of(16))
+                .encryptedColumnMetadata(MemorySegment.NULL)
+                .build();
+        return RowGroup.builder()
+                .columns(List.of(chunk))
+                .totalByteSize(10L)
+                .numRows(1L)
+                .build();
+    }
+
+    /** Serves one offset index, and fails each column index read as an I/O error would, counting the reads. */
+    private static final class FailingColumnIndexLoader implements IndexSectionLoader {
+
+        private final OffsetIndex offsetIndex;
+        private int columnIndexReads = 0;
+
+        FailingColumnIndexLoader(OffsetIndex offsetIndex) {
+            this.offsetIndex = offsetIndex;
+        }
+
+        @Override
+        public OffsetIndex readOffsetIndex(long offset, int length) {
+            return offsetIndex;
+        }
+
+        @Override
+        public ColumnIndex readColumnIndex(long offset, int length) {
+            columnIndexReads++;
+            throw new IllegalStateException("simulated I/O failure");
+        }
+
+        @Override
+        public SplitBlockBloomFilter readBloom(long offset, int length) {
+            throw new UnsupportedOperationException("these tests ask for no bloom filter");
+        }
+
+        int columnIndexReads() {
+            return columnIndexReads;
+        }
     }
 
     /**

@@ -17,7 +17,7 @@ package io.tileverse.parquetry.internal.filter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.util.List;
+import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
@@ -86,9 +86,9 @@ class RowPositionEvaluatorTest {
     @Test
     void fullyDeletedPageIsDroppedFromSurvivingRanges() {
         // Three 100-row pages over [0,300); the middle page [100,200) is fully deleted.
-        List<Long> pageFirstRows = List.of(0L, 100L, 200L);
+        Optional<PageIndex> pages = Optional.of(TestPageIndexes.pages(300L, 0L, 100L, 200L));
         Predicate predicate = excluding(rangeOfPositions(100, 200));
-        PruningDecision decision = RowPositionEvaluator.evaluatePages(predicate, 0L, 300L, pageFirstRows);
+        PruningDecision decision = RowPositionEvaluator.evaluatePages(predicate, 0L, 300L, pages);
         assertThat(decision).isInstanceOf(PruningDecision.NarrowedTo.class);
         assertThat(decision.tier()).isEqualTo(Tier.COLUMN_INDEX);
         RowRanges ranges = ((PruningDecision.NarrowedTo) decision).ranges();
@@ -98,10 +98,10 @@ class RowPositionEvaluatorTest {
     @Test
     void fullyDeletedPageRespectsTheBaseOffset() {
         long base = 1_000L;
-        List<Long> pageFirstRows = List.of(0L, 100L, 200L);
+        Optional<PageIndex> pages = Optional.of(TestPageIndexes.pages(300L, 0L, 100L, 200L));
         // Absolute positions [1100,1200) cover the middle page when base is 1000.
         Predicate predicate = excluding(rangeOfPositions(base + 100, base + 200));
-        PruningDecision decision = RowPositionEvaluator.evaluatePages(predicate, base, 300L, pageFirstRows);
+        PruningDecision decision = RowPositionEvaluator.evaluatePages(predicate, base, 300L, pages);
         assertThat(decision).isInstanceOf(PruningDecision.NarrowedTo.class);
         RowRanges ranges = ((PruningDecision.NarrowedTo) decision).ranges();
         assertThat(ranges.ranges()).containsExactly(new Range(0, 99), new Range(200, 299));
@@ -111,17 +111,24 @@ class RowPositionEvaluatorTest {
     void deletesSpanningOnlyPartOfAPageLeaveItForRecordLevel() {
         // The middle page is only partly deleted; with no page fully deleted nothing narrows here, and the leaf is
         // left to the record-level tier to drop the individual positions.
-        List<Long> pageFirstRows = List.of(0L, 100L, 200L);
+        Optional<PageIndex> pages = Optional.of(TestPageIndexes.pages(300L, 0L, 100L, 200L));
         Predicate predicate = excluding(rangeOfPositions(100, 150));
-        PruningDecision decision = RowPositionEvaluator.evaluatePages(predicate, 0L, 300L, pageFirstRows);
+        PruningDecision decision = RowPositionEvaluator.evaluatePages(predicate, 0L, 300L, pages);
+        assertThat(decision).isInstanceOf(PruningDecision.NotApplied.class);
+    }
+
+    @Test
+    void noPageIndexIsNotApplied() {
+        Predicate predicate = excluding(rangeOfPositions(100, 200));
+        PruningDecision decision = RowPositionEvaluator.evaluatePages(predicate, 0L, 300L, Optional.empty());
         assertThat(decision).isInstanceOf(PruningDecision.NotApplied.class);
     }
 
     @Test
     void everyPageDeletedEliminatesAtPageTier() {
-        List<Long> pageFirstRows = List.of(0L, 100L, 200L);
+        Optional<PageIndex> pages = Optional.of(TestPageIndexes.pages(300L, 0L, 100L, 200L));
         Predicate predicate = excluding(rangeOfPositions(0, 300));
-        PruningDecision decision = RowPositionEvaluator.evaluatePages(predicate, 0L, 300L, pageFirstRows);
+        PruningDecision decision = RowPositionEvaluator.evaluatePages(predicate, 0L, 300L, pages);
         assertThat(decision).isInstanceOf(PruningDecision.Eliminated.class);
     }
 

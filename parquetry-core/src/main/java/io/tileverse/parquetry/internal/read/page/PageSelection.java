@@ -15,16 +15,13 @@
  */
 package io.tileverse.parquetry.internal.read.page;
 
-import java.util.List;
-
 import io.tileverse.parquetry.filter.RowRanges;
-import io.tileverse.parquetry.format.OffsetIndex;
-import io.tileverse.parquetry.format.PageLocation;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 
 /**
- * Per-data-page decision derived from a column's {@link OffsetIndex} page locations and a row group's surviving
- * {@link RowRanges}: which pages overlap the surviving rows, and where each page starts. Page ordinals match the order
- * in which {@link PageCursor} encounters data pages, which is the {@code OffsetIndex} order.
+ * Per-data-page decision derived from the {@link PageIndex} of a column and the surviving {@link RowRanges} of a row
+ * group: which pages overlap the surviving rows, and where each page starts. Page ordinals follow the page index.
+ * {@link PageCursor} encounters the data pages in the same order.
  */
 public final class PageSelection {
 
@@ -40,29 +37,19 @@ public final class PageSelection {
 
     /**
      * The one derivation of a column's page survival, shared by the fetch planner and the column reader with identical
-     * inputs: the column's offset index, its {@code num_values} (the row-span bound for the last page), and the row
-     * group's surviving rows. One call site on each side keeps fetch and decode structurally incapable of drifting.
+     * inputs: the page index of the column and the surviving rows of the row group. A page survives when its rows
+     * overlap a surviving range. One call site on each side keeps fetch and decode structurally incapable of drifting.
      */
-    public static PageSelection forColumn(OffsetIndex offsetIndex, long numValues, RowRanges survivingRows) {
-        return forRanges(offsetIndex.pageLocations(), numValues, survivingRows);
-    }
-
-    /**
-     * Computes the selection for one column. A page survives when its row span overlaps any surviving range. The last
-     * page's span ends at {@code rowGroupRowCount - 1}; earlier pages end one row before the next page begins.
-     */
-    public static PageSelection forRanges(
-            List<PageLocation> pageLocations, long rowGroupRowCount, RowRanges surviving) {
-        int pages = pageLocations.size();
-        boolean[] survivingFlags = new boolean[pages];
-        long[] firstRows = new long[pages];
+    public static PageSelection forColumn(PageIndex pages, RowRanges survivingRows) {
+        int pageCount = pages.pageCount();
+        boolean[] survivingFlags = new boolean[pageCount];
+        long[] firstRows = new long[pageCount];
         int kept = 0;
-        for (int i = 0; i < pages; i++) {
-            long first = pageLocations.get(i).firstRowIndex();
-            long last = (i + 1 < pages) ? pageLocations.get(i + 1).firstRowIndex() - 1 : rowGroupRowCount - 1;
-            firstRows[i] = first;
-            survivingFlags[i] = overlapsAny(surviving, first, last);
-            if (survivingFlags[i]) {
+        for (int page = 0; page < pageCount; page++) {
+            long first = pages.firstRow(page);
+            firstRows[page] = first;
+            survivingFlags[page] = overlapsAny(survivingRows, first, pages.lastRow(page));
+            if (survivingFlags[page]) {
                 kept++;
             }
         }

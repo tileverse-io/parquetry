@@ -37,7 +37,7 @@ import io.tileverse.parquetry.columnar.VectorizedPredicateEvaluator;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.format.MalformedFileException;
-import io.tileverse.parquetry.format.OffsetIndex;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.read.ProjectedLeaves.ProjectedLeaf;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -226,10 +226,9 @@ final class MaskedScanRowGroupReader implements RowGroupReader {
 
     private BatchColumnReader buildReader(ProjectedLeaf leaf, ValueDecode valueDecode) {
         RowRanges survivingRows = rowMask.isPresent() ? rowMask.get().survivingRows() : null;
-        OffsetIndex offsetIndex =
-                rowMask.isPresent() ? rowMask.get().offsetIndexes().get(leaf.path()) : null;
+        PageIndex pageIndex = rowMask.isPresent() ? rowMask.get().pageIndexes().get(leaf.path()) : null;
         return new BatchColumnReader(
-                decodeBufferAllocator, leaf.chunk(), leaf.leaf(), survivingRows, offsetIndex, valueDecode);
+                decodeBufferAllocator, leaf.chunk(), leaf.leaf(), survivingRows, pageIndex, valueDecode);
     }
 
     /**

@@ -44,6 +44,7 @@ import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -275,11 +276,11 @@ class RowGroupBatchFetchTest {
 
     /** A mask keeping every other page of every column, which leaves a skipped page between two surviving runs. */
     private static RowMask everyOtherPageOf(RowGroupSurvivor survivor) {
-        Map<ColumnPath, OffsetIndex> offsetIndexes = new HashMap<>();
+        Map<ColumnPath, PageIndex> pageIndexes = new HashMap<>();
         for (ColumnPath path : List.of(A, B, C)) {
-            offsetIndexes.put(path, survivor.chunks().offsetIndex(path).orElseThrow());
+            pageIndexes.put(path, survivor.chunks().pageLocations(path).orElseThrow());
         }
-        return new RowMask(rowsOfEveryOtherPage(), offsetIndexes);
+        return new RowMask(rowsOfEveryOtherPage(), pageIndexes);
     }
 
     /** The rows of the even-numbered pages: page {@code p} holds the {@value #WIDE_PAGE_VALUE_LIMIT} rows after it. */

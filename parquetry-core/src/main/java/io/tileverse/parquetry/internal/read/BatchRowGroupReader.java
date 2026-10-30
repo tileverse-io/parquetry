@@ -28,7 +28,7 @@ import io.tileverse.parquetry.columnar.DefaultParquetRecordBatch;
 import io.tileverse.parquetry.columnar.Levels;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.columnar.Selection;
-import io.tileverse.parquetry.format.OffsetIndex;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.read.ProjectedLeaves.ProjectedLeaf;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -307,9 +307,8 @@ public final class BatchRowGroupReader implements RowGroupReader {
             return new BatchColumnReader(decodeBufferAllocator, leaf.chunk(), leaf.leaf());
         }
         RowMask mask = rowMask.orElseThrow();
-        OffsetIndex offsetIndex = mask.offsetIndexes().get(leaf.path());
-        return new BatchColumnReader(
-                decodeBufferAllocator, leaf.chunk(), leaf.leaf(), mask.survivingRows(), offsetIndex);
+        PageIndex pageIndex = mask.pageIndexes().get(leaf.path());
+        return new BatchColumnReader(decodeBufferAllocator, leaf.chunk(), leaf.leaf(), mask.survivingRows(), pageIndex);
     }
 
     // --- batch row count computation ---

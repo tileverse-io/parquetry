@@ -27,8 +27,7 @@ import io.tileverse.storage.BatchReadResult;
 import io.tileverse.storage.RangeRequest;
 
 import io.tileverse.parquetry.format.MalformedFileException;
-import io.tileverse.parquetry.format.OffsetIndex;
-import io.tileverse.parquetry.format.PageLocation;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.internal.read.page.PageRun;
@@ -125,55 +124,36 @@ public final class RowGroupFetcher {
 
     /**
      * Emits the narrowed units for one column: the dictionary prefix {@code [chunkStart, firstDataPage)} when
-     * non-empty, then one unit per surviving-page run. Falls back to the whole chunk when the mask lacks this column's
-     * offset index, when the offset index locates any page outside the chunk's own byte extent, or when every page
-     * survives (the degenerate case where the whole chunk IS the narrowed plan, trailing bytes included).
+     * non-empty, then one unit per surviving-page run. Falls back to the whole chunk when the mask lacks the page index
+     * of this column, or when each page survives (the degenerate case where the whole chunk IS the narrowed plan,
+     * trailing bytes included). A page index places its pages inside the bytes of the chunk; see
+     * {@link PageIndex#declared}.
      */
     private void addUnitsFor(List<FetchUnit> units, ColumnPath path, ChunkMeta meta, RowMask mask) {
-        OffsetIndex offsetIndex = mask.offsetIndexes().get(path);
-        if (offsetIndex == null || offsetIndex.pageLocations().isEmpty()) {
+        PageIndex pages = mask.pageIndexes().get(path);
+        if (pages == null || pages.pageCount() == 0) {
             units.add(wholeChunkUnit(path, meta));
             return;
         }
         long start = meta.chunkStart();
-        long chunkEnd = start + meta.totalCompressedSize();
-        if (locatesPagesOutsideChunk(offsetIndex, start, chunkEnd)) {
-            units.add(wholeChunkUnit(path, meta));
-            return;
-        }
-        PageSelection selection = PageSelection.forColumn(offsetIndex, meta.numValues(), mask.survivingRows());
+        PageSelection selection = PageSelection.forColumn(pages, mask.survivingRows());
         if (selection.survivingPageCount() == 0) {
             throw new IllegalStateException("No surviving page for column " + path.dot()
-                    + " in a row group with surviving rows; the offset index and the row ranges disagree");
+                    + " in a row group with surviving rows; the page index and the row ranges disagree");
         }
         if (selection.survivingPageCount() == selection.pageCount()) {
             units.add(wholeChunkUnit(path, meta));
             return;
         }
-        long firstDataPageOffset = offsetIndex.pageLocations().get(0).offset();
+        long firstDataPageOffset = pages.locations().get(0).offset();
         long prefixLength = firstDataPageOffset - start;
         if (prefixLength > 0) {
-            // the bound check above put the first data page inside an int-sized chunk, hence the prefix fits an int
+            // The page index places the first data page inside the chunk, and the chunk length is an int.
             units.add(new FetchUnit(path, start, Math.toIntExact(prefixLength), 0, true));
         }
-        for (PageRun run : PageRun.runsFor(selection, offsetIndex.pageLocations())) {
+        for (PageRun run : PageRun.runsFor(selection, pages.locations())) {
             units.add(new FetchUnit(path, run.fileOffset(), run.length(), run.firstPageOrdinal(), false));
         }
-    }
-
-    /**
-     * Whether {@code offsetIndex} points at any byte outside {@code [chunkStart, chunkEnd)}. Such an index cannot be
-     * trusted to locate this column's pages, and narrowing on it would aim the fetch at bytes the column does not own:
-     * another column's pages parse cleanly and decode to plausible garbage. Widening back to the whole chunk keeps a
-     * corrupt index's blast radius at wrong rows in this column, which is where it was before per-page fetching.
-     */
-    private static boolean locatesPagesOutsideChunk(OffsetIndex offsetIndex, long chunkStart, long chunkEnd) {
-        for (PageLocation page : offsetIndex.pageLocations()) {
-            if (page.offset() < chunkStart || page.offset() + page.compressedPageSize() > chunkEnd) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**

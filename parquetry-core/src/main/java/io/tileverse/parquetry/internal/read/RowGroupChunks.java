@@ -28,12 +28,11 @@ import java.util.Set;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.OffsetIndex;
-import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.internal.filter.ColumnSummary;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnBloom;
-import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStats;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnStats;
 import io.tileverse.parquetry.internal.filter.NaNCells;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.filter.StatsEvaluator;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
@@ -52,11 +51,11 @@ import lombok.NonNull;
  * resolves a column path to that row group's chunk and serves the per-column metadata needed by the read path
  * (primitive kind, flatness, the inline statistics), and it memoizes the lazily-loaded index sections - a column's
  * {@link OffsetIndex}, {@link ColumnIndex}, and bloom filter are each read at most once per call no matter how many
- * pipeline stages ask.
+ * pipeline stages ask. The two page index sections reach callers as a validated {@link PageIndex} alone.
  *
  * <p>Construction is cheap and side-effect free. Index sections load on first access through the injected
  * {@link IndexSectionLoader}. When a phase knows its whole set of sections up front, it calls
- * {@link #warmOffsetIndexes} or {@link #warmPageStats} first to read them together; that leaves the memo below
+ * {@link #warmPageLocations} or {@link #warmPageIndexes} first to read them together; that leaves the memo below
  * unchanged, and every lookup still goes through it. A missing section, a non-primitive column, or a read failure all
  * degrade to {@link Optional#empty()}; the read still succeeds with that tier off for the column.
  *
@@ -77,9 +76,8 @@ public final class RowGroupChunks {
     private final ParquetSchema fileSchema;
     private final IndexSectionLoader loader;
 
-    private final Map<ColumnPath, Optional<OffsetIndex>> offsetIndexMemo = new HashMap<>();
-    private final Map<ColumnPath, Optional<ColumnIndex>> columnIndexMemo = new HashMap<>();
-    private final Map<ColumnPath, Optional<ColumnPageStats>> pageStatsMemo = new HashMap<>();
+    private final Map<ColumnPath, Optional<PageIndex>> pageLocationsMemo = new HashMap<>();
+    private final Map<ColumnPath, Optional<PageIndex>> pageIndexMemo = new HashMap<>();
     private final Map<ColumnPath, Optional<ColumnBloom>> bloomMemo = new HashMap<>();
     private final Map<ColumnPath, Optional<ColumnSummary>> summaryMemo = new HashMap<>();
 
@@ -228,11 +226,11 @@ public final class RowGroupChunks {
     }
 
     /**
-     * Reads the offset index of every path in {@code paths} that has one and is not memoized yet, in one call. A later
-     * {@link #offsetIndex} of any of them decodes bytes already in hand. A path outside {@code paths} still loads on
+     * Reads the offset index of each path in {@code paths} that has one and is not memoized yet, in one call. A later
+     * {@link #pageLocations} of any of them decodes bytes already in hand. A path outside {@code paths} still loads on
      * its own.
      */
-    public void warmOffsetIndexes(@NonNull List<ColumnPath> paths) {
+    public void warmPageLocations(@NonNull List<ColumnPath> paths) {
         List<IndexSectionRange> ranges = new ArrayList<>(paths.size());
         for (ColumnPath path : distinct(paths)) {
             addOffsetIndexRange(path, ranges);
@@ -241,11 +239,10 @@ public final class RowGroupChunks {
     }
 
     /**
-     * Reads the column index and the offset index of every path in {@code paths} that has them and is not memoized yet,
-     * in one call. A later {@link #pageStats}, {@link #columnIndex} or {@link #offsetIndex} of any of them decodes
-     * bytes already in hand.
+     * Reads the column index and the offset index of each path in {@code paths} that has them and is not memoized yet,
+     * in one call. A later {@link #pageIndex} or {@link #pageLocations} of any of them decodes bytes already in hand.
      */
-    public void warmPageStats(@NonNull List<ColumnPath> paths) {
+    public void warmPageIndexes(@NonNull List<ColumnPath> paths) {
         List<IndexSectionRange> ranges = new ArrayList<>(paths.size() * 2);
         for (ColumnPath path : distinct(paths)) {
             addColumnIndexRange(path, ranges);
@@ -275,7 +272,7 @@ public final class RowGroupChunks {
     }
 
     private void addOffsetIndexRange(ColumnPath path, List<IndexSectionRange> ranges) {
-        if (offsetIndexMemo.containsKey(path)) {
+        if (pageLocationsMemo.containsKey(path)) {
             return;
         }
         chunk(path)
@@ -284,7 +281,7 @@ public final class RowGroupChunks {
     }
 
     private void addColumnIndexRange(ColumnPath path, List<IndexSectionRange> ranges) {
-        if (columnIndexMemo.containsKey(path)) {
+        if (pageIndexMemo.containsKey(path)) {
             return;
         }
         chunk(path)
@@ -306,26 +303,26 @@ public final class RowGroupChunks {
     }
 
     /**
-     * The memoized {@link OffsetIndex}, or empty when absent, unreadable, or with pages not following one another in
-     * the rows of the row group and in the bytes of the file.
+     * The page index of {@code path} with the statistics of its column index, memoized. Without a column index that
+     * agrees with its pages, the page index comes without statistics. It is empty when the column has no offset index
+     * passing {@link PageIndex#declared}. Loading it reads the offset index, and the column index when the pages pass
+     * validation. A later {@link #pageLocations} of the same column does not read again.
      */
-    public Optional<OffsetIndex> offsetIndex(ColumnPath path) {
-        return offsetIndexMemo.computeIfAbsent(path, this::loadOffsetIndex);
-    }
-
-    /** The memoized {@link ColumnIndex}, or empty when absent or unreadable. */
-    public Optional<ColumnIndex> columnIndex(ColumnPath path) {
-        return columnIndexMemo.computeIfAbsent(path, this::loadColumnIndex);
+    public Optional<PageIndex> pageIndex(ColumnPath path) {
+        return pageIndexMemo.computeIfAbsent(path, this::loadPageIndex);
     }
 
     /**
-     * The memoized column-index tier input (kind + column index + offset index). It is empty when either index is not
-     * usable, when the column index lacks an entry per page of the offset index, or when the column index marks a page
-     * as holding only nulls with a null count of zero or less. Loading it populates the {@link #offsetIndex} and
-     * {@link #columnIndex} memos, and a later {@code offsetIndex(path)} for the same column does not re-read.
+     * The pages of {@code path}, memoized, or empty when the column has no offset index passing
+     * {@link PageIndex#declared}. A row mask needs the pages of each scanned column, and the statistics of none. The
+     * pages have statistics when {@link #pageIndex} loaded the column first, and none otherwise: callers must not rely
+     * on either.
      */
-    public Optional<ColumnPageStats> pageStats(ColumnPath path) {
-        return pageStatsMemo.computeIfAbsent(path, this::loadPageStats);
+    public Optional<PageIndex> pageLocations(ColumnPath path) {
+        if (pageIndexMemo.containsKey(path)) {
+            return pageIndexMemo.get(path);
+        }
+        return pageLocationsMemo.computeIfAbsent(path, this::loadPageLocations);
     }
 
     /** The memoized bloom filter input (kind + filter), or empty when absent or unreadable. */
@@ -333,58 +330,23 @@ public final class RowGroupChunks {
         return bloomMemo.computeIfAbsent(path, this::loadBloom);
     }
 
-    private Optional<OffsetIndex> loadOffsetIndex(ColumnPath path) {
-        return chunk(path).flatMap(this::readOffsetIndex);
-    }
-
-    private Optional<OffsetIndex> readOffsetIndex(ChunkMeta chunk) {
-        OptionalLong offset = chunk.offsetIndexOffset();
-        if (offset.isEmpty()) {
-            return Optional.empty();
-        }
-        try {
-            OffsetIndex index = loader.readOffsetIndex(offset.getAsLong(), chunk.offsetIndexLength());
-            return Optional.of(index).filter(this::placesItsPagesInOrder);
-        } catch (RuntimeException _) {
-            return Optional.empty();
-        }
-    }
-
     /**
-     * Whether the pages of {@code index} follow one another in the rows of this row group and in the bytes of the file:
-     * the first page starts at the first row, each later page starts after the rows and the bytes of the previous one,
-     * and the last page starts before the last row ends. Readers find the rows of a page between its first row and the
-     * first row of the next page, and its bytes at its offset; an index failing this places rows in the wrong page, or
-     * in none.
+     * The pages of {@code path} with the statistics of its column index. A column without a column index, or of no
+     * primitive type, keeps its pages without statistics.
      */
-    private boolean placesItsPagesInOrder(OffsetIndex index) {
-        List<PageLocation> pages = index.pageLocations();
-        if (pages.isEmpty()) {
-            return numRows() == 0L;
+    private Optional<PageIndex> loadPageIndex(ColumnPath path) {
+        Optional<PageIndex> pages = pageLocations(path);
+        Optional<PrimitiveKind> kind = primitiveKind(path);
+        if (pages.isEmpty() || kind.isEmpty()) {
+            return pages;
         }
-        PageLocation previous = pages.get(0);
-        if (previous.firstRowIndex() != 0L || previous.compressedPageSize() <= 0) {
-            return false;
+        Optional<ColumnIndex> columnIndex = chunk(path).flatMap(this::readColumnIndex);
+        if (columnIndex.isEmpty()) {
+            return pages;
         }
-        for (PageLocation page : pages.subList(1, pages.size())) {
-            if (!follows(page, previous)) {
-                return false;
-            }
-            previous = page;
-        }
-        return previous.firstRowIndex() < numRows();
-    }
-
-    /** Whether {@code page} holds bytes and starts after the rows and the bytes of {@code previous}. */
-    private static boolean follows(PageLocation page, PageLocation previous) {
-        boolean laterRows = page.firstRowIndex() > previous.firstRowIndex();
-        long endOfPrevious = previous.offset() + previous.compressedPageSize();
-        boolean laterBytes = page.offset() >= endOfPrevious;
-        return laterRows && laterBytes && page.compressedPageSize() > 0;
-    }
-
-    private Optional<ColumnIndex> loadColumnIndex(ColumnPath path) {
-        return chunk(path).flatMap(this::readColumnIndex);
+        PageIndex withStatistics = pages.orElseThrow()
+                .withStatistics(columnIndex.orElseThrow(), kind.orElseThrow(), logicalType(path), boundsOrdered(path));
+        return Optional.of(withStatistics);
     }
 
     private Optional<ColumnIndex> readColumnIndex(ChunkMeta chunk) {
@@ -399,57 +361,34 @@ public final class RowGroupChunks {
         }
     }
 
-    private Optional<ColumnPageStats> loadPageStats(ColumnPath path) {
-        Optional<PrimitiveKind> kind = primitiveKind(path);
-        if (kind.isEmpty()) {
-            return Optional.empty();
-        }
-        Optional<ColumnIndex> ci = columnIndex(path);
-        Optional<OffsetIndex> oi = offsetIndex(path);
-        if (ci.isEmpty() || oi.isEmpty()) {
-            return Optional.empty();
-        }
-        ColumnIndex columnIndex = ci.orElseThrow();
-        OffsetIndex offsetIndex = oi.orElseThrow();
-        if (!hasOneEntryPerPage(columnIndex, offsetIndex) || !nullPagesAgreeWithNullCounts(columnIndex)) {
-            return Optional.empty();
-        }
-        return Optional.of(new ColumnPageStats(
-                kind.orElseThrow(), columnIndex, offsetIndex, logicalType(path), boundsOrdered(path)));
-    }
-
-    /** Whether the null flags and the bounds of {@code columnIndex} have one entry per page of {@code offsetIndex}. */
-    private static boolean hasOneEntryPerPage(ColumnIndex columnIndex, OffsetIndex offsetIndex) {
-        int pages = offsetIndex.pageLocations().size();
-        return columnIndex.nullPages().size() == pages
-                && columnIndex.minValues().size() == pages
-                && columnIndex.maxValues().size() == pages;
-    }
-
-    /**
-     * Whether the null pages of {@code columnIndex} agree with its null counts. A page marked as holding only nulls
-     * must have a null count above zero. If it does not, the mark cannot be trusted: the page may hold values, and
-     * skipping it would lose rows.
-     *
-     * <p>An index passes when it has no null counts, or when their number differs from the number of pages.
-     */
-    private static boolean nullPagesAgreeWithNullCounts(ColumnIndex columnIndex) {
-        List<Boolean> nullPages = columnIndex.nullPages();
-        Optional<List<Long>> perPage = columnIndex.nullCounts().filter(counts -> counts.size() == nullPages.size());
-        if (perPage.isEmpty()) {
-            return true;
-        }
-        List<Long> nullCounts = perPage.orElseThrow();
-        for (int page = 0; page < nullPages.size(); page++) {
-            if (Boolean.TRUE.equals(nullPages.get(page)) && nullCounts.get(page) <= 0L) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     private boolean boundsOrdered(ColumnPath path) {
         return chunk(path).map(ChunkMeta::boundsOrdered).orElse(true);
+    }
+
+    private Optional<PageIndex> loadPageLocations(ColumnPath path) {
+        Optional<ChunkMeta> found = chunk(path);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        ChunkMeta chunk = found.orElseThrow();
+        Optional<OffsetIndex> offsetIndex = readOffsetIndex(chunk);
+        if (offsetIndex.isEmpty()) {
+            return Optional.empty();
+        }
+        return PageIndex.declared(
+                offsetIndex.orElseThrow(), chunk.chunkStart(), chunk.totalCompressedSize(), numRows());
+    }
+
+    private Optional<OffsetIndex> readOffsetIndex(ChunkMeta chunk) {
+        OptionalLong offset = chunk.offsetIndexOffset();
+        if (offset.isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(loader.readOffsetIndex(offset.getAsLong(), chunk.offsetIndexLength()));
+        } catch (RuntimeException _) {
+            return Optional.empty();
+        }
     }
 
     private Optional<ColumnBloom> loadBloom(ColumnPath path) {

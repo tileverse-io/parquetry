@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 
 class PageRunTest {
 
@@ -37,8 +38,14 @@ class PageRunTest {
                 new PageLocation(260, 50, 30));
     }
 
+    /** The page index of {@link #locations()} in a chunk spanning bytes [100, 310) of a row group of 40 rows. */
+    private static PageIndex pageIndex() {
+        OffsetIndex offsetIndex = new OffsetIndex(locations(), Optional.empty());
+        return PageIndex.declared(offsetIndex, 100L, 210L, 40L).orElseThrow();
+    }
+
     private static PageSelection selectionFor(RowRanges surviving) {
-        return PageSelection.forRanges(locations(), 40, surviving);
+        return PageSelection.forColumn(pageIndex(), surviving);
     }
 
     private static RowRanges rows(long first, long last) {
@@ -77,22 +84,8 @@ class PageRunTest {
 
     @Test
     void noSurvivingPageYieldsNoRuns() {
-        PageSelection none = PageSelection.forRanges(locations(), 40, RowRanges.empty());
+        PageSelection none = selectionFor(RowRanges.empty());
 
         assertThat(PageRun.runsFor(none, locations())).isEmpty();
-    }
-
-    @Test
-    void forColumnMatchesForRangesWithIdenticalInputs() {
-        OffsetIndex offsetIndex = new OffsetIndex(locations(), Optional.empty());
-
-        PageSelection viaColumn = PageSelection.forColumn(offsetIndex, 40, rows(0, 19));
-        PageSelection viaRanges = PageSelection.forRanges(locations(), 40, rows(0, 19));
-
-        assertThat(viaColumn.survivingPageCount()).isEqualTo(viaRanges.survivingPageCount());
-        for (int ordinal = 0; ordinal < viaRanges.pageCount(); ordinal++) {
-            assertThat(viaColumn.isSurviving(ordinal)).isEqualTo(viaRanges.isSurviving(ordinal));
-            assertThat(viaColumn.firstRowIndex(ordinal)).isEqualTo(viaRanges.firstRowIndex(ordinal));
-        }
     }
 }

@@ -159,7 +159,7 @@ class FilterPipelineTest {
     }
 
     private static FilterPipeline.RowGroupInputs inputs(
-            long rows, FilterPipeline.ColumnStatsLookup stats, FilterPipeline.ColumnPageStatsLookup pageIndexes) {
+            long rows, FilterPipeline.ColumnStatsLookup stats, FilterPipeline.PageIndexLookup pageIndexes) {
         return new FilterPipeline.RowGroupInputs(rows, decoded(stats), pageIndexes);
     }
 
@@ -174,7 +174,7 @@ class FilterPipelineTest {
         return path -> Optional.ofNullable(map.get(path));
     }
 
-    private static FilterPipeline.ColumnPageStatsLookup noPageIndex() {
+    private static FilterPipeline.PageIndexLookup noPageIndex() {
         return path -> Optional.empty();
     }
 

@@ -44,13 +44,14 @@ import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.RowRanges.Range;
-import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.internal.filter.PageIndex;
+import io.tileverse.parquetry.internal.filter.TestPageIndexes;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -218,16 +219,14 @@ class MaskedWindowRowMaskReadTest {
                 .isLessThan(eager.decodedValueCount());
     }
 
-    /**
-     * Every value-decode mode places a mask's rows through the offset index; none of them may read the column blind.
-     */
+    /** Each value-decode mode places the rows of a mask through the page index, and none may read the column blind. */
     static Stream<ValueDecode> valueDecodes() {
         return Stream.of(ValueDecode.values());
     }
 
     @ParameterizedTest
     @MethodSource("valueDecodes")
-    void aRowMaskWithoutAnOffsetIndexIsRejected(ValueDecode valueDecode) throws Exception {
+    void rowMaskNeedsAPageIndex(ValueDecode valueDecode) throws Exception {
         Path file = writeRequiredLongs();
         ParquetSchema schema = flatSchema(requiredInt64("v"));
         RowRanges mask = RowRanges.all(ROW_COUNT);
@@ -235,7 +234,7 @@ class MaskedWindowRowMaskReadTest {
             assertThatIllegalArgumentException()
                     .isThrownBy(() ->
                             new BatchColumnReader(TestDecodeBuffers.ample(), chunk, leaf, mask, null, valueDecode))
-                    .withMessageContainingAll(V.dot(), "offset index");
+                    .withMessageContainingAll(V.dot(), "page index");
             return null;
         });
     }
@@ -245,10 +244,10 @@ class MaskedWindowRowMaskReadTest {
         Path file = writeListsOfLongs();
         ParquetSchema schema = listOfInt64Schema();
         RowRanges mask = RowRanges.all(ROW_COUNT);
-        overChunk(file, schema, ELEMENT, mask, (chunk, leaf, offsetIndex) -> {
+        overChunk(file, schema, ELEMENT, mask, (chunk, leaf, pageIndex) -> {
             assertThatIllegalArgumentException()
                     .isThrownBy(() -> new BatchColumnReader(
-                            TestDecodeBuffers.ample(), chunk, leaf, mask, offsetIndex, ValueDecode.WINDOWED_MASK))
+                            TestDecodeBuffers.ample(), chunk, leaf, mask, pageIndex, ValueDecode.WINDOWED_MASK))
                     .withMessageContainingAll(ELEMENT.dot(), "flat columns");
             return null;
         });
@@ -436,10 +435,10 @@ class MaskedWindowRowMaskReadTest {
         DrainResult over(BatchColumnReader reader);
     }
 
-    /** What a test does with one fetched column chunk of the file's single row group and its offset index. */
+    /** What a test does with one fetched column chunk of the file's single row group and its page index. */
     @FunctionalInterface
     private interface ChunkAction<T> {
-        T over(FetchedColumnChunk chunk, SchemaNode.Primitive leaf, OffsetIndex offsetIndex);
+        T over(FetchedColumnChunk chunk, SchemaNode.Primitive leaf, PageIndex pageIndex);
     }
 
     /**
@@ -455,9 +454,9 @@ class MaskedWindowRowMaskReadTest {
             ValueDecode valueDecode,
             ColumnDrain drain)
             throws Exception {
-        return overChunk(file, schema, column, mask, (chunk, leaf, offsetIndex) -> {
+        return overChunk(file, schema, column, mask, (chunk, leaf, pageIndex) -> {
             BatchColumnReader reader =
-                    new BatchColumnReader(TestDecodeBuffers.ample(), chunk, leaf, mask, offsetIndex, valueDecode);
+                    new BatchColumnReader(TestDecodeBuffers.ample(), chunk, leaf, mask, pageIndex, valueDecode);
             try {
                 return drain.over(reader);
             } finally {
@@ -472,7 +471,7 @@ class MaskedWindowRowMaskReadTest {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             FileMetaData footer = ParquetFormat.readFooter(source);
             RowGroup rowGroup = footer.rowGroups().get(0);
-            OffsetIndex offsetIndex = loadOffsetIndex(source, rowGroup);
+            PageIndex pageIndex = loadPageIndex(source, rowGroup);
             RowGroupChunks chunks = TestRowGroupChunks.of(footer, 0, schema, indexLoader(source));
             RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, SegmentPool.getDefault());
             RowGroupSurvivor survivor = new RowGroupSurvivor(chunks, Optional.of(mask), true);
@@ -480,17 +479,13 @@ class MaskedWindowRowMaskReadTest {
                     fetcher.fetch(survivor, fetcher.planFor(survivor, Optional.empty()), BudgetReservation.NONE)) {
                 SchemaNode.Primitive leaf =
                         (SchemaNode.Primitive) schema.find(column).orElseThrow();
-                return action.over(fetch.columns().get(0), leaf, offsetIndex);
+                return action.over(fetch.columns().get(0), leaf, pageIndex);
             }
         }
     }
 
-    private static OffsetIndex loadOffsetIndex(ByteRangeSource source, RowGroup rowGroup) {
-        ColumnChunk chunk = rowGroup.columns().get(0);
-        return ParquetFormat.readOffsetIndex(
-                source,
-                chunk.offsetIndexOffset().getAsLong(),
-                chunk.offsetIndexLength().getAsInt());
+    private static PageIndex loadPageIndex(ByteRangeSource source, RowGroup rowGroup) {
+        return TestPageIndexes.readDeclared(source, rowGroup, 0);
     }
 
     private static IndexSectionLoader indexLoader(ByteRangeSource source) {

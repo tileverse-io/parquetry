@@ -94,7 +94,7 @@ class FilterPipelineToggleTest {
         return path -> Optional.ofNullable(map.get(path));
     }
 
-    private static FilterPipeline.ColumnPageStatsLookup noPageIndex() {
+    private static FilterPipeline.PageIndexLookup noPageIndex() {
         return path -> Optional.empty();
     }
 

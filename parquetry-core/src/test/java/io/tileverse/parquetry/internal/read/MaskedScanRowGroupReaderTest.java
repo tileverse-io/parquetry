@@ -53,6 +53,7 @@ import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -219,7 +220,7 @@ class MaskedScanRowGroupReaderTest {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             FileMetaData footer = ParquetFormat.readFooter(source);
             RowGroupChunks chunks = TestRowGroupChunks.of(footer, 0, fileSchema, indexLoader(source));
-            return chunks.offsetIndex(leaf).orElseThrow().pageLocations().size();
+            return chunks.pageLocations(leaf).orElseThrow().pageCount();
         }
     }
 
@@ -591,30 +592,27 @@ class MaskedScanRowGroupReaderTest {
         RowGroupChunks chunks = TestRowGroupChunks.of(footer, 0, fileSchema, indexLoader(source));
         RowGroupFetcher fetcher = TestFetchers.over(source, fileSchema, fileSchema, pool);
         return new ReaderFixture(
-                fetcher, RowGroupSurvivor.full(chunks), offsetIndexes(fileSchema, chunks), chunks.numRows());
+                fetcher, RowGroupSurvivor.full(chunks), pageIndexes(fileSchema, chunks), chunks.numRows());
     }
 
-    private static Map<ColumnPath, OffsetIndex> offsetIndexes(ParquetSchema fileSchema, RowGroupChunks chunks) {
-        Map<ColumnPath, OffsetIndex> indexes = new HashMap<>();
+    private static Map<ColumnPath, PageIndex> pageIndexes(ParquetSchema fileSchema, RowGroupChunks chunks) {
+        Map<ColumnPath, PageIndex> indexes = new HashMap<>();
         for (ColumnPath leaf : fileSchema.leafColumns()) {
-            indexes.put(leaf, chunks.offsetIndex(leaf).orElseThrow());
+            indexes.put(leaf, chunks.pageLocations(leaf).orElseThrow());
         }
         return indexes;
     }
 
     private record ReaderFixture(
-            RowGroupFetcher fetcher,
-            RowGroupSurvivor survivor,
-            Map<ColumnPath, OffsetIndex> offsetIndexes,
-            long numRows) {
+            RowGroupFetcher fetcher, RowGroupSurvivor survivor, Map<ColumnPath, PageIndex> pageIndexes, long numRows) {
 
         RowGroupFetch fetch() throws Exception {
             return fetcher.fetch(survivor, fetcher.planFor(survivor, Optional.empty()), BudgetReservation.NONE);
         }
 
-        /** The decode-time mask for {@code survivingRows}, resolving every leaf's offset index. */
+        /** The decode-time mask for {@code survivingRows}, resolving the page index of each leaf. */
         Optional<RowMask> rowMask(Optional<RowRanges> survivingRows) {
-            return survivingRows.map(rows -> new RowMask(rows, offsetIndexes));
+            return survivingRows.map(rows -> new RowMask(rows, pageIndexes));
         }
 
         /** The rows a scan covers: the row group's rows, or the rows a mask keeps. */

@@ -21,7 +21,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import io.tileverse.parquetry.filter.RowRanges;
-import io.tileverse.parquetry.format.OffsetIndex;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
@@ -45,21 +45,21 @@ public final class RowMasks {
     }
 
     /**
-     * The mask narrowing {@code scanLeaves} to {@code rows}, or empty when one of those leaves has no offset index. A
-     * leaf with no offset index cannot map rows to pages, and its row group is read in full.
+     * The mask narrowing {@code scanLeaves} to {@code rows}, or empty when one of those leaves has no page index. A
+     * leaf with no page index cannot map rows to pages, and its row group is read in full.
      *
-     * <p>Every leaf's offset index is named before the first one is asked for, hence they are read together.
+     * <p>The offset indexes of the leaves are named before the first one is asked for, hence they are read together.
      */
     public static Optional<RowMask> maskFor(RowGroupChunks chunks, RowRanges rows, List<ColumnPath> scanLeaves) {
-        chunks.warmOffsetIndexes(scanLeaves);
-        Map<ColumnPath, OffsetIndex> offsetIndexes = LinkedHashMap.newLinkedHashMap(scanLeaves.size());
+        chunks.warmPageLocations(scanLeaves);
+        Map<ColumnPath, PageIndex> pageIndexes = LinkedHashMap.newLinkedHashMap(scanLeaves.size());
         for (ColumnPath leaf : scanLeaves) {
-            Optional<OffsetIndex> offsetIndex = chunks.offsetIndex(leaf);
-            if (offsetIndex.isEmpty()) {
+            Optional<PageIndex> pages = chunks.pageLocations(leaf);
+            if (pages.isEmpty()) {
                 return Optional.empty();
             }
-            offsetIndexes.put(leaf, offsetIndex.orElseThrow());
+            pageIndexes.put(leaf, pages.orElseThrow());
         }
-        return Optional.of(new RowMask(rows, offsetIndexes));
+        return Optional.of(new RowMask(rows, pageIndexes));
     }
 }

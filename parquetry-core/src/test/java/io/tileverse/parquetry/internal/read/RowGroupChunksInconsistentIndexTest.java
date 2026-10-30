@@ -42,6 +42,7 @@ import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.format.SchemaElement;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -50,9 +51,9 @@ import io.tileverse.parquetry.schema.SchemaBuilder;
 /**
  * A page index not describing the pages of its chunk is left unused, and the chunk reads as one without it. An offset
  * index describes them when its first page starts at the first row of the row group and each later page starts after
- * the previous one, before the last row ends, with the bytes of the pages following one another in the file. A column
- * index does when its null flags and bounds have one entry per page of the offset index, and its null pages have a null
- * count above zero.
+ * the previous one, before the last row ends, with the bytes of the pages following one another inside the chunk. A
+ * column index does when its null flags and bounds have one entry per page of the offset index, and each of its null
+ * pages counts at least one null per row.
  */
 class RowGroupChunksInconsistentIndexTest {
 
@@ -66,8 +67,10 @@ class RowGroupChunksInconsistentIndexTest {
         ColumnIndex bounds = columnIndex(firstRows.length, firstRows.length, firstRows.length);
         RowGroupChunks chunks = chunks(bounds, offsetIndex(firstRows));
 
-        assertThat(chunks.offsetIndex(V).isPresent()).as("offset index in use").isEqualTo(usable);
-        assertThat(chunks.pageStats(V).isPresent()).as("page statistics in use").isEqualTo(usable);
+        assertThat(chunks.pageLocations(V).isPresent())
+                .as("offset index in use")
+                .isEqualTo(usable);
+        assertThat(statisticsInUse(chunks)).as("page statistics in use").isEqualTo(usable);
     }
 
     static Stream<Arguments> offsetIndexes() {
@@ -90,8 +93,10 @@ class RowGroupChunksInconsistentIndexTest {
         OffsetIndex pages = offsetIndex(new long[] {0, 4, 8}, fileOffsets, byteSizes);
         RowGroupChunks chunks = chunks(columnIndex(3, 3, 3), pages);
 
-        assertThat(chunks.offsetIndex(V).isPresent()).as("offset index in use").isEqualTo(usable);
-        assertThat(chunks.pageStats(V).isPresent()).as("page statistics in use").isEqualTo(usable);
+        assertThat(chunks.pageLocations(V).isPresent())
+                .as("offset index in use")
+                .isEqualTo(usable);
+        assertThat(statisticsInUse(chunks)).as("page statistics in use").isEqualTo(usable);
     }
 
     static Stream<Arguments> pageByteLocations() {
@@ -103,7 +108,9 @@ class RowGroupChunksInconsistentIndexTest {
                 Arguments.of("pages sharing bytes", new long[] {4, 8, 20}, eightBytesEach, false),
                 Arguments.of("a page of no bytes", new long[] {4, 12, 20}, new int[] {8, 0, 8}, false),
                 Arguments.of("a first page of no bytes", new long[] {4, 12, 20}, new int[] {0, 8, 8}, false),
-                Arguments.of("a page of a negative size", new long[] {4, 12, 20}, new int[] {8, -1, 8}, false));
+                Arguments.of("a page of a negative size", new long[] {4, 12, 20}, new int[] {8, -1, 8}, false),
+                Arguments.of("a page before the chunk", new long[] {0, 12, 20}, eightBytesEach, false),
+                Arguments.of("a page ending past the chunk", new long[] {4, 12, 64}, eightBytesEach, false));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -113,8 +120,8 @@ class RowGroupChunksInconsistentIndexTest {
         ColumnIndex bounds = columnIndex(nullFlags, minimums, maximums);
         RowGroupChunks chunks = chunks(bounds, offsetIndex(0, 4, 8));
 
-        assertThat(chunks.pageStats(V).isPresent()).as("page statistics in use").isEqualTo(usable);
-        assertThat(chunks.offsetIndex(V)).as("the offset index stays in use").isPresent();
+        assertThat(statisticsInUse(chunks)).as("page statistics in use").isEqualTo(usable);
+        assertThat(chunks.pageLocations(V)).as("the offset index stays in use").isPresent();
     }
 
     static Stream<Arguments> columnIndexes() {
@@ -126,7 +133,7 @@ class RowGroupChunksInconsistentIndexTest {
                 Arguments.of("more entries than pages", 4, 4, 4, false));
     }
 
-    // A page marked as only nulls must count at least one null. Otherwise the column index is ignored.
+    // A page marked as only nulls must count at least one null per row. Otherwise the column index is ignored.
     @ParameterizedTest(name = "{0}")
     @MethodSource("nullPagesAndCounts")
     void nullPagesAgreeWithNullCounts(
@@ -134,8 +141,8 @@ class RowGroupChunksInconsistentIndexTest {
         ColumnIndex bounds = columnIndex(nullPages, nullCounts);
         RowGroupChunks chunks = chunks(bounds, offsetIndex(0, 4, 8));
 
-        assertThat(chunks.pageStats(V).isPresent()).as("page statistics in use").isEqualTo(usable);
-        assertThat(chunks.offsetIndex(V)).as("the offset index stays in use").isPresent();
+        assertThat(statisticsInUse(chunks)).as("page statistics in use").isEqualTo(usable);
+        assertThat(chunks.pageLocations(V)).as("the offset index stays in use").isPresent();
     }
 
     static Stream<Arguments> nullPagesAndCounts() {
@@ -146,7 +153,12 @@ class RowGroupChunksInconsistentIndexTest {
                 Arguments.of("a null page without null counts", secondPageOfNulls, Optional.empty(), true),
                 Arguments.of("null counts of another length", secondPageOfNulls, counts(0L, 0L), true),
                 Arguments.of("a null page counting no nulls", secondPageOfNulls, counts(0L, 0L, 0L), false),
+                Arguments.of("a null page short of its rows", secondPageOfNulls, counts(0L, 2L, 0L), false),
                 Arguments.of("null pages with negative counts", pagesOfNulls, counts(-1L, -1L, -1L), false));
+    }
+
+    private static boolean statisticsInUse(RowGroupChunks chunks) {
+        return chunks.pageIndex(V).filter(PageIndex::hasStatistics).isPresent();
     }
 
     private static Optional<List<Long>> counts(Long... perPage) {

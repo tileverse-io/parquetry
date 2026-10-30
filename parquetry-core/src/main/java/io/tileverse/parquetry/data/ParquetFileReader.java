@@ -45,12 +45,10 @@ import io.tileverse.parquetry.filter.explain.RowGroupPlan;
 import io.tileverse.parquetry.filter.explain.Tier;
 import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.format.BoundingBox;
-import io.tileverse.parquetry.format.OffsetIndex;
-import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.internal.filter.FilterPipeline;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.BloomFilterLookup;
-import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStats;
-import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStatsLookup;
+import io.tileverse.parquetry.internal.filter.FilterPipeline.PageIndexLookup;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.filter.PredicateNormalizer;
 import io.tileverse.parquetry.internal.filter.StatsEvaluator;
 import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
@@ -1344,43 +1342,33 @@ public final class ParquetFileReader {
                     chunks.numRows(),
                     statsLookup(chunks),
                     spatialBounds,
-                    pageStatsLookupFor(chunks),
+                    pageIndexLookupFor(chunks),
                     bloomLookupFor(chunks),
                     projectedCompressedBytes(chunks, projectedLeaves),
                     rowPositionDeletes ? fileOffsets.get(chunks) : 0L,
-                    rowPositionDeletes ? rowPositionPageFirstRows(chunks, options) : List.of()));
+                    rowPositionDeletes ? rowPositionPages(chunks, options) : Optional.empty()));
         }
         return inputs;
     }
 
     /**
-     * The row-group-relative first-row index of each page, taken from any one leaf column's offset index, used by the
-     * row-position delete tier to find fully-deleted pages. The synthesized {@code $pos} column has no offset index of
-     * its own; every column in a row group shares the same row boundaries, hence any real leaf's page first-row indexes
-     * partition the row group into spans the position math can reason about. Returns an empty list when the
-     * column-index filter is off or no leaf exposes an offset index, in which case the page tier stays inert.
+     * The pages of any one leaf column, used by the row-position delete tier to find fully-deleted pages. The
+     * synthesized {@code $pos} column has no page index of its own. The columns of a row group share the same row
+     * boundaries, hence the pages of any real leaf partition the row group into spans usable by the position math.
+     * Empty when the column-index filter is off or no leaf has a page index, in which case the page tier stays inert.
      */
-    private List<Long> rowPositionPageFirstRows(RowGroupChunks chunks, ReadOptions options) {
+    private Optional<PageIndex> rowPositionPages(RowGroupChunks chunks, ReadOptions options) {
         // The page boundaries cost an offset-index read, skipped when the page tier is off.
         if (!options.useColumnIndexFilter()) {
-            return List.of();
+            return Optional.empty();
         }
         for (ColumnPath leaf : fileSchema.leafColumns()) {
-            Optional<OffsetIndex> offsetIndex = chunks.offsetIndex(leaf);
-            if (offsetIndex.isPresent()) {
-                return pageFirstRowIndexes(offsetIndex.orElseThrow());
+            Optional<PageIndex> pages = chunks.pageLocations(leaf);
+            if (pages.isPresent()) {
+                return pages;
             }
         }
-        return List.of();
-    }
-
-    private static List<Long> pageFirstRowIndexes(OffsetIndex offsetIndex) {
-        List<PageLocation> pageLocations = offsetIndex.pageLocations();
-        List<Long> firstRows = new ArrayList<>(pageLocations.size());
-        for (PageLocation page : pageLocations) {
-            firstRows.add(page.firstRowIndex());
-        }
-        return firstRows;
+        return Optional.empty();
     }
 
     /**
@@ -1432,20 +1420,20 @@ public final class ParquetFileReader {
 
     /**
      * Returns the column-index tier lookup for {@code chunks}. Each call to the returned lookup delegates to
-     * {@link RowGroupChunks#pageStats}, which memoizes the result: each column's index sections are read at most once.
-     * The tier warms every consultable column before the first lookup, and the row group reads their index sections in
+     * {@link RowGroupChunks#pageIndex}, which memoizes the result: each column's index sections are read at most once.
+     * The tier warms each consultable column before the first lookup, and the row group reads their index sections in
      * one call.
      */
-    private ColumnPageStatsLookup pageStatsLookupFor(RowGroupChunks chunks) {
-        return new ColumnPageStatsLookup() {
+    private PageIndexLookup pageIndexLookupFor(RowGroupChunks chunks) {
+        return new PageIndexLookup() {
             @Override
-            public Optional<ColumnPageStats> get(ColumnPath path) {
-                return chunks.pageStats(path);
+            public Optional<PageIndex> get(ColumnPath path) {
+                return chunks.pageIndex(path);
             }
 
             @Override
             public void warm(List<ColumnPath> paths) {
-                chunks.warmPageStats(paths);
+                chunks.warmPageIndexes(paths);
             }
         };
     }
@@ -1540,8 +1528,8 @@ public final class ParquetFileReader {
     /**
      * Builds one decode mask per survivor, parallel to {@code survivors}. A mask is present only when page-skip is both
      * wanted and safe for that row group: {@code useColumnIndexFilter} on, the column-index tier narrowed the row set,
-     * every scanned column flat, and every scanned column has an offset index. Otherwise the entry is empty and the row
-     * group decodes in full.
+     * and the scanned columns flat, each with a page index. Otherwise the entry is empty and the row group decodes in
+     * full.
      */
     private List<Optional<RowMask>> decodeMasksFor(
             List<RowGroupSurvivor> survivors, ParquetSchema scanSchema, ReadOptions options) {

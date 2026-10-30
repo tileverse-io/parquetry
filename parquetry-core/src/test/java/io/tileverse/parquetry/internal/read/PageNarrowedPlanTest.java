@@ -59,6 +59,7 @@ import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
@@ -125,8 +126,8 @@ class PageNarrowedPlanTest {
     void maskNarrowsToSurvivingRunsPlusDictionaryPrefixWhenPresent() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
-            assertThat(fixture.offsetIndex(A).pageLocations()).hasSize(PAGE_COUNT);
-            assertThat(fixture.offsetIndex(B).pageLocations()).hasSize(PAGE_COUNT);
+            assertThat(fixture.pageIndex(A).locations()).hasSize(PAGE_COUNT);
+            assertThat(fixture.pageIndex(B).locations()).hasSize(PAGE_COUNT);
 
             FetchPlan whole = fixture.plan(Optional.empty());
             FetchPlan narrowed = fixture.plan(Optional.of(fixture.maskOver(firstAndLastRows())));
@@ -135,7 +136,7 @@ class PageNarrowedPlanTest {
                     .as("skipping eighteen of twenty pages per column must read fewer bytes")
                     .isLessThan(whole.requestedBytes());
             for (ColumnPath path : List.of(A, B)) {
-                List<PageLocation> pages = fixture.offsetIndex(path).pageLocations();
+                List<PageLocation> pages = fixture.pageIndex(path).locations();
                 assertPageFetched(narrowed, pages.get(0), path);
                 assertPageFetched(narrowed, pages.get(LAST_PAGE), path);
                 assertPageNotFetched(narrowed, pages.get(DEAD_MIDDLE_PAGE), path);
@@ -167,78 +168,12 @@ class PageNarrowedPlanTest {
     void columnMissingFromTheMaskFallsBackToItsWholeChunk() {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
-            RowMask maskWithoutB = new RowMask(firstAndLastRows(), Map.of(A, fixture.offsetIndex(A)));
+            RowMask maskWithoutB = new RowMask(firstAndLastRows(), Map.of(A, fixture.pageIndex(A)));
 
             FetchPlan plan = fixture.plan(Optional.of(maskWithoutB));
 
             assertThat(runOrdinals(plan, A)).containsExactly(0, LAST_PAGE);
             assertWholeChunk(plan, fixture.meta(B), B);
-        }
-    }
-
-    @Test
-    void malformedFirstDataPageOffsetFallsBackToWholeChunk() {
-        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            Fixture fixture = Fixture.open(source);
-            OffsetIndex beforeTheChunk =
-                    withFirstPageOffset(fixture.offsetIndex(A), fixture.meta(A).chunkStart() - 1);
-            RowMask mask = new RowMask(firstAndLastRows(), Map.of(A, beforeTheChunk, B, fixture.offsetIndex(B)));
-
-            FetchPlan plan = fixture.plan(Optional.of(mask));
-
-            assertWholeChunk(plan, fixture.meta(A), A);
-            assertThat(runOrdinals(plan, B))
-                    .as("one column's unusable offset index does not widen the other")
-                    .containsExactly(0, LAST_PAGE);
-        }
-    }
-
-    @Test
-    void lastPageEndingPastTheChunkFallsBackToWholeChunk() {
-        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            Fixture fixture = Fixture.open(source);
-            OffsetIndex spillingPastTheChunk =
-                    withLastPageEndingAt(fixture.offsetIndex(A), chunkEndOf(fixture.meta(A)) + 1);
-            RowMask mask = new RowMask(firstAndLastRows(), Map.of(A, spillingPastTheChunk, B, fixture.offsetIndex(B)));
-
-            FetchPlan plan = fixture.plan(Optional.of(mask));
-
-            assertWholeChunk(plan, fixture.meta(A), A);
-            assertThat(runOrdinals(plan, B))
-                    .as("one column's out-of-extent offset index does not widen the other")
-                    .containsExactly(0, LAST_PAGE);
-        }
-    }
-
-    @Test
-    void middlePageOutsideTheChunkFallsBackToWholeChunk() {
-        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            Fixture fixture = Fixture.open(source);
-            OffsetIndex middlePagePastTheChunk =
-                    withPageOffset(fixture.offsetIndex(A), DEAD_MIDDLE_PAGE, chunkEndOf(fixture.meta(A)));
-            RowMask mask =
-                    new RowMask(firstAndLastRows(), Map.of(A, middlePagePastTheChunk, B, fixture.offsetIndex(B)));
-
-            FetchPlan plan = fixture.plan(Optional.of(mask));
-
-            assertWholeChunk(plan, fixture.meta(A), A);
-            assertThat(runOrdinals(plan, B))
-                    .as("an out-of-extent page between in-extent extremes must not be narrowed on either")
-                    .containsExactly(0, LAST_PAGE);
-        }
-    }
-
-    @Test
-    void firstDataPageAtTheChunkEndFallsBackToWholeChunk() {
-        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            Fixture fixture = Fixture.open(source);
-            OffsetIndex pastTheChunk = withFirstPageOffset(fixture.offsetIndex(A), chunkEndOf(fixture.meta(A)));
-            RowMask mask = new RowMask(firstAndLastRows(), Map.of(A, pastTheChunk, B, fixture.offsetIndex(B)));
-
-            FetchPlan plan = fixture.plan(Optional.of(mask));
-
-            assertWholeChunk(plan, fixture.meta(A), A);
-            assertThat(runOrdinals(plan, B)).containsExactly(0, LAST_PAGE);
         }
     }
 
@@ -257,7 +192,7 @@ class PageNarrowedPlanTest {
                     .isEqualTo(dictionaryPageOffset);
             assertThat(prefix.length())
                     .isEqualTo(Math.toIntExact(
-                            fixture.offsetIndex(B).pageLocations().get(0).offset() - dictionaryPageOffset));
+                            fixture.pageIndex(B).locations().get(0).offset() - dictionaryPageOffset));
         }
     }
 
@@ -399,8 +334,7 @@ class PageNarrowedPlanTest {
                 .as("the fixture's column %s must be dictionary-encoded for the prefix to exist", path.dot())
                 .isPresent();
         FetchUnit prefix = dictionaryPrefixOf(plan, path);
-        long firstDataPageOffset =
-                fixture.offsetIndex(path).pageLocations().get(0).offset();
+        long firstDataPageOffset = fixture.pageIndex(path).locations().get(0).offset();
         assertThat(prefix.fileOffset()).isEqualTo(meta.chunkStart());
         assertThat(prefix.length()).isEqualTo(Math.toIntExact(firstDataPageOffset - meta.chunkStart()));
     }
@@ -448,11 +382,6 @@ class PageNarrowedPlanTest {
                 .orElseThrow();
     }
 
-    /** The byte just past the chunk's last, the exclusive end of the extent the read path trusts an offset index in. */
-    private static long chunkEndOf(ChunkMeta meta) {
-        return meta.chunkStart() + meta.totalCompressedSize();
-    }
-
     // -------------------------------------------------------------------------
     // Fixture
     // -------------------------------------------------------------------------
@@ -473,8 +402,8 @@ class PageNarrowedPlanTest {
             return chunks.chunk(path).orElseThrow();
         }
 
-        OffsetIndex offsetIndex(ColumnPath path) {
-            return chunks.offsetIndex(path).orElseThrow();
+        PageIndex pageIndex(ColumnPath path) {
+            return chunks.pageLocations(path).orElseThrow();
         }
 
         RowGroupSurvivor survivor() {
@@ -486,7 +415,7 @@ class PageNarrowedPlanTest {
         }
 
         RowMask maskOver(RowRanges surviving) {
-            return new RowMask(surviving, Map.of(A, offsetIndex(A), B, offsetIndex(B)));
+            return new RowMask(surviving, Map.of(A, pageIndex(A), B, pageIndex(B)));
         }
 
         /** A whole-chunk plan with every unit of {@code path} removed. The fetch must refuse to slice it. */
@@ -532,7 +461,7 @@ class PageNarrowedPlanTest {
 
         /** Reads the bytes of {@code path}'s first data page (its header plus payload) into {@code arena}. */
         MemorySegment readFirstDataPage(ColumnPath path, Arena arena) {
-            PageLocation first = offsetIndex(path).pageLocations().get(0);
+            PageLocation first = pageIndex(path).locations().get(0);
             MemorySegment page = arena.allocate(first.compressedPageSize());
             source.readFully(first.offset(), page);
             return page.asReadOnly();
@@ -541,7 +470,7 @@ class PageNarrowedPlanTest {
         /** Reads the bytes between {@code path}'s chunk start and its first data page: the dictionary page. */
         MemorySegment readDictionaryPrefix(ColumnPath path, Arena arena) {
             long start = meta(path).chunkStart();
-            long firstDataPageOffset = offsetIndex(path).pageLocations().get(0).offset();
+            long firstDataPageOffset = pageIndex(path).locations().get(0).offset();
             MemorySegment prefix = arena.allocate(firstDataPageOffset - start);
             source.readFully(start, prefix);
             return prefix.asReadOnly();
@@ -602,29 +531,6 @@ class PageNarrowedPlanTest {
                 chunk.columnIndexLength(),
                 chunk.cryptoMetadata(),
                 chunk.encryptedColumnMetadata());
-    }
-
-    /** The same page locations with the first one moved to {@code offset}, which the chunk cannot contain. */
-    private static OffsetIndex withFirstPageOffset(OffsetIndex offsetIndex, long offset) {
-        return withPageOffset(offsetIndex, 0, offset);
-    }
-
-    /** The same page locations with the one at {@code index} moved to {@code offset}, every other left in place. */
-    private static OffsetIndex withPageOffset(OffsetIndex offsetIndex, int index, long offset) {
-        List<PageLocation> pages = new ArrayList<>(offsetIndex.pageLocations());
-        PageLocation page = pages.get(index);
-        pages.set(index, new PageLocation(offset, page.compressedPageSize(), page.firstRowIndex()));
-        return new OffsetIndex(pages, offsetIndex.unencodedByteArrayDataBytes());
-    }
-
-    /** The same page locations with the last one stretched to end at {@code end}, leaving every offset in place. */
-    private static OffsetIndex withLastPageEndingAt(OffsetIndex offsetIndex, long end) {
-        List<PageLocation> pages = new ArrayList<>(offsetIndex.pageLocations());
-        int lastIndex = pages.size() - 1;
-        PageLocation last = pages.get(lastIndex);
-        int stretched = Math.toIntExact(end - last.offset());
-        pages.set(lastIndex, new PageLocation(last.offset(), stretched, last.firstRowIndex()));
-        return new OffsetIndex(pages, offsetIndex.unencodedByteArrayDataBytes());
     }
 
     private static RowRanges firstAndLastRows() {
