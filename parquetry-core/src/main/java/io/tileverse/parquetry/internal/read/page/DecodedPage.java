@@ -36,7 +36,7 @@ import lombok.NonNull;
  * {@link Encoding#PLAIN} and are not affected.
  *
  * @param valueCount values yielded by this page (matches the page header's {@code numValues})
- * @param valuesEncoding the value encoding to drive {@code DecoderFactory.decoderFor(...)}; already normalized
+ * @param valuesEncoding the value encoding that selects the page decoder; already normalized
  * @param repLevelBytes Arena-allocated segment of rep-level bytes; {@link MemorySegment#NULL} when the column has
  *     {@code maxRep == 0}
  * @param defLevelBytes Arena-allocated segment of def-level bytes; {@link MemorySegment#NULL} when the column has

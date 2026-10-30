@@ -47,7 +47,7 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
  * encoding[, byteWidth, dictionary])} to a freshly constructed decoder; holds no page state.
  */
 // A decoder's element type is selected at runtime from the page encoding and column kind; the wildcard return
-// type is intrinsic to these factories (matching DecoderFactory and FilterPipeline).
+// type is intrinsic to these factories.
 @SuppressWarnings("java:S1452")
 final class PageDecoders {
 

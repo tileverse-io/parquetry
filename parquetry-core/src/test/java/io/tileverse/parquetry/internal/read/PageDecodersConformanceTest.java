@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.internal.read.page;
+package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -47,6 +47,9 @@ import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.internal.read.page.Dictionary;
+import io.tileverse.parquetry.internal.read.page.DictionaryDecoder;
+import io.tileverse.parquetry.internal.read.page.PageDecoder;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -56,8 +59,8 @@ import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
  * Decoder conformance test: for each fixture file, walks every column chunk page by page, decompresses via
- * {@link Compression}, dispatches via {@link DecoderFactory}, and asserts that the total decoded value count matches
- * the column's {@code numValues} metadata.
+ * {@link Compression}, dispatches via {@link PageDecoders}, and asserts that the total decoded value count matches the
+ * column's {@code numValues} metadata.
  *
  * <p>Scope: REQUIRED, non-nested scalar columns only. Optional or repeated columns are skipped with an explicit
  * {@link Assumptions#abort} message, because handling them correctly requires rep/def level decoding and Dremel record
@@ -70,7 +73,7 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * <p>DataPage V2: level byte lengths are carried in the page header's {@code repetitionLevelsByteLength} and
  * {@code definitionLevelsByteLength} fields. Those uncompressed bytes precede the optionally-compressed value portion.
  */
-class DecoderFactoryConformanceTest {
+class PageDecodersConformanceTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("fixtures")
@@ -258,7 +261,8 @@ class DecoderFactoryConformanceTest {
             int numValues,
             List<Object> out) {
 
-        PageDecoder<?> decoder = DecoderFactory.decoderFor(encoding, kind, typeLength, dictionary);
+        PageDecoder<?> decoder =
+                PageDecoders.decoderFor(kind, typeLength::orElseThrow, encoding, dictionary.orElse(null));
         decoder.load(MemorySegment.ofBuffer(valuePayload), numValues);
         for (int i = 0; i < numValues; i++) {
             out.add(decoder.next());
@@ -305,7 +309,7 @@ class DecoderFactoryConformanceTest {
         };
     }
 
-    /** Functional interface matching the shape of the fixture generators in {@link TestFixtures}. */
+    /** Functional interface matching the shape of the fixture generators below. */
     @FunctionalInterface
     interface TestFixtureRef {
         Path generate(Path tmpDir) throws Exception;
@@ -315,18 +319,18 @@ class DecoderFactoryConformanceTest {
         return Stream.of(
                 // flatIntSnappy: 5 REQUIRED scalar columns (int, long, float, double, bool), Snappy, 100 rows.
                 // All columns are REQUIRED so no def/rep level noise.
-                Arguments.of("flat-int-snappy", (TestFixtureRef) DecoderFactoryConformanceTest::writeFlatIntSnappy),
+                Arguments.of("flat-int-snappy", (TestFixtureRef) PageDecodersConformanceTest::writeFlatIntSnappy),
 
                 // multiRowGroup: REQUIRED int column, 3+ row groups. Exercises multi-row-group iteration.
-                Arguments.of("multi-rowgroup", (TestFixtureRef) DecoderFactoryConformanceTest::writeMultiRowGroup),
+                Arguments.of("multi-rowgroup", (TestFixtureRef) PageDecodersConformanceTest::writeMultiRowGroup),
 
                 // deltaEncoded: REQUIRED int column with PARQUET_2_0 writer -> DELTA_BINARY_PACKED.
-                Arguments.of("delta-encoded", (TestFixtureRef) DecoderFactoryConformanceTest::writeDeltaEncoded),
+                Arguments.of("delta-encoded", (TestFixtureRef) PageDecodersConformanceTest::writeDeltaEncoded),
 
                 // nestedList, nestedMap: non-REQUIRED columns - skipped via Assumptions.abort in the test body.
                 // Listed to document the expected skip behaviour.
-                Arguments.of("nested-list", (TestFixtureRef) DecoderFactoryConformanceTest::writeNestedList),
-                Arguments.of("nested-map", (TestFixtureRef) DecoderFactoryConformanceTest::writeNestedMap));
+                Arguments.of("nested-list", (TestFixtureRef) PageDecodersConformanceTest::writeNestedList),
+                Arguments.of("nested-map", (TestFixtureRef) PageDecodersConformanceTest::writeNestedMap));
     }
 
     // --- Inline fixture generators (mirrors parquetry-format TestFiles and parquetry-core TestFixtures) ---
