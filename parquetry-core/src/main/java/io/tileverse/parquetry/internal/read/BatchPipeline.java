@@ -65,7 +65,8 @@ public final class BatchPipeline {
      */
     @MustBeClosed
     public static Stream<ParquetRecordBatch> batches(@NonNull ParallelDecodeCoordinator coordinator) {
-        return stream(new BatchIterator(coordinator));
+        RowGroupWalk walk = new RowGroupWalk(coordinator, null);
+        return stream(new BatchIterator(walk));
     }
 
     /**
@@ -82,7 +83,8 @@ public final class BatchPipeline {
             Predicate recordFilter,
             @NonNull ParquetSchema outputSchema,
             @NonNull Optional<SpatialDecimationGate> gate) {
-        return stream(new FilteredBatchIterator(coordinator, recordFilter, outputSchema, gate.orElse(null)));
+        RowGroupWalk walk = new RowGroupWalk(coordinator, recordFilter);
+        return stream(new FilteredBatchIterator(walk, outputSchema, gate.orElse(null)));
     }
 
     @MustBeClosed
@@ -136,15 +138,9 @@ public final class BatchPipeline {
             boolean wantsTimings,
             @NonNull Optional<SpatialDecimationGate> gate,
             @NonNull Consumer<ParquetRecordBatch> batchObserver) {
+        RowGroupWalk walk = new RowGroupWalk(coordinator, recordFilter);
         RowIterator<T> iterator = new RowIterator<>(
-                coordinator,
-                materializer,
-                outputSchema,
-                recordFilter,
-                batchObserver,
-                observe,
-                wantsTimings,
-                gate.orElse(null));
+                walk, materializer, outputSchema, batchObserver, observe, wantsTimings, gate.orElse(null));
         Spliterator<T> spliterator =
                 Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED | Spliterator.NONNULL);
         return StreamSupport.stream(spliterator, /*parallel*/ false).onClose(iterator::close);
@@ -153,7 +149,7 @@ public final class BatchPipeline {
     /**
      * Counts rows matching {@code predicate} across the coordinator's batches with no materialization. Each batch is
      * evaluated columnar-style ({@link VectorizedPredicateEvaluator}) and its matching-row bitset cardinality is
-     * summed. Every batch is closed as it is consumed; closing the stream cascades to the coordinator. When
+     * summed. Batches are closed as they are consumed, and the coordinator is closed when the count ends. When
      * {@code gate} is present, the matching-row bitset is decimated through it before counting.
      */
     public static long countMatching(
@@ -167,17 +163,14 @@ public final class BatchPipeline {
 
     /** The matching-row count for one batch, decimated through {@code gate} when one is present. */
     private static long countMatchingRows(Predicate predicate, ParquetRecordBatch batch, SpatialDecimationGate gate) {
-        BitSet matches = VectorizedPredicateEvaluator.eval(predicate, batch);
-        if (gate != null) {
-            gate.narrow(batch, matches);
-        }
+        BitSet matches = survivorsOf(batch, predicate, gate);
         return matches.cardinality();
     }
 
     /**
      * Sums the rows of the batches the coordinator emits, testing none of them: a masked scan applied the predicate
-     * during decode, and every row of every batch it emits is a matching row. Every batch is closed as it is consumed;
-     * closing the stream cascades to the coordinator.
+     * during decode, and every row of every batch it emits is a matching row. Batches are closed as they are consumed,
+     * and the coordinator is closed when the count ends.
      */
     public static long countEmitted(@NonNull ParallelDecodeCoordinator coordinator, boolean observe) {
         return sumMatchedRows(coordinator, observe, ParquetRecordBatch::rowCount);
@@ -185,21 +178,19 @@ public final class BatchPipeline {
 
     /**
      * Drains the coordinator's batches and sums the rows {@code matchedRows} reports for each, tallying them into the
-     * batch's own row group when {@code observe} is on. Every batch is closed as it is consumed; closing the stream
-     * cascades to the coordinator.
+     * batch's own row group when {@code observe} is on. Batches are closed as they are consumed, and the coordinator is
+     * closed when the drain ends.
      */
     private static long sumMatchedRows(
             ParallelDecodeCoordinator coordinator, boolean observe, ToLongFunction<ParquetRecordBatch> matchedRows) {
         long total = 0L;
-        BatchIterator iterator = new BatchIterator(coordinator);
-        try (Stream<ParquetRecordBatch> batches = stream(iterator)) {
-            Iterator<ParquetRecordBatch> it = batches.iterator();
-            while (it.hasNext()) {
-                try (ParquetRecordBatch batch = it.next()) {
+        try (RowGroupWalk walk = new RowGroupWalk(coordinator, null)) {
+            while (walk.hasNextBatch()) {
+                try (ParquetRecordBatch batch = walk.nextBatch()) {
                     long matched = matchedRows.applyAsLong(batch);
                     total += matched;
                     if (observe) {
-                        iterator.addMatchedToCurrentRowGroup(matched);
+                        walk.addMatchedRows(matched);
                     }
                 }
             }
@@ -212,24 +203,15 @@ public final class BatchPipeline {
      * coordinator's batches into {@code accumulator}, with no materialization. A {@code null} {@code predicate}
      * contributes every row (the masked scan already applied it, or the scan is unfiltered); a null geometry cell is
      * skipped. The rows each batch contributes are tallied into the row group that produced it, which is what its read
-     * event reports as matched. Every batch is closed as it is consumed; closing the stream cascades to the
-     * coordinator.
+     * event reports as matched. Batches are closed as they are consumed, and the coordinator is closed when the fold
+     * ends.
      */
     public static void boundsMatching(
             @NonNull ParallelDecodeCoordinator coordinator,
             Predicate predicate,
             @NonNull ColumnPath geometryColumn,
             @NonNull BoundsAccumulator accumulator) {
-        BatchIterator iterator = new BatchIterator(coordinator);
-        try (Stream<ParquetRecordBatch> batches = stream(iterator)) {
-            Iterator<ParquetRecordBatch> it = batches.iterator();
-            while (it.hasNext()) {
-                try (ParquetRecordBatch batch = it.next()) {
-                    long contributed = foldBatchBounds(predicate, geometryColumn, batch, accumulator);
-                    iterator.addMatchedToCurrentRowGroup(contributed);
-                }
-            }
-        }
+        sumMatchedRows(coordinator, true, batch -> foldBatchBounds(predicate, geometryColumn, batch, accumulator));
     }
 
     /**
@@ -260,96 +242,173 @@ public final class BatchPipeline {
         accumulator.unionXy(envelope.minX(), envelope.minY(), envelope.maxX(), envelope.maxY());
     }
 
-    // ---- iterators ----
+    /** Whether each row of a batch survives without a mask: there is neither a filter nor a gate to apply. */
+    private static boolean eachRowSurvives(Predicate filter, SpatialDecimationGate gate) {
+        return filter == null && gate == null;
+    }
 
     /**
-     * Pulls one {@link ParquetRecordBatch} at a time. Advances to the next decoded row group when the current one is
-     * drained, closing the previous row group's undelivered batches before pulling the next one from the coordinator.
+     * The surviving rows of {@code batch}: the rows matched by {@code filter}, or every row without one, narrowed
+     * through {@code gate} when one is present.
      */
-    private static final class BatchIterator implements CloseableBatchIterator {
+    private static BitSet survivorsOf(ParquetRecordBatch batch, Predicate filter, SpatialDecimationGate gate) {
+        BitSet survivors =
+                filter == null ? allRows(batch.rowCount()) : VectorizedPredicateEvaluator.eval(filter, batch);
+        if (gate != null) {
+            gate.narrow(batch, survivors);
+        }
+        return survivors;
+    }
+
+    /** A bitset with every row in {@code [0, rowCount)} set, the all-rows start for a gate narrow with no filter. */
+    private static BitSet allRows(int rowCount) {
+        BitSet rows = new BitSet(rowCount);
+        rows.set(0, rowCount);
+        return rows;
+    }
+
+    /**
+     * Walks the batches of the coordinator's row groups in file order, closing each drained row group before taking the
+     * next. It is the one place that takes row groups from the coordinator and closes them, for the iterators and the
+     * drains alike.
+     *
+     * <p>The filter of a row group is resolved once, when the walk takes it: the record filter when the row group still
+     * needs per-row evaluation, or {@code null} when its statistics already proved that each row matches (the MATCHED
+     * outcome). The walk adds the matched rows and the record-filter time of the current row group to it just before
+     * closing it, because that close fires its read event.
+     *
+     * <p>{@link #close()} closes the current row group, then the coordinator, and throws the first failure once both
+     * steps ran. A failure of the first step must not skip the second: a coordinator left open would keep its
+     * speculative producers parked, each holding a compute slot.
+     */
+    private static final class RowGroupWalk implements AutoCloseable {
 
         private final ParallelDecodeCoordinator coordinator;
-        private DecodedRowGroup currentRowGroup;
+        private final Predicate recordFilter;
 
-        BatchIterator(ParallelDecodeCoordinator coordinator) {
+        private DecodedRowGroup current;
+        private Predicate currentFilter;
+        private long matchedRows;
+        private long recordFilterNanos;
+
+        RowGroupWalk(ParallelDecodeCoordinator coordinator, Predicate recordFilter) {
             this.coordinator = coordinator;
+            this.recordFilter = recordFilter;
         }
 
-        @Override
-        public boolean hasNext() {
-            while (currentRowGroup == null || !currentRowGroup.hasNext()) {
-                closeCurrentRowGroup();
-                DecodedRowGroup next;
-                try {
-                    next = coordinator.next();
-                } catch (IOException e) {
-                    throw new UncheckedIOException("Row group decode failed", e);
-                }
-                if (next == null) {
+        /** Whether a batch remains, closing drained row groups and taking the next ones until one has a batch left. */
+        boolean hasNextBatch() {
+            while (current == null || !current.hasNext()) {
+                closeRowGroup();
+                if (!takeNextRowGroup()) {
                     return false;
                 }
-                currentRowGroup = next;
             }
             return true;
         }
 
-        @Override
-        public ParquetRecordBatch next() {
-            if (!hasNext()) {
+        /** The next batch in file order; the caller owns it and closes it. */
+        ParquetRecordBatch nextBatch() {
+            if (!hasNextBatch()) {
                 throw new NoSuchElementException();
             }
-            return currentRowGroup.next();
+            return current.next();
         }
 
-        /**
-         * Attributes {@code matched} rows to the row group that produced the batch just returned by {@link #next()}.
-         * The count path calls it with the rows the batch matched, the bounds fold with the rows it contributed.
-         */
-        void addMatchedToCurrentRowGroup(long matched) {
-            currentRowGroup.addMatchedRows(matched);
+        /** The filter of the current row group, {@code null} when every row of it matches or the read has none. */
+        Predicate filter() {
+            return currentFilter;
+        }
+
+        /** Attributes {@code rows} matched rows to the current row group. */
+        void addMatchedRows(long rows) {
+            matchedRows += rows;
+        }
+
+        /** Attributes {@code nanos} of record-filter time to the current row group. */
+        void addRecordFilterNanos(long nanos) {
+            recordFilterNanos += nanos;
         }
 
         @Override
         public void close() {
-            closeCurrentRowGroup();
-            coordinator.close();
+            closeEach(this::closeRowGroup, coordinator::close);
         }
 
-        private void closeCurrentRowGroup() {
-            DecodedRowGroup rowGroup = currentRowGroup;
-            currentRowGroup = null;
-            if (rowGroup != null) {
-                rowGroup.close();
+        private boolean takeNextRowGroup() {
+            DecodedRowGroup next;
+            try {
+                next = coordinator.next();
+            } catch (IOException e) {
+                throw new UncheckedIOException("Row group decode failed", e);
             }
+            if (next == null) {
+                return false;
+            }
+            current = next;
+            currentFilter = next.recordEvalRequired() ? recordFilter : null;
+            return true;
+        }
+
+        // Closes only the group's undelivered batches; a batch already handed out is owned by its caller.
+        private void closeRowGroup() {
+            DecodedRowGroup rowGroup = current;
+            current = null;
+            currentFilter = null;
+            if (rowGroup == null) {
+                return;
+            }
+            rowGroup.addMatchedRows(matchedRows);
+            rowGroup.addRecordFilterNanos(recordFilterNanos);
+            matchedRows = 0L;
+            recordFilterNanos = 0L;
+            rowGroup.close();
+        }
+    }
+
+    // ---- iterators ----
+
+    /** Pulls one {@link ParquetRecordBatch} at a time, as decoded. */
+    private static final class BatchIterator implements CloseableBatchIterator {
+
+        private final RowGroupWalk walk;
+
+        BatchIterator(RowGroupWalk walk) {
+            this.walk = walk;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return walk.hasNextBatch();
+        }
+
+        @Override
+        public ParquetRecordBatch next() {
+            return walk.nextBatch();
+        }
+
+        @Override
+        public void close() {
+            walk.close();
         }
     }
 
     /**
      * Pulls one {@link ParquetRecordBatch} at a time with the record filter applied exactly. Each pulled batch is
      * narrowed to the output leaves and compacted to its matching rows; a batch with no matches is closed and skipped,
-     * never emitted. The per-group filter is resolved once when a group is taken (the row group's statistics may
-     * already prove every row matches, which skips evaluation and only narrows). It uses a compute-next pattern because
-     * a pulled batch may be skipped.
+     * never emitted. It uses a compute-next pattern because a pulled batch may be skipped.
      */
     private static final class FilteredBatchIterator implements CloseableBatchIterator {
 
-        private final ParallelDecodeCoordinator coordinator;
-        private final Predicate recordFilter;
+        private final RowGroupWalk walk;
         private final ParquetSchema outputSchema;
         private final SpatialDecimationGate gate;
 
-        private DecodedRowGroup currentRowGroup;
-        private Predicate currentFilter;
         private boolean hasComputedNext;
         private ParquetRecordBatch next;
 
-        FilteredBatchIterator(
-                ParallelDecodeCoordinator coordinator,
-                Predicate recordFilter,
-                ParquetSchema outputSchema,
-                SpatialDecimationGate gate) {
-            this.coordinator = coordinator;
-            this.recordFilter = recordFilter;
+        FilteredBatchIterator(RowGroupWalk walk, ParquetSchema outputSchema, SpatialDecimationGate gate) {
+            this.walk = walk;
             this.outputSchema = outputSchema;
             this.gate = gate;
         }
@@ -375,28 +434,25 @@ public final class BatchPipeline {
         }
 
         private ParquetRecordBatch advance() {
-            while (true) {
-                ParquetRecordBatch source = pullNextSourceBatch();
-                if (source == null) {
-                    return null;
-                }
-                ParquetRecordBatch survivor = filter(source);
+            while (walk.hasNextBatch()) {
+                ParquetRecordBatch survivor = filter(walk.nextBatch());
                 if (survivor != null) {
                     return survivor;
                 }
             }
+            return null;
         }
 
-        // Once pullNextSourceBatch hands a batch here, the row group no longer owns it (the same semantics as
-        // BatchIterator, where a pulled batch becomes the caller's). This method either closes the source (no match),
-        // returns a survivor that owns the source (closed downstream), or returns the source itself when it is already
-        // output-shaped.
+        // Once the walk hands a batch here, the row group no longer owns it. This method either closes the source (no
+        // match), returns a survivor that owns the source (closed downstream), or returns the source narrowed when
+        // each of its rows survives.
         private ParquetRecordBatch filter(ParquetRecordBatch source) {
-            if (gate == null && currentFilter == null) {
+            Predicate filter = walk.filter();
+            if (eachRowSurvives(filter, gate)) {
                 return matched(FilteredRecordBatch.narrowed(source, outputSchema), source.rowCount());
             }
-            BitSet matches = survivorsOf(source);
-            int matchedRows = matches.cardinality();
+            BitSet survivors = survivorsOf(source, filter, gate);
+            int matchedRows = survivors.cardinality();
             if (matchedRows == 0) {
                 source.close();
                 return null;
@@ -404,7 +460,7 @@ public final class BatchPipeline {
             if (matchedRows == source.rowCount()) {
                 return matched(FilteredRecordBatch.narrowed(source, outputSchema), matchedRows);
             }
-            return matched(FilteredRecordBatch.filtered(source, matches, outputSchema), matchedRows);
+            return matched(FilteredRecordBatch.filtered(source, survivors, outputSchema), matchedRows);
         }
 
         /**
@@ -412,56 +468,13 @@ public final class BatchPipeline {
          * matched. A batch reaches here only once every row it holds has passed the filter and the gate.
          */
         private ParquetRecordBatch matched(ParquetRecordBatch emitted, int matchedRows) {
-            currentRowGroup.addMatchedRows(matchedRows);
+            walk.addMatchedRows(matchedRows);
             return emitted;
-        }
-
-        /**
-         * The surviving rows of {@code source}: the predicate matches when a filter is present, every row otherwise,
-         * decimated through the gate when one is present.
-         */
-        private BitSet survivorsOf(ParquetRecordBatch source) {
-            BitSet survivors = currentFilter == null
-                    ? allRows(source.rowCount())
-                    : VectorizedPredicateEvaluator.eval(currentFilter, source);
-            if (gate != null) {
-                gate.narrow(source, survivors);
-            }
-            return survivors;
-        }
-
-        private ParquetRecordBatch pullNextSourceBatch() {
-            while (true) {
-                if (currentRowGroup != null && currentRowGroup.hasNext()) {
-                    return currentRowGroup.next();
-                }
-                if (!takeNextRowGroup()) {
-                    return null;
-                }
-            }
-        }
-
-        private boolean takeNextRowGroup() {
-            closeCurrentRowGroup();
-            DecodedRowGroup nextRowGroup;
-            try {
-                nextRowGroup = coordinator.next();
-            } catch (IOException e) {
-                throw new UncheckedIOException("Row group decode failed", e);
-            }
-            if (nextRowGroup == null) {
-                return false;
-            }
-            currentRowGroup = nextRowGroup;
-            currentFilter = nextRowGroup.recordEvalRequired() ? recordFilter : null;
-            return true;
         }
 
         @Override
         public void close() {
-            closeBestEffort(this::closeBufferedNext);
-            closeBestEffort(this::closeCurrentRowGroup);
-            closeBestEffort(coordinator::close);
+            closeEach(this::closeBufferedNext, walk::close);
         }
 
         // A survivor computed by hasNext() but not yet taken by next() owns the source's off-heap buffers; closing the
@@ -474,46 +487,28 @@ public final class BatchPipeline {
                 buffered.close();
             }
         }
-
-        // Closes only the group's undelivered batches; a batch already handed to filter() is owned elsewhere.
-        private void closeCurrentRowGroup() {
-            DecodedRowGroup rowGroup = currentRowGroup;
-            currentRowGroup = null;
-            currentFilter = null;
-            if (rowGroup != null) {
-                rowGroup.close();
-            }
-        }
     }
 
     /**
      * Pulls materialized rows one at a time, keeping exactly one decoded batch live. It scans the current batch row by
-     * row; when that batch is drained it is closed before the next one is pulled, and when the current row group is
-     * drained it is closed before the next is taken from the coordinator. This three-level walk (coordinator -> row
-     * group -> batch) holds only one batch in memory at a time, unlike a {@code flatMap} chain that buffers emitted
-     * rows (and the batches they pin) when pulled lazily.
+     * row and closes it once drained, before the walk takes the next one. A {@code flatMap} chain pulled lazily would
+     * instead buffer the emitted rows, and the batches pinned by them.
      *
-     * <p>The per-group filter is resolved once when a group is taken: {@code recordFilter} when the group still needs
-     * per-row evaluation, or {@code null} when its statistics already proved every row matches (the MATCHED outcome). A
-     * {@code null} filter passes every row through (the pushdown-only path); a non-null filter skips rows it rejects,
-     * neither materializing nor emitting them.
+     * <p>A {@code null} row group filter passes every row through (the pushdown-only path or a MATCHED row group). A
+     * non-null filter skips the rows rejected by it, neither materializing nor emitting them.
      *
-     * <p>{@link #close()} closes the current batch, the current row group, and the coordinator, best-effort and
-     * idempotent, mirroring {@link BatchIterator}.
+     * <p>{@link #close()} closes the current batch, then the walk, and is idempotent.
      */
     private static final class RowIterator<T> implements Iterator<T>, AutoCloseable {
 
-        private final ParallelDecodeCoordinator coordinator;
+        private final RowGroupWalk walk;
         private final Materializer<T> materializer;
         private final ParquetSchema outputSchema;
-        private final Predicate recordFilter;
         private final Consumer<ParquetRecordBatch> batchObserver;
         private final boolean observe;
         private final boolean wantsTimings;
         private final SpatialDecimationGate gate;
 
-        private DecodedRowGroup currentRowGroup;
-        private Predicate currentFilter;
         private ParquetRecordBatch currentBatch;
         // A zero-copy view of currentBatch narrowed to the output leaves, used to materialize rows. The predicate runs
         // against the wider currentBatch (which may hold predicate-only or synthesized columns the output excludes),
@@ -523,8 +518,6 @@ public final class BatchPipeline {
         private boolean maskReady;
         private int rowIndex;
         private int batchRowCount;
-        private long matchedInCurrentRowGroup;
-        private long recordFilterNanosInCurrentRowGroup;
 
         private boolean hasComputedNext;
         private T next;
@@ -532,18 +525,16 @@ public final class BatchPipeline {
         @SuppressWarnings(
                 "java:S107") // cohesive row-scan collaborators; a parameter object would only relocate the arity
         RowIterator(
-                ParallelDecodeCoordinator coordinator,
+                RowGroupWalk walk,
                 Materializer<T> materializer,
                 ParquetSchema outputSchema,
-                Predicate recordFilter,
                 Consumer<ParquetRecordBatch> batchObserver,
                 boolean observe,
                 boolean wantsTimings,
                 SpatialDecimationGate gate) {
-            this.coordinator = coordinator;
+            this.walk = walk;
             this.materializer = materializer;
             this.outputSchema = outputSchema;
-            this.recordFilter = recordFilter;
             this.batchObserver = batchObserver;
             this.observe = observe;
             this.wantsTimings = wantsTimings;
@@ -596,7 +587,7 @@ public final class BatchPipeline {
             try {
                 return scanRows();
             } finally {
-                recordFilterNanosInCurrentRowGroup += System.nanoTime() - start;
+                walk.addRecordFilterNanos(System.nanoTime() - start);
             }
         }
 
@@ -609,86 +600,44 @@ public final class BatchPipeline {
             }
             rowIndex = row + 1;
             if (observe) {
-                matchedInCurrentRowGroup++;
+                walk.addMatchedRows(1);
             }
             ParquetRecord rec = outputBatch.materialize(row);
             return materializer.materialize(outputSchema, rec);
         }
 
-        /**
-         * Computes the surviving-rows mask once per batch; {@code null} when neither a filter nor a gate is in play and
-         * hence every row passes. With a gate present, a {@code null} filter still yields an explicit all-rows mask to
-         * narrow through the gate.
-         */
+        /** Computes the surviving-rows mask once per batch; {@code null} when every row of the batch survives. */
         private void ensureMask() {
             if (maskReady) {
                 return;
             }
-            currentMask = computeMask();
+            Predicate filter = walk.filter();
+            currentMask = eachRowSurvives(filter, gate) ? null : survivorsOf(currentBatch, filter, gate);
             maskReady = true;
-        }
-
-        private BitSet computeMask() {
-            if (gate == null && currentFilter == null) {
-                return null;
-            }
-            BitSet survivors = currentFilter == null
-                    ? allRows(batchRowCount)
-                    : VectorizedPredicateEvaluator.eval(currentFilter, currentBatch);
-            if (gate != null) {
-                gate.narrow(currentBatch, survivors);
-            }
-            return survivors;
         }
 
         /** Closes the drained batch and makes the next non-empty batch current, or returns {@code false} at the end. */
         private boolean pullNextBatch() {
             closeCurrentBatch();
-            while (true) {
-                if (currentRowGroup != null && currentRowGroup.hasNext()) {
-                    currentBatch = currentRowGroup.next();
-                    outputBatch = FilteredRecordBatch.narrowed(currentBatch, outputSchema);
-                    batchObserver.accept(currentBatch);
-                    rowIndex = 0;
-                    batchRowCount = currentBatch.rowCount();
-                    if (batchRowCount > 0) {
-                        currentMask = null;
-                        maskReady = false;
-                        return true;
-                    }
-                    closeCurrentBatch();
-                    continue;
+            while (walk.hasNextBatch()) {
+                currentBatch = walk.nextBatch();
+                outputBatch = FilteredRecordBatch.narrowed(currentBatch, outputSchema);
+                batchObserver.accept(currentBatch);
+                rowIndex = 0;
+                batchRowCount = currentBatch.rowCount();
+                if (batchRowCount > 0) {
+                    currentMask = null;
+                    maskReady = false;
+                    return true;
                 }
-                if (!takeNextRowGroup()) {
-                    return false;
-                }
+                closeCurrentBatch();
             }
-        }
-
-        /**
-         * Closes the drained row group and takes the next from the coordinator, resolving its per-group filter once.
-         */
-        private boolean takeNextRowGroup() {
-            closeCurrentRowGroup();
-            DecodedRowGroup nextRowGroup;
-            try {
-                nextRowGroup = coordinator.next();
-            } catch (IOException e) {
-                throw new UncheckedIOException("Row group decode failed", e);
-            }
-            if (nextRowGroup == null) {
-                return false;
-            }
-            currentRowGroup = nextRowGroup;
-            currentFilter = nextRowGroup.recordEvalRequired() ? recordFilter : null;
-            return true;
+            return false;
         }
 
         @Override
         public void close() {
-            closeBestEffort(this::closeCurrentBatch);
-            closeBestEffort(this::closeCurrentRowGroup);
-            closeBestEffort(coordinator::close);
+            closeEach(this::closeCurrentBatch, walk::close);
         }
 
         private void closeCurrentBatch() {
@@ -703,38 +652,27 @@ public final class BatchPipeline {
                 batch.close();
             }
         }
+    }
 
-        private void closeCurrentRowGroup() {
-            DecodedRowGroup rowGroup = currentRowGroup;
-            currentRowGroup = null;
-            currentFilter = null;
-            if (rowGroup != null) {
-                if (observe) {
-                    rowGroup.addMatchedRows(matchedInCurrentRowGroup);
-                    matchedInCurrentRowGroup = 0L;
+    /**
+     * Runs each close step, also after an earlier one failed, then throws the first failure with the later ones
+     * attached as suppressed.
+     */
+    private static void closeEach(Runnable... steps) {
+        RuntimeException firstFailure = null;
+        for (Runnable step : steps) {
+            try {
+                step.run();
+            } catch (RuntimeException e) {
+                if (firstFailure == null) {
+                    firstFailure = e;
+                } else {
+                    firstFailure.addSuppressed(e);
                 }
-                if (wantsTimings) {
-                    rowGroup.addRecordFilterNanos(recordFilterNanosInCurrentRowGroup);
-                    recordFilterNanosInCurrentRowGroup = 0L;
-                }
-                rowGroup.close();
             }
         }
-    }
-
-    /** A bitset with every row in {@code [0, rowCount)} set, the all-rows start for a gate narrow with no filter. */
-    private static BitSet allRows(int rowCount) {
-        BitSet rows = new BitSet(rowCount);
-        rows.set(0, rowCount);
-        return rows;
-    }
-
-    /** Runs a close step, swallowing a {@link RuntimeException} when one failed close must not skip the rest. */
-    private static void closeBestEffort(Runnable close) {
-        try {
-            close.run();
-        } catch (RuntimeException _) {
-            // best-effort; one failed close must not skip the rest
+        if (firstFailure != null) {
+            throw firstFailure;
         }
     }
 }

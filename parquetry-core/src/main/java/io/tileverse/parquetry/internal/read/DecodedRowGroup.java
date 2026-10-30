@@ -73,15 +73,15 @@ final class DecodedRowGroup implements AutoCloseable {
     }
 
     /**
-     * Adds {@code n} matched rows to this row group's tally. Every drain that can drop a row calls it with the rows it
-     * kept; the tally reaches the read event only when an observation is attached and reports matched rows separately
-     * from decoded ones.
+     * Adds {@code n} matched rows to this row group's tally, as reported by the drains that can drop rows. The tally
+     * reaches the read event only when an observation is attached and reports matched rows separately from decoded
+     * ones.
      */
     void addMatchedRows(long n) {
         matchedRows += n;
     }
 
-    /** Adds {@code n} record-filter nanoseconds to this row group's tally; called only when the observer opted in. */
+    /** Adds {@code n} record-filter nanoseconds to this row group's tally. */
     void addRecordFilterNanos(long n) {
         recordFilterNanos += n;
     }

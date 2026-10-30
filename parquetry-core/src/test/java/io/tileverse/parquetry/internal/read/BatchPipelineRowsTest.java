@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -30,6 +31,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -47,6 +49,9 @@ import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.materializer.Materializer;
+import io.tileverse.parquetry.observe.QueryObserver;
+import io.tileverse.parquetry.observe.RowGroupRead;
+import io.tileverse.parquetry.observe.SpillAccumulator;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.runtime.ComputeExecutor;
 import io.tileverse.parquetry.runtime.DecodeBudget;
@@ -57,9 +62,10 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaBuilder;
 
 /**
- * Drives {@link BatchPipeline#rows} over a real multi-row-group fixture to prove the row stream keeps at most one
- * decoded batch live at a time (the regression guard against the {@code flatMap} buffering leak), preserves file order
- * and filter semantics, and releases its current batch and the coordinator when closed early.
+ * Drives {@link BatchPipeline} over a real multi-row-group fixture. The row stream keeps at most one decoded batch live
+ * at a time (the regression guard against the {@code flatMap} buffering leak), preserves file order and filter
+ * semantics, and releases its current batch and the coordinator when closed early. A stream closes the coordinator also
+ * when the close of its current row group fails.
  */
 class BatchPipelineRowsTest {
 
@@ -145,6 +151,41 @@ class BatchPipelineRowsTest {
                     .as("closing the stream cascades to the coordinator, which closes the prefetcher's executor")
                     .isTrue();
         }
+    }
+
+    // A read event failing while the stream closes early must not leave the coordinator open.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void earlyCloseClosesCoordinator(@TempDir Path tmp) throws Exception {
+        Fixture fixture = Fixture.write(tmp, 4_000);
+
+        try (ByteRangeSource source = ByteRangeSource.ofFile(fixture.file())) {
+            ExecutorService fetchExecutor = newFetchExecutor();
+            ParallelDecodeCoordinator coordinator =
+                    fixture.serialCoordinator(source, AllFull.INSTANCE, fetchExecutor, failingReadEvents(fixture));
+            Stream<ParquetRecordBatch> stream = BatchPipeline.batches(coordinator);
+            stream.iterator().next().close();
+
+            Throwable failure = catchThrowable(stream::close);
+
+            assertThat(failure).as("the observer failure reaches the caller").hasMessage("observer failure");
+            assertThat(fetchExecutor.isShutdown())
+                    .as("the coordinator closes although the close of the row group failed")
+                    .isTrue();
+        }
+    }
+
+    /** An observation whose observer fails on each row group read event. */
+    private static ParallelDecodeCoordinator.DecodeObservation failingReadEvents(Fixture fixture) {
+        QueryObserver failing = new QueryObserver() {
+            @Override
+            public void onRowGroupRead(RowGroupRead event) {
+                throw new IllegalStateException("observer failure");
+            }
+        };
+        List<Integer> ordinals =
+                IntStream.range(0, fixture.rowGroupCount()).boxed().toList();
+        return new ParallelDecodeCoordinator.DecodeObservation(failing, ordinals, false, false, SpillAccumulator.NONE);
     }
 
     private static List<Integer> collectYears(Fixture fixture, SurvivorMode mode, Predicate filter) {
@@ -238,6 +279,14 @@ class BatchPipelineRowsTest {
 
         ParallelDecodeCoordinator serialCoordinator(
                 ByteRangeSource source, SurvivorMode mode, ExecutorService fetchExecutor) {
+            return serialCoordinator(source, mode, fetchExecutor, ParallelDecodeCoordinator.DecodeObservation.NONE);
+        }
+
+        ParallelDecodeCoordinator serialCoordinator(
+                ByteRangeSource source,
+                SurvivorMode mode,
+                ExecutorService fetchExecutor,
+                ParallelDecodeCoordinator.DecodeObservation observation) {
             List<RowGroupSurvivor> survivors = survivors(source, mode);
             RowGroupPlans plans = unplannedPlans(survivors);
             RowGroupPrefetcher prefetcher = prefetcher(source, survivors, plans, fetchExecutor);
@@ -259,7 +308,7 @@ class BatchPipelineRowsTest {
                     recordEvalRequired,
                     Optional.empty(),
                     BatchForm.LEVELS,
-                    ParallelDecodeCoordinator.DecodeObservation.NONE,
+                    observation,
                     List.of(),
                     Optional.empty());
         }
