@@ -47,8 +47,8 @@ import io.tileverse.parquetry.schema.UuidConverter;
  * cannot rule the value out is {@link PruningDecision.Inconclusive} (the bloom was loaded and consulted). Everything
  * else (range comparisons, IS NULL, BBox, NOT, or no bloom filter loaded) is {@link PruningDecision.NotApplied}.
  *
- * <p>Like {@link DictionaryEvaluator}, the evaluator assumes the predicate has been normalized (Not pushed to leaves,
- * Always folded, nested And/Or flattened).
+ * <p>The evaluator assumes the predicate has been normalized (Not pushed to leaves, Always folded, nested And/Or
+ * flattened).
  */
 final class BloomFilterEvaluator {
 

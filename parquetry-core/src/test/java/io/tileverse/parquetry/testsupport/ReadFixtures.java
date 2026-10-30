@@ -40,7 +40,6 @@ public final class ReadFixtures {
     /** Read options leaving each row to the record-level filter: no metadata tier prunes. */
     public static final ReadOptions METADATA_PRUNING_OFF = ReadOptions.builder()
             .useStatsFilter(false)
-            .useDictionaryFilter(false)
             .useColumnIndexFilter(false)
             .useBloomFilter(false)
             .build();

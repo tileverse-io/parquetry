@@ -37,14 +37,13 @@ import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.filter.spatial.EmptyBoundsSource;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
-import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
- * The a-priori filter pipeline: given a normalized predicate and per-row-group lookups for stats, dictionaries, and
- * page indexes, produces an {@link ExplainPlan} describing what each tier decided. No actual column data is read; the
+ * The a-priori filter pipeline: given a normalized predicate and per-row-group lookups for stats, page indexes and
+ * bloom filters, produces an {@link ExplainPlan} describing what each tier decided. No actual column data is read; the
  * pipeline only consumes metadata that callers have already loaded.
  */
 public final class FilterPipeline {
@@ -60,7 +59,6 @@ public final class FilterPipeline {
      * @param stats lookup for the STATS tier (per-column min/max + null/distinct counts)
      * @param spatialBounds source for the SPATIAL tier (per-row-group geometry bounding boxes from native GeoParquet
      *     2.0 statistics); {@link EmptyBoundsSource#INSTANCE} when the file has no usable geometry bounds
-     * @param dictionaries lookup for the DICTIONARY tier; returns the loaded dictionary page when one was written
      * @param pageIndexes lookup for the COLUMN_INDEX tier (per-page min/max + offsets)
      * @param blooms lookup for the BLOOM_FILTER tier; returns the column's loaded split-block bloom filter when one was
      *     written
@@ -72,7 +70,6 @@ public final class FilterPipeline {
             long rowCount,
             ColumnStatsLookup stats,
             SpatialBoundsSource spatialBounds,
-            DictionaryLookup dictionaries,
             ColumnPageStatsLookup pageIndexes,
             BloomFilterLookup blooms,
             long projectedCompressedBytes,
@@ -84,27 +81,14 @@ public final class FilterPipeline {
         }
 
         /**
-         * Backwards-compatible four-arg constructor for callers that don't yet wire spatial bounds or a bloom-filter
+         * Backwards-compatible three-arg constructor for callers that don't yet wire spatial bounds or a bloom-filter
          * lookup; defaults the spatial source to {@link EmptyBoundsSource#INSTANCE} (the SPATIAL tier degrades to
          * {@link PruningDecision.NotApplied}), the blooms to {@link FilterPipeline#emptyBloomLookup()}, and the
          * projected compressed bytes to zero (callers that want a byte estimate use the full constructor). The
          * row-position pruning inputs default to inert (zero base offset, no page boundaries).
          */
-        public RowGroupInputs(
-                long rowCount,
-                ColumnStatsLookup stats,
-                DictionaryLookup dictionaries,
-                ColumnPageStatsLookup pageIndexes) {
-            this(
-                    rowCount,
-                    stats,
-                    EmptyBoundsSource.INSTANCE,
-                    dictionaries,
-                    pageIndexes,
-                    emptyBloomLookup(),
-                    0L,
-                    0L,
-                    List.of());
+        public RowGroupInputs(long rowCount, ColumnStatsLookup stats, ColumnPageStatsLookup pageIndexes) {
+            this(rowCount, stats, EmptyBoundsSource.INSTANCE, pageIndexes, emptyBloomLookup(), 0L, 0L, List.of());
         }
     }
 
@@ -183,17 +167,6 @@ public final class FilterPipeline {
     }
 
     /**
-     * Resolves the loaded {@link Dictionary} for a given column path within a row group. Returns empty when the column
-     * isn't dictionary-encoded or the dictionary page hasn't been loaded.
-     */
-    @FunctionalInterface
-    public interface DictionaryLookup {
-
-        @SuppressWarnings("java:S1452") // Dictionary's element type is selected at runtime from PrimitiveKind
-        Optional<Dictionary<?>> get(ColumnPath path);
-    }
-
-    /**
      * Resolves per-column {@link ColumnPageStats} (ColumnIndex + OffsetIndex) for a given column path within a row
      * group. Returns empty when the column has no index sections.
      */
@@ -228,32 +201,16 @@ public final class FilterPipeline {
     }
 
     /**
-     * The shared no-op dictionary lookup the production read path wires while real dictionary pruning is not yet
-     * implemented. The pipeline recognizes this exact instance to report the DICTIONARY tier as inert-by-design rather
-     * than as a column-level miss. Callers that genuinely wire dictionaries supply their own lookup.
-     */
-    private static final DictionaryLookup NO_DICTIONARY_LOOKUP = path -> Optional.empty();
-
-    /**
-     * Returns the shared no-op dictionary lookup the production read path wires until real dictionary pruning lands.
-     */
-    public static DictionaryLookup noDictionaryLookup() {
-        return NO_DICTIONARY_LOOKUP;
-    }
-
-    /**
-     * The metadata-tier toggles the pipeline honors directly: whether the STATS tier runs and whether the DICTIONARY
-     * tier runs. The COLUMN_INDEX and BLOOM_FILTER toggles are honored upstream at input-build time (those tiers see an
-     * empty lookup and degrade on their own), which is why they are not part of this record.
+     * The metadata-tier toggle the pipeline honors directly: whether the STATS tier runs. The COLUMN_INDEX and
+     * BLOOM_FILTER toggles are honored upstream at input-build time (those tiers see an empty lookup and degrade on
+     * their own), which is why they are not part of this record.
      *
      * @param useStatsFilter when false, the STATS tier is skipped and reported as {@link PruningDecision.NotApplied}
-     * @param useDictionaryFilter when false, the DICTIONARY tier is skipped and reported as
-     *     {@link PruningDecision.NotApplied}
      */
-    public record FilterToggles(boolean useStatsFilter, boolean useDictionaryFilter) {
+    public record FilterToggles(boolean useStatsFilter) {
 
-        /** Both tiers enabled - the default that preserves the historical always-run behavior. */
-        public static final FilterToggles ALL_ENABLED = new FilterToggles(true, true);
+        /** The STATS tier enabled, the default. */
+        public static final FilterToggles ALL_ENABLED = new FilterToggles(true);
     }
 
     /**
@@ -350,13 +307,6 @@ public final class FilterPipeline {
                     index, inputs.rowCount(), tierDecisions, RowGroupOutcome.ELIMINATED, surviving, Optional.empty());
         }
 
-        PruningDecision dictDecision = dictionaryDecision(normalized, inputs, toggles);
-        tierDecisions.add(dictDecision);
-        if (dictDecision instanceof PruningDecision.Eliminated) {
-            return new RowGroupPlan(
-                    index, inputs.rowCount(), tierDecisions, RowGroupOutcome.ELIMINATED, surviving, Optional.empty());
-        }
-
         PruningDecision indexDecision =
                 ColumnIndexEvaluator.evaluate(normalized, inputs.pageIndexes(), inputs.rowCount());
         tierDecisions.add(indexDecision);
@@ -438,22 +388,6 @@ public final class FilterPipeline {
             return new PruningDecision.NotApplied(Tier.STATS, TierReasons.STATS_FILTER_DISABLED);
         }
         return StatsEvaluator.evaluate(normalized, inputs.stats(), inputs.rowCount());
-    }
-
-    /**
-     * The DICTIONARY-tier decision. When dictionary filtering is off the tier reports that it is disabled. When it is
-     * on but no dictionary lookup is wired into the read path, the tier reports that honestly rather than running an
-     * inert evaluation whose generic "no dictionary loaded" reason would read as if a lookup had been attempted.
-     */
-    private static PruningDecision dictionaryDecision(
-            Predicate normalized, RowGroupInputs inputs, FilterToggles toggles) {
-        if (!toggles.useDictionaryFilter()) {
-            return new PruningDecision.NotApplied(Tier.DICTIONARY, TierReasons.DICTIONARY_FILTER_DISABLED);
-        }
-        if (inputs.dictionaries() == NO_DICTIONARY_LOOKUP) {
-            return new PruningDecision.NotApplied(Tier.DICTIONARY, "dictionary pruning not wired into reads");
-        }
-        return DictionaryEvaluator.evaluate(normalized, inputs.dictionaries());
     }
 
     private static long survivingRowsForOutcome(RowGroupPlan plan) {

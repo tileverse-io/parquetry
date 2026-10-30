@@ -58,7 +58,6 @@ class EmptyRowGroupReadTest {
     private static final Predicate ABOVE_THREE = col("i").gt(3);
     private static final ReadOptions METADATA_PRUNING_OFF = ReadOptions.builder()
             .useStatsFilter(false)
-            .useDictionaryFilter(false)
             .useColumnIndexFilter(false)
             .useBloomFilter(false)
             .build();

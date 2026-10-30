@@ -53,7 +53,7 @@ class FilterPipelineTest {
     void statsElimSkipsLaterTiers() {
         ParquetSchema schema = flatSchema();
         FilterPipeline.RowGroupInputs rg =
-                inputs(/* rows */ 1000, statsOf("year", intStats(2010, 2015, 0)), noDicts(), noPageIndex());
+                inputs(/* rows */ 1000, statsOf("year", intStats(2010, 2015, 0)), noPageIndex());
         Predicate p = col("year").eq(2030);
 
         ExplainPlan plan = FilterPipeline.evaluate(schema, Projection.ALL, p, List.of(rg));
@@ -68,7 +68,7 @@ class FilterPipelineTest {
     void fullPassageWhenAllTiersPass() {
         ParquetSchema schema = flatSchema();
         FilterPipeline.RowGroupInputs rg =
-                inputs(/* rows */ 1000, statsOf("year", intStats(2010, 2030, 0)), noDicts(), noPageIndex());
+                inputs(/* rows */ 1000, statsOf("year", intStats(2010, 2030, 0)), noPageIndex());
         // min/max straddle the predicate value: stats can neither eliminate the row group nor prove every row matches.
         // The row group survives to FULL and record-level evaluation still applies.
         Predicate p = col("year").eq(2020);
@@ -82,8 +82,7 @@ class FilterPipelineTest {
     @Test
     void statsProvenRowGroupIsMatchedAndShortCircuits() {
         ParquetSchema schema = flatSchema();
-        FilterPipeline.RowGroupInputs rg =
-                inputs(/* rows */ 1000, statsOf("year", intStats(10, 20, 0)), noDicts(), noPageIndex());
+        FilterPipeline.RowGroupInputs rg = inputs(/* rows */ 1000, statsOf("year", intStats(10, 20, 0)), noPageIndex());
         Predicate p = col("year").gt(5);
 
         ExplainPlan plan = FilterPipeline.evaluate(schema, Projection.ALL, p, List.of(rg));
@@ -98,7 +97,7 @@ class FilterPipelineTest {
     @MethodSource("statsOfAnEmptyRowGroup")
     void emptyRowGroupIsEliminated(String scenario, FilterPipeline.ColumnStatsLookup stats) {
         ParquetSchema schema = flatSchema();
-        FilterPipeline.RowGroupInputs rg = inputs(/* rows */ 0, stats, noDicts(), noPageIndex());
+        FilterPipeline.RowGroupInputs rg = inputs(/* rows */ 0, stats, noPageIndex());
         Predicate p = col("year").gt(5);
 
         ExplainPlan plan = FilterPipeline.evaluate(schema, Projection.ALL, p, List.of(rg));
@@ -121,9 +120,9 @@ class FilterPipelineTest {
     void allRowGroupsEvaluatedAndAggregated() {
         ParquetSchema schema = flatSchema();
         List<FilterPipeline.RowGroupInputs> rgs = List.of(
-                inputs(1000, statsOf("year", intStats(2010, 2015, 0)), noDicts(), noPageIndex()),
-                inputs(1000, statsOf("year", intStats(2018, 2022, 0)), noDicts(), noPageIndex()),
-                inputs(1000, statsOf("year", intStats(2025, 2030, 0)), noDicts(), noPageIndex()));
+                inputs(1000, statsOf("year", intStats(2010, 2015, 0)), noPageIndex()),
+                inputs(1000, statsOf("year", intStats(2018, 2022, 0)), noPageIndex()),
+                inputs(1000, statsOf("year", intStats(2025, 2030, 0)), noPageIndex()));
         Predicate p = col("year").eq(2020);
 
         ExplainPlan plan = FilterPipeline.evaluate(schema, Projection.ALL, p, rgs);
@@ -137,8 +136,7 @@ class FilterPipelineTest {
     @Test
     void asciiTableRendersHeaderAndOneRowPerRowGroup() {
         ParquetSchema schema = flatSchema();
-        FilterPipeline.RowGroupInputs rg =
-                inputs(100, statsOf("year", intStats(2010, 2015, 0)), noDicts(), noPageIndex());
+        FilterPipeline.RowGroupInputs rg = inputs(100, statsOf("year", intStats(2010, 2015, 0)), noPageIndex());
         ExplainPlan plan =
                 FilterPipeline.evaluate(schema, Projection.ALL, col("year").eq(2030), List.of(rg));
         String table = plan.toAsciiTable();
@@ -148,8 +146,7 @@ class FilterPipelineTest {
     @Test
     void jsonRenderIncludesRowGroupsAndDecisions() {
         ParquetSchema schema = flatSchema();
-        FilterPipeline.RowGroupInputs rg =
-                inputs(100, statsOf("year", intStats(2010, 2015, 0)), noDicts(), noPageIndex());
+        FilterPipeline.RowGroupInputs rg = inputs(100, statsOf("year", intStats(2010, 2015, 0)), noPageIndex());
         ExplainPlan plan =
                 FilterPipeline.evaluate(schema, Projection.ALL, col("year").eq(2030), List.of(rg));
         String json = plan.toJson();
@@ -162,21 +159,14 @@ class FilterPipelineTest {
     }
 
     private static FilterPipeline.RowGroupInputs inputs(
-            long rows,
-            FilterPipeline.ColumnStatsLookup stats,
-            FilterPipeline.DictionaryLookup dicts,
-            FilterPipeline.ColumnPageStatsLookup pageIndexes) {
-        return new FilterPipeline.RowGroupInputs(rows, stats, dicts, pageIndexes);
+            long rows, FilterPipeline.ColumnStatsLookup stats, FilterPipeline.ColumnPageStatsLookup pageIndexes) {
+        return new FilterPipeline.RowGroupInputs(rows, stats, pageIndexes);
     }
 
     private static FilterPipeline.ColumnStatsLookup statsOf(String name, FilterPipeline.ColumnStats stats) {
         Map<ColumnPath, FilterPipeline.ColumnStats> map = new HashMap<>();
         map.put(ColumnPath.of(name), stats);
         return path -> Optional.ofNullable(map.get(path));
-    }
-
-    private static FilterPipeline.DictionaryLookup noDicts() {
-        return path -> Optional.empty();
     }
 
     private static FilterPipeline.ColumnPageStatsLookup noPageIndex() {

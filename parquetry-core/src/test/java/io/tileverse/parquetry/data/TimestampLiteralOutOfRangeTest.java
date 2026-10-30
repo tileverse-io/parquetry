@@ -71,7 +71,6 @@ class TimestampLiteralOutOfRangeTest {
     private static final Value SECOND_5 = timestamp(EPOCH.plusSeconds(5));
     private static final ReadOptions METADATA_PRUNING_OFF = ReadOptions.builder()
             .useStatsFilter(false)
-            .useDictionaryFilter(false)
             .useColumnIndexFilter(false)
             .useBloomFilter(false)
             .build();

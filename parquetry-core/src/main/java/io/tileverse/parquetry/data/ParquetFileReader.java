@@ -1297,8 +1297,7 @@ public final class ParquetFileReader {
         boolean rowPositionDeletes = !Predicate.rowPositionColumns(predicate).isEmpty();
         List<FilterPipeline.RowGroupInputs> inputs =
                 filterInputsFor(rowGroupChunks, options, projectedLeaves, rowPositionDeletes);
-        FilterPipeline.FilterToggles toggles =
-                new FilterPipeline.FilterToggles(options.useStatsFilter(), options.useDictionaryFilter());
+        FilterPipeline.FilterToggles toggles = new FilterPipeline.FilterToggles(options.useStatsFilter());
         ExplainPlan plan = FilterPipeline.evaluate(fileSchema, projection, predicate, inputs, toggles);
         notifyPlanned(plan, options.queryObserver());
         return plan;
@@ -1343,7 +1342,6 @@ public final class ParquetFileReader {
                     chunks.numRows(),
                     statsLookup(chunks),
                     spatialBounds,
-                    FilterPipeline.noDictionaryLookup(),
                     pageStatsLookupFor(chunks, options),
                     bloomLookupFor(chunks, options),
                     projectedCompressedBytes(chunks, projectedLeaves),

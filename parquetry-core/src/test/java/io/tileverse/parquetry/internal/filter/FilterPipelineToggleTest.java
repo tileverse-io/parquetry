@@ -47,7 +47,7 @@ class FilterPipelineToggleTest {
 
     @Test
     void statsFilterDisabledSkipsEvaluatorAndReportsNotApplied() {
-        ExplainPlan plan = evaluate(eliminatingInputs(), new FilterPipeline.FilterToggles(false, true));
+        ExplainPlan plan = evaluate(eliminatingInputs(), new FilterPipeline.FilterToggles(false));
 
         assertThat(plan.rowGroups().get(0).outcome()).isNotEqualTo(RowGroupOutcome.ELIMINATED);
         PruningDecision stats = tierDecision(plan, Tier.STATS);
@@ -57,29 +57,11 @@ class FilterPipelineToggleTest {
 
     @Test
     void statsFilterEnabledStillEliminates() {
-        ExplainPlan plan = evaluate(eliminatingInputs(), new FilterPipeline.FilterToggles(true, true));
+        ExplainPlan plan = evaluate(eliminatingInputs(), new FilterPipeline.FilterToggles(true));
 
         assertThat(plan.rowGroups().get(0).outcome()).isEqualTo(RowGroupOutcome.ELIMINATED);
         PruningDecision stats = tierDecision(plan, Tier.STATS);
         assertThat(stats).isInstanceOf(PruningDecision.Eliminated.class);
-    }
-
-    @Test
-    void dictionaryFilterDisabledReportsDisabledReason() {
-        ExplainPlan plan = evaluate(survivingInputs(), new FilterPipeline.FilterToggles(true, false));
-
-        PruningDecision dict = tierDecision(plan, Tier.DICTIONARY);
-        assertThat(dict).isInstanceOf(PruningDecision.NotApplied.class);
-        assertThat(dict.reason()).isEqualTo("dictionary filter disabled");
-    }
-
-    @Test
-    void dictionaryFilterEnabledButUnwiredReportsHonestReason() {
-        ExplainPlan plan = evaluate(survivingInputs(), new FilterPipeline.FilterToggles(true, true));
-
-        PruningDecision dict = tierDecision(plan, Tier.DICTIONARY);
-        assertThat(dict).isInstanceOf(PruningDecision.NotApplied.class);
-        assertThat(dict.reason()).contains("not wired");
     }
 
     private static ExplainPlan evaluate(FilterPipeline.RowGroupInputs rg, FilterPipeline.FilterToggles toggles) {
@@ -98,14 +80,8 @@ class FilterPipelineToggleTest {
         return inputs(intStats(2010, 2015));
     }
 
-    /** Stats straddle the predicate value (year in [2010,2030]): STATS cannot eliminate; later tiers run. */
-    private static FilterPipeline.RowGroupInputs survivingInputs() {
-        return inputs(intStats(2010, 2030));
-    }
-
     private static FilterPipeline.RowGroupInputs inputs(FilterPipeline.ColumnStats yearStats) {
-        return new FilterPipeline.RowGroupInputs(
-                1000, statsOf("year", yearStats), FilterPipeline.noDictionaryLookup(), noPageIndex());
+        return new FilterPipeline.RowGroupInputs(1000, statsOf("year", yearStats), noPageIndex());
     }
 
     private static FilterPipeline.ColumnStatsLookup statsOf(String name, FilterPipeline.ColumnStats stats) {

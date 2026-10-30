@@ -62,7 +62,6 @@ class StatisticsPruningParityIT {
 
     private static final ReadOptions PRUNING_OFF = ReadOptions.builder()
             .useStatsFilter(false)
-            .useDictionaryFilter(false)
             .useColumnIndexFilter(false)
             .useBloomFilter(false)
             .build();

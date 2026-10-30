@@ -69,7 +69,6 @@ class InconsistentOffsetIndexReadTest {
     private static final int ROWS_PER_PAGE = 100;
     private static final ReadOptions METADATA_PRUNING_OFF = ReadOptions.builder()
             .useStatsFilter(false)
-            .useDictionaryFilter(false)
             .useColumnIndexFilter(false)
             .useBloomFilter(false)
             .build();

@@ -25,8 +25,5 @@ public final class TierReasons {
     /** Reason emitted when the STATS tier is turned off. */
     public static final String STATS_FILTER_DISABLED = "stats filter disabled";
 
-    /** Reason emitted when the DICTIONARY tier is turned off. */
-    public static final String DICTIONARY_FILTER_DISABLED = "dictionary filter disabled";
-
     private TierReasons() {}
 }

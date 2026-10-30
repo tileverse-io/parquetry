@@ -29,7 +29,7 @@ import io.tileverse.parquetry.observe.SpillStats;
 final class AsciiTableRenderer {
 
     private static final List<Tier> TIER_ORDER =
-            List.of(Tier.STATS, Tier.DICTIONARY, Tier.COLUMN_INDEX, Tier.BLOOM_FILTER, Tier.RECORD_LEVEL);
+            List.of(Tier.STATS, Tier.COLUMN_INDEX, Tier.BLOOM_FILTER, Tier.RECORD_LEVEL);
 
     private static final Map<Tier, String> TIER_HEADER = headerMap();
 
@@ -239,7 +239,7 @@ final class AsciiTableRenderer {
     private static Map<Tier, String> headerMap() {
         Map<Tier, String> m = new EnumMap<>(Tier.class);
         m.put(Tier.STATS, "Stats");
-        m.put(Tier.DICTIONARY, "Dict");
+
         m.put(Tier.COLUMN_INDEX, "ColIdx");
         m.put(Tier.BLOOM_FILTER, "Bloom");
         m.put(Tier.RECORD_LEVEL, "Record");

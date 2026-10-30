@@ -31,7 +31,6 @@ class ReadOptionsTest {
     void defaultsTurnAllFiltersOn() {
         ReadOptions opts = ReadOptions.DEFAULTS;
         assertThat(opts.useStatsFilter()).isTrue();
-        assertThat(opts.useDictionaryFilter()).isTrue();
         assertThat(opts.useColumnIndexFilter()).isTrue();
         assertThat(opts.useBloomFilter()).isTrue();
         assertThat(opts.useRecordLevelFilter()).isTrue();
@@ -41,7 +40,7 @@ class ReadOptionsTest {
     void builderOverridesIndividualFlags() {
         ReadOptions opts = ReadOptions.builder().useStatsFilter(false).build();
         assertThat(opts.useStatsFilter()).isFalse();
-        assertThat(opts.useDictionaryFilter()).isTrue(); // unchanged
+        assertThat(opts.useColumnIndexFilter()).isTrue(); // unchanged
     }
 
     @Test
@@ -67,7 +66,6 @@ class ReadOptionsTest {
         QueryObserver observer = new QueryObserver() {};
         ReadOptions original = ReadOptions.builder()
                 .useStatsFilter(false)
-                .useDictionaryFilter(false)
                 .useColumnIndexFilter(false)
                 .useBloomFilter(false)
                 .useRecordLevelFilter(false)
@@ -95,7 +93,6 @@ class ReadOptionsTest {
         assertThat(swapped.queryObserver()).isSameAs(other);
         assertThat(swapped.useStatsFilter()).isFalse();
         assertThat(swapped.useColumnIndexFilter()).isFalse();
-        assertThat(swapped.useDictionaryFilter()).isTrue();
         assertThat(swapped.useBloomFilter()).isTrue();
         assertThat(swapped.useRecordLevelFilter()).isTrue();
         assertThat(swapped.usePageNarrowedFetch()).isTrue();

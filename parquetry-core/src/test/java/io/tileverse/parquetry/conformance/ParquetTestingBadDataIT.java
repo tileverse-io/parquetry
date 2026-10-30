@@ -92,7 +92,6 @@ class ParquetTestingBadDataIT {
     /** Read options with each pruning tier off: a filtered read then scans the whole column chunk. */
     private static final ReadOptions WITHOUT_PRUNING = ReadOptions.builder()
             .useStatsFilter(false)
-            .useDictionaryFilter(false)
             .useColumnIndexFilter(false)
             .useBloomFilter(false)
             .build();

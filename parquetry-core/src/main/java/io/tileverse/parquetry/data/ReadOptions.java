@@ -39,7 +39,6 @@ import lombok.NonNull;
  * {@link io.tileverse.parquetry.io.ByteRangeSource} implementation, not the reader.
  *
  * @param useStatsFilter run the STATS tier
- * @param useDictionaryFilter run the DICTIONARY tier
  * @param useColumnIndexFilter run the COLUMN_INDEX tier
  * @param useBloomFilter run the BLOOM_FILTER tier (when loaded)
  * @param useRecordLevelFilter run the RECORD_LEVEL tier inline during record assembly
@@ -58,7 +57,6 @@ import lombok.NonNull;
  */
 public record ReadOptions(
         boolean useStatsFilter,
-        boolean useDictionaryFilter,
         boolean useColumnIndexFilter,
         boolean useBloomFilter,
         boolean useRecordLevelFilter,
@@ -87,7 +85,6 @@ public record ReadOptions(
     public Builder toBuilder() {
         Builder builder = new Builder();
         builder.useStatsFilter = useStatsFilter;
-        builder.useDictionaryFilter = useDictionaryFilter;
         builder.useColumnIndexFilter = useColumnIndexFilter;
         builder.useBloomFilter = useBloomFilter;
         builder.useRecordLevelFilter = useRecordLevelFilter;
@@ -102,7 +99,6 @@ public record ReadOptions(
     public static final class Builder {
 
         private boolean useStatsFilter = true;
-        private boolean useDictionaryFilter = true;
         private boolean useColumnIndexFilter = true;
         private boolean useBloomFilter = true;
         private boolean useRecordLevelFilter = true;
@@ -115,11 +111,6 @@ public record ReadOptions(
 
         public Builder useStatsFilter(boolean v) {
             this.useStatsFilter = v;
-            return this;
-        }
-
-        public Builder useDictionaryFilter(boolean v) {
-            this.useDictionaryFilter = v;
             return this;
         }
 
@@ -173,7 +164,6 @@ public record ReadOptions(
         public ReadOptions build() {
             return new ReadOptions(
                     useStatsFilter,
-                    useDictionaryFilter,
                     useColumnIndexFilter,
                     useBloomFilter,
                     useRecordLevelFilter,

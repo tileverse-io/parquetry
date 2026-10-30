@@ -120,7 +120,7 @@ class RendererExecutionTest {
     private static ExplainPlan planWithAllTiersActive() {
         List<PruningDecision> tiers = List.of(
                 new PruningDecision.PassedAll(Tier.STATS, "min/max admit the value"),
-                new PruningDecision.NotApplied(Tier.DICTIONARY, "dictionary pruning not wired into reads"));
+                new PruningDecision.NotApplied(Tier.COLUMN_INDEX, "no page index"));
         return planWithRowGroupTiers(tiers);
     }
 

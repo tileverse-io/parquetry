@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.internal.filter;
 
 import static io.tileverse.parquetry.filter.Pred.col;
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -27,6 +28,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
@@ -38,6 +40,7 @@ import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.UuidConverter;
 
 class BloomFilterEvaluatorTest {
 
@@ -60,6 +63,25 @@ class BloomFilterEvaluatorTest {
                 single("year", PrimitiveKind.INT32, bloomOver(SplitBlockBloomFilter.hashInt32(2020)));
         Predicate p = col("year").eq(2020);
         assertThat(BloomFilterEvaluator.evaluate(p, blooms)).isInstanceOf(PruningDecision.Inconclusive.class);
+    }
+
+    // The bloom hash of a UUID covers its 16 raw bytes.
+    @Test
+    void eqPresentUuidIsInconclusive() {
+        UUID present = new UUID(0L, 1L);
+        FilterPipeline.BloomFilterLookup blooms =
+                single("id", PrimitiveKind.FIXED_LEN_BYTE_ARRAY, bloomOver(hashOf(present)));
+        Predicate p = col("id").eq(present);
+        assertThat(BloomFilterEvaluator.evaluate(p, blooms)).isInstanceOf(PruningDecision.Inconclusive.class);
+    }
+
+    @Test
+    void eqAbsentUuidIsEliminated() {
+        UUID absent = new UUID(0x1111111111111111L, 0x2222222222222222L);
+        FilterPipeline.BloomFilterLookup blooms =
+                single("id", PrimitiveKind.FIXED_LEN_BYTE_ARRAY, bloomOver(hashOf(new UUID(0L, 1L))));
+        Predicate p = col("id").eq(absent);
+        assertThat(BloomFilterEvaluator.evaluate(p, blooms)).isInstanceOf(PruningDecision.Eliminated.class);
     }
 
     @Test
@@ -468,6 +490,12 @@ class BloomFilterEvaluatorTest {
         map.put(ColumnPath.of(n1), new FilterPipeline.ColumnBloom(k1, b1));
         map.put(ColumnPath.of(n2), new FilterPipeline.ColumnBloom(k2, b2));
         return path -> Optional.ofNullable(map.get(path));
+    }
+
+    /** The bloom hash of a UUID: the hash of its 16 raw bytes. */
+    private static long hashOf(UUID uuid) {
+        byte[] bytes = UuidConverter.toReadOnlySegment(uuid).toArray(JAVA_BYTE);
+        return SplitBlockBloomFilter.hashBytes(bytes);
     }
 
     /**

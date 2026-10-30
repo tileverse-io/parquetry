@@ -59,7 +59,6 @@ class NaNCoveringStatisticsTest {
     private static final ColumnPath COVERING_XMAX = ColumnPath.of("bbox", "xmax");
     private static final ReadOptions METADATA_PRUNING_OFF = ReadOptions.builder()
             .useStatsFilter(false)
-            .useDictionaryFilter(false)
             .useColumnIndexFilter(false)
             .useBloomFilter(false)
             .build();

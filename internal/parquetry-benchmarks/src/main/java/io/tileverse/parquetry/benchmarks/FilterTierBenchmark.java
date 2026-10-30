@@ -102,7 +102,6 @@ public class FilterTierBenchmark {
         ReadOptions toReadOptions() {
             return ReadOptions.builder()
                     .useStatsFilter(stats)
-                    .useDictionaryFilter(false)
                     .useColumnIndexFilter(columnIndex)
                     .useBloomFilter(bloom)
                     .useRecordLevelFilter(true)

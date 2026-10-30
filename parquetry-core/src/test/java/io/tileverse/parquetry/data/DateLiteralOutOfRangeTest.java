@@ -70,7 +70,6 @@ class DateLiteralOutOfRangeTest {
     private static final Value DAY_5 = date(LocalDate.ofEpochDay(5));
     private static final ReadOptions METADATA_PRUNING_OFF = ReadOptions.builder()
             .useStatsFilter(false)
-            .useDictionaryFilter(false)
             .useColumnIndexFilter(false)
             .useBloomFilter(false)
             .build();

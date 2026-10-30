@@ -27,8 +27,7 @@ import java.util.Map;
  */
 final class TierConfiguration {
 
-    static final List<Tier> ORDER =
-            List.of(Tier.STATS, Tier.SPATIAL, Tier.DICTIONARY, Tier.COLUMN_INDEX, Tier.BLOOM_FILTER);
+    static final List<Tier> ORDER = List.of(Tier.STATS, Tier.SPATIAL, Tier.COLUMN_INDEX, Tier.BLOOM_FILTER);
 
     private static final Map<Tier, String> DISABLED_REASONS = disabledReasons();
 
@@ -77,7 +76,6 @@ final class TierConfiguration {
     private static Map<Tier, String> disabledReasons() {
         Map<Tier, String> reasons = new EnumMap<>(Tier.class);
         reasons.put(Tier.STATS, TierReasons.STATS_FILTER_DISABLED);
-        reasons.put(Tier.DICTIONARY, TierReasons.DICTIONARY_FILTER_DISABLED);
         return reasons;
     }
 }

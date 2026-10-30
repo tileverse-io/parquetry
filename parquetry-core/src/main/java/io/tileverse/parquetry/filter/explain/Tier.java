@@ -33,9 +33,6 @@ public enum Tier {
      */
     SPATIAL,
 
-    /** Per-column dictionary pages. One I/O round trip per equality-bearing column. */
-    DICTIONARY,
-
     /** Per-page min/max + null counts from ColumnIndex/OffsetIndex. One I/O for the indexes. */
     COLUMN_INDEX,
 
