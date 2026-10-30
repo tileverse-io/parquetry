@@ -51,8 +51,8 @@ import io.tileverse.parquetry.internal.filter.FilterPipeline;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.BloomFilterLookup;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStats;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStatsLookup;
-import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnStatsLookup;
 import io.tileverse.parquetry.internal.filter.PredicateNormalizer;
+import io.tileverse.parquetry.internal.filter.StatsEvaluator;
 import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialCoveringRewrite;
@@ -1426,8 +1426,8 @@ public final class ParquetFileReader {
      * Returns the inline statistics lookup for {@code chunks}. Each call to the returned lookup delegates to
      * {@link RowGroupChunks#stats}, which reads from the in-footer column metadata without any I/O.
      */
-    private ColumnStatsLookup statsLookup(RowGroupChunks chunks) {
-        return chunks::stats;
+    private StatsEvaluator.TypedColumns statsLookup(RowGroupChunks chunks) {
+        return chunks::summary;
     }
 
     /**

@@ -58,7 +58,7 @@ public final class FilterPipeline {
      *
      * @param rowCount total rows in the row group; surfaces in {@link RowGroupPlan#rowCount()} and lets the stats tier
      *     check counts like null-count vs row-count
-     * @param stats lookup for the STATS tier (per-column min/max + null/distinct counts)
+     * @param stats lookup for the STATS tier: the decoded statistics of each column (min/max, null and value counts)
      * @param spatialBounds source for the SPATIAL tier (per-row-group geometry bounding boxes from native GeoParquet
      *     2.0 statistics); {@link EmptyBoundsSource#INSTANCE} when the file has no usable geometry bounds
      * @param pageIndexes lookup for the COLUMN_INDEX tier (per-page min/max + offsets)
@@ -70,7 +70,7 @@ public final class FilterPipeline {
      */
     public record RowGroupInputs(
             long rowCount,
-            ColumnStatsLookup stats,
+            StatsEvaluator.TypedColumns stats,
             SpatialBoundsSource spatialBounds,
             ColumnPageStatsLookup pageIndexes,
             BloomFilterLookup blooms,
@@ -89,7 +89,7 @@ public final class FilterPipeline {
          * projected compressed bytes to zero (callers that want a byte estimate use the full constructor). The
          * row-position pruning inputs default to inert (zero base offset, no page boundaries).
          */
-        public RowGroupInputs(long rowCount, ColumnStatsLookup stats, ColumnPageStatsLookup pageIndexes) {
+        public RowGroupInputs(long rowCount, StatsEvaluator.TypedColumns stats, ColumnPageStatsLookup pageIndexes) {
             this(rowCount, stats, EmptyBoundsSource.INSTANCE, pageIndexes, emptyBloomLookup(), 0L, 0L, List.of());
         }
     }

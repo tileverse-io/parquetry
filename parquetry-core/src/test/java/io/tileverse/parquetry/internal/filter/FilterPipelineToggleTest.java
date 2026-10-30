@@ -83,7 +83,9 @@ class FilterPipelineToggleTest {
     }
 
     private static FilterPipeline.RowGroupInputs inputs(FilterPipeline.ColumnStats yearStats) {
-        return new FilterPipeline.RowGroupInputs(1000, statsOf("year", yearStats), noPageIndex());
+        FilterPipeline.ColumnStatsLookup stats = statsOf("year", yearStats);
+        StatsEvaluator.TypedColumns decoded = path -> stats.get(path).map(StatsEvaluator::summarize);
+        return new FilterPipeline.RowGroupInputs(1000, decoded, noPageIndex());
     }
 
     private static FilterPipeline.ColumnStatsLookup statsOf(String name, FilterPipeline.ColumnStats stats) {

@@ -16,9 +16,11 @@
 package io.tileverse.parquetry.internal.filter;
 
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
+import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Optional;
@@ -26,8 +28,10 @@ import java.util.stream.Stream;
 
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 /**
@@ -81,6 +85,24 @@ class StatisticsValueDecoderTest {
         assertThat(decoded.toArray(JAVA_BYTE))
                 .as("content of the decoded bound after the source was overwritten")
                 .isEqualTo(VALUE);
+    }
+
+    /**
+     * A time bound outside one day proves nothing and must not fail the read. The last value overflows to 384
+     * nanoseconds when scaled to nanoseconds: a wrong bound inside the day.
+     */
+    @ParameterizedTest
+    @ValueSource(longs = {-1L, 86_400_000_000L, 18_446_744_073_709_552L})
+    void timeBoundOutsideADayIsDropped(long micros) {
+        MemorySegment raw = MemorySegment.ofArray(ByteBuffer.allocate(Long.BYTES)
+                .order(LITTLE_ENDIAN)
+                .putLong(micros)
+                .array());
+        LogicalType time = new LogicalType.Time(false, LogicalType.TimeUnit.MICROS);
+
+        Optional<Value> decoded = StatisticsValueDecoder.decode(PrimitiveKind.INT64, Optional.of(time), raw);
+
+        assertThat(decoded).isEmpty();
     }
 
     /** The binary bound decoded from {@code raw}, failing the test when the decoder produces another shape. */

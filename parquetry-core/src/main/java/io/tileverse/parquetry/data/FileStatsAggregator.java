@@ -21,8 +21,6 @@ import java.util.Optional;
 import java.util.Set;
 
 import io.tileverse.parquetry.filter.prune.FileStats;
-import io.tileverse.parquetry.internal.filter.FilterPipeline;
-import io.tileverse.parquetry.internal.filter.StatsEvaluator;
 import io.tileverse.parquetry.internal.filter.StatsEvaluator.ColumnSummary;
 import io.tileverse.parquetry.internal.filter.prune.FooterStatsAggregator;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
@@ -75,27 +73,9 @@ final class FileStatsAggregator {
     private static List<Optional<ColumnSummary>> columnSummaries(List<RowGroupChunks> groups, ColumnPath leaf) {
         List<Optional<ColumnSummary>> summaries = new ArrayList<>(groups.size());
         for (RowGroupChunks group : groups) {
-            summaries.add(safeSummary(group, leaf));
+            summaries.add(group.summary(leaf));
         }
         return summaries;
-    }
-
-    /**
-     * Decodes one row group's statistics for {@code leaf}, best-effort: a truncated or malformed footer value degrades
-     * that row group's column to no statistics rather than failing the read. The aggregate then leaves the column out
-     * of pruning. This mirrors the Iceberg manifest path, which never lets an unreadable bound fail a read.
-     */
-    private static Optional<ColumnSummary> safeSummary(RowGroupChunks group, ColumnPath leaf) {
-        Optional<FilterPipeline.ColumnStats> stats = group.stats(leaf);
-        if (stats.isEmpty()) {
-            return Optional.empty();
-        }
-        try {
-            return Optional.of(StatsEvaluator.summarize(stats.orElseThrow()));
-        } catch (RuntimeException _) {
-            // A malformed or truncated footer value disables pruning for this column; it never fails the read.
-            return Optional.empty();
-        }
     }
 
     private void addGeometryBounds(FileStats.Builder builder, Set<ColumnPath> geometryColumns) {

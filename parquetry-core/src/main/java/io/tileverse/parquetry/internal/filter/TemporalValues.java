@@ -16,10 +16,12 @@
 package io.tileverse.parquetry.internal.filter;
 
 import java.math.BigInteger;
+import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
+import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 
@@ -80,9 +82,27 @@ public final class TemporalValues {
         return new ArithmeticException(value + " is beyond the instants of INT64 in " + unit);
     }
 
-    /** The time-of-day an INT64 {@code value} (count since midnight) in {@code unit} encodes. */
+    /**
+     * The time-of-day an INT64 {@code value} (count since midnight) in {@code unit} encodes.
+     *
+     * @throws DateTimeException when the value lies outside one day
+     */
     public static LocalTime toLocalTime(long value, TimeUnit unit) {
-        return LocalTime.ofNanoOfDay(value * nanosPerUnit(unit));
+        return timeOfDay(value, unit)
+                .orElseThrow(() -> new DateTimeException(value + " " + unit + " is not a time of day"));
+    }
+
+    /**
+     * The time-of-day an INT64 {@code value} (count since midnight) in {@code unit} encodes, empty when the value lies
+     * outside one day. The range is checked before scaling, because a scaled value can overflow into the day.
+     */
+    public static Optional<LocalTime> timeOfDay(long value, TimeUnit unit) {
+        long nanosPerUnit = nanosPerUnit(unit);
+        long unitsPerDay = LocalTime.MAX.toNanoOfDay() / nanosPerUnit + 1;
+        if (value < 0 || value >= unitsPerDay) {
+            return Optional.empty();
+        }
+        return Optional.of(LocalTime.ofNanoOfDay(value * nanosPerUnit));
     }
 
     /** The INT64 encoding, in {@code unit}, of a time-of-day (count since midnight). */

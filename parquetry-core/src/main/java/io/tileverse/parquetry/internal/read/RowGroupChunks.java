@@ -33,6 +33,8 @@ import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnBloom;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnPageStats;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnStats;
 import io.tileverse.parquetry.internal.filter.NaNCells;
+import io.tileverse.parquetry.internal.filter.StatsEvaluator;
+import io.tileverse.parquetry.internal.filter.StatsEvaluator.ColumnSummary;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
 import io.tileverse.parquetry.internal.footer.CompactFooter;
@@ -79,6 +81,7 @@ public final class RowGroupChunks {
     private final Map<ColumnPath, Optional<ColumnIndex>> columnIndexMemo = new HashMap<>();
     private final Map<ColumnPath, Optional<ColumnPageStats>> pageStatsMemo = new HashMap<>();
     private final Map<ColumnPath, Optional<ColumnBloom>> bloomMemo = new HashMap<>();
+    private final Map<ColumnPath, Optional<ColumnSummary>> summaryMemo = new HashMap<>();
 
     private RowGroupChunks(
             CompactFooter footer,
@@ -138,6 +141,14 @@ public final class RowGroupChunks {
     /** True when {@code path} is a non-repeated leaf (max repetition level 0). */
     public boolean isFlat(ColumnPath path) {
         return fileSchema.maxLevels(path).maxRepetitionLevel() == 0;
+    }
+
+    /**
+     * The inline statistics of {@code path} decoded to values, once per read no matter how many callers ask. The bounds
+     * are those trusted by {@link #stats(ColumnPath)}; a bound that does not decode is left out.
+     */
+    public Optional<ColumnSummary> summary(ColumnPath path) {
+        return summaryMemo.computeIfAbsent(path, leaf -> stats(leaf).map(StatsEvaluator::summarize));
     }
 
     /** Inline statistics for {@code path}, or empty when the column has none or maps to no primitive leaf. */

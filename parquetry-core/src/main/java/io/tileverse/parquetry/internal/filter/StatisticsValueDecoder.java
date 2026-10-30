@@ -148,7 +148,8 @@ public final class StatisticsValueDecoder {
             return Optional.of(new Value.TimestampVal(TemporalValues.toLocalDateTime(value, unit), adjusted));
         }
         if (leaf instanceof LogicalType.Time(boolean _, LogicalType.TimeUnit unit)) {
-            return Optional.of(new Value.TimeVal(TemporalValues.toLocalTime(value, unit)));
+            // A time outside one day is a corrupt bound: it proves nothing about the cells.
+            return TemporalValues.timeOfDay(value, unit).map(Value.TimeVal::new);
         }
         return Optional.of(new Value.LongVal(value));
     }

@@ -160,7 +160,12 @@ class FilterPipelineTest {
 
     private static FilterPipeline.RowGroupInputs inputs(
             long rows, FilterPipeline.ColumnStatsLookup stats, FilterPipeline.ColumnPageStatsLookup pageIndexes) {
-        return new FilterPipeline.RowGroupInputs(rows, stats, pageIndexes);
+        return new FilterPipeline.RowGroupInputs(rows, decoded(stats), pageIndexes);
+    }
+
+    /** The statistics decoded the way a row group decodes its own. */
+    private static StatsEvaluator.TypedColumns decoded(FilterPipeline.ColumnStatsLookup stats) {
+        return path -> stats.get(path).map(StatsEvaluator::summarize);
     }
 
     private static FilterPipeline.ColumnStatsLookup statsOf(String name, FilterPipeline.ColumnStats stats) {
