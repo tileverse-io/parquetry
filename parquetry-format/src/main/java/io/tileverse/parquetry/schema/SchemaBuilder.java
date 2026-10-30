@@ -108,27 +108,58 @@ public final class SchemaBuilder {
      *     {@link io.tileverse.parquetry.format.FileMetaData#keyValueMetadata()})
      */
     public static ParquetSchema build(List<SchemaElement> elements, Map<String, String> keyValueMetadata) {
-        ParquetSchema schema = build(elements);
-        return synthesizeGeoLogicalTypes(schema, keyValueMetadata);
+        return build(elements, geoMetadata(keyValueMetadata));
     }
 
     /**
-     * Returns {@code schema} with each WKB column named in the {@code "geo"} JSON rewritten to carry a native
+     * Builds a {@link ParquetSchema} and folds in {@code geoMetadata}, the GeoParquet metadata of the file parsed by
+     * {@link #geoMetadata}, as {@link #build(List, Map)} does. A reader parsing the {@code "geo"} entry for its own use
+     * folds it in without parsing it again.
+     *
+     * @param elements depth-first flat schema element list
+     * @param geoMetadata the GeoParquet metadata of the file, empty when it has none
+     */
+    public static ParquetSchema build(List<SchemaElement> elements, Optional<GeoParquetMetadata> geoMetadata) {
+        ParquetSchema schema = build(elements);
+        if (geoMetadata.isEmpty()) {
+            return schema;
+        }
+        return synthesizeGeoLogicalTypes(schema, geoMetadata.orElseThrow());
+    }
+
+    /**
+     * The GeoParquet metadata parsed from the {@code "geo"} entry of {@code keyValueMetadata}. It is empty when the
+     * entry is missing, empty or malformed. A malformed entry is logged at WARN, and the file is read without it.
+     *
+     * @param keyValueMetadata collapsed file-level key/value metadata
+     */
+    public static Optional<GeoParquetMetadata> geoMetadata(Map<String, String> keyValueMetadata) {
+        String geoJson = keyValueMetadata.get(GEO_KEY);
+        if (geoJson == null || geoJson.isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(GeoParquetMetadata.parse(geoJson));
+        } catch (RuntimeException e) {
+            LOG.warn("Malformed GeoParquet 'geo' metadata; leaving schema unchanged: {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Returns {@code schema} with each WKB column named in the {@code "geo"} JSON given a native
      * {@link LogicalType.Geometry} / {@link LogicalType.Geography} annotation, unless the column already has one. The
      * single-argument {@link #build(List)} path skips this step entirely; this method is the GeoParquet-specific seam.
      */
     static ParquetSchema synthesizeGeoLogicalTypes(ParquetSchema schema, Map<String, String> keyValueMetadata) {
-        String geoJson = keyValueMetadata.get(GEO_KEY);
-        if (geoJson == null || geoJson.isEmpty()) {
+        Optional<GeoParquetMetadata> metadata = geoMetadata(keyValueMetadata);
+        if (metadata.isEmpty()) {
             return schema;
         }
-        GeoParquetMetadata metadata;
-        try {
-            metadata = GeoParquetMetadata.parse(geoJson);
-        } catch (RuntimeException e) {
-            LOG.warn("Malformed GeoParquet 'geo' metadata; leaving schema unchanged: {}", e.getMessage());
-            return schema;
-        }
+        return synthesizeGeoLogicalTypes(schema, metadata.orElseThrow());
+    }
+
+    private static ParquetSchema synthesizeGeoLogicalTypes(ParquetSchema schema, GeoParquetMetadata metadata) {
         Map<ColumnPath, LogicalType> overrides = new HashMap<>();
         metadata.columns().forEach((columnName, geoColumn) -> recordOverride(schema, columnName, geoColumn, overrides));
         return schema.withLogicalTypes(overrides);

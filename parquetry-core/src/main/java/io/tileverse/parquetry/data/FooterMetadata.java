@@ -15,17 +15,25 @@
  */
 package io.tileverse.parquetry.data;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import io.tileverse.parquetry.format.ColumnChunk;
+import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.FileMetaData;
+import io.tileverse.parquetry.format.KeyValue;
 import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.internal.footer.CompactFooter;
 import io.tileverse.parquetry.internal.footer.LeafIndex;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.SchemaBuilder;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
@@ -61,17 +69,20 @@ record FooterMetadata(
     /**
      * Reads {@code source}'s footer and derives every retained form from it. This is the only scope where the decoded
      * wire records exist; they are unreachable once the returned record is built.
+     *
+     * <p>The GeoParquet {@code "geo"} metadata is parsed once: the schema folds it into GeoParquet 1.x logical-type
+     * annotations, and the reader keeps it.
      */
     static FooterMetadata parse(ByteRangeSource source) {
         FileMetaData footer = ParquetFormat.readFooter(source);
-        Map<String, String> kvMetadata = FooterModel.collapseKeyValueMetadata(footer.keyValueMetadata());
-        ParquetSchema fileSchema = FooterModel.buildFileSchema(footer, kvMetadata);
-        Optional<GeoParquetMetadata> geoMetadata = FooterModel.parseGeoMetadata(kvMetadata);
-        List<RowGroupSummary> rowGroups = FooterModel.toRowGroupView(footer);
+        Map<String, String> kvMetadata = collapseKeyValueMetadata(footer.keyValueMetadata());
+        Optional<GeoParquetMetadata> geoMetadata = SchemaBuilder.geoMetadata(kvMetadata);
+        ParquetSchema fileSchema = SchemaBuilder.build(footer.schema(), geoMetadata);
+        List<RowGroupSummary> rowGroups = rowGroupView(footer);
         LeafIndex leafIndex = LeafIndex.of(fileSchema);
         CompactFooter compactFooter = CompactFooter.encode(footer, leafIndex);
         SpatialBoundsSource spatialBounds = SpatialBoundsSource.of(compactFooter, leafIndex, fileSchema, geoMetadata);
-        long columnChunkBytes = FooterModel.columnChunkBytes(footer);
+        long columnChunkBytes = columnChunkBytes(footer);
         return new FooterMetadata(
                 compactFooter,
                 fileSchema,
@@ -81,5 +92,47 @@ record FooterMetadata(
                 kvMetadata,
                 rowGroups,
                 columnChunkBytes);
+    }
+
+    /** The key/value metadata of the file, collapsed to the last value per key. */
+    private static Map<String, String> collapseKeyValueMetadata(List<KeyValue> entries) {
+        if (entries.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<String, String> collapsed = LinkedHashMap.newLinkedHashMap(entries.size());
+        for (KeyValue entry : entries) {
+            collapsed.put(entry.key(), entry.value().orElse(""));
+        }
+        return Collections.unmodifiableMap(collapsed);
+    }
+
+    /** The public view of the row groups, in file order. */
+    private static List<RowGroupSummary> rowGroupView(FileMetaData footer) {
+        List<RowGroup> rowGroups = footer.rowGroups();
+        List<RowGroupSummary> view = new ArrayList<>(rowGroups.size());
+        for (int index = 0; index < rowGroups.size(); index++) {
+            RowGroup rowGroup = rowGroups.get(index);
+            view.add(new RowGroupSummary(
+                    index,
+                    rowGroup.numRows(),
+                    rowGroup.totalByteSize(),
+                    rowGroup.totalCompressedSize().orElse(-1L)));
+        }
+        return Collections.unmodifiableList(view);
+    }
+
+    /**
+     * The compressed bytes of the column chunks of the file, as its footer declares them. The sizes of a corrupt footer
+     * sum to anything: the readers bound the sum by the size of the file.
+     */
+    static long columnChunkBytes(FileMetaData footer) {
+        long total = 0L;
+        for (RowGroup rowGroup : footer.rowGroups()) {
+            for (ColumnChunk chunk : rowGroup.columns()) {
+                Optional<ColumnMetaData> metaData = chunk.metaData();
+                total += metaData.map(ColumnMetaData::totalCompressedSize).orElse(0L);
+            }
+        }
+        return total;
     }
 }

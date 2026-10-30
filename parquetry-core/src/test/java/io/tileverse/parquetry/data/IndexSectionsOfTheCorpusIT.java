@@ -60,7 +60,7 @@ class IndexSectionsOfTheCorpusIT {
     void sectionsOfTheFileAreRead(String fileName) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(DATA_DIR.resolve(fileName))) {
             FileMetaData footer = ParquetFormat.readFooter(source);
-            long columnChunkBytes = FooterModel.columnChunkBytes(footer);
+            long columnChunkBytes = FooterMetadata.columnChunkBytes(footer);
             FooterIndexSectionLoader loader =
                     new FooterIndexSectionLoader(source, FetchAccumulator.NONE, columnChunkBytes);
 

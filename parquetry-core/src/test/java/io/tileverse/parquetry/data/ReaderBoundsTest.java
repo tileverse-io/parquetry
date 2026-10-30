@@ -204,7 +204,7 @@ class ReaderBoundsTest {
             Optional<BoundingBox> unfiltered = reader.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
             Optional<BoundingBox> matched = reader.bounds(Pred.col("id").gtEq(0), ReadOptions.DEFAULTS);
 
-            assertThat(reader.spatialBounds().rowGroupBounds(GEOMETRY, 0))
+            assertThat(reader.footer().spatialBounds().rowGroupBounds(GEOMETRY, 0))
                     .as("the row-group box stays as written for the SPATIAL tier")
                     .contains(wrapping);
             assertSameBox2d(unfiltered.orElseThrow(), enclosure);

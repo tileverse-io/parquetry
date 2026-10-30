@@ -47,11 +47,8 @@ import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.filter.PredicateNormalizer;
 import io.tileverse.parquetry.internal.filter.StatsEvaluator;
 import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
-import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialCoveringRewrite;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
-import io.tileverse.parquetry.internal.footer.CompactFooter;
-import io.tileverse.parquetry.internal.footer.LeafIndex;
 import io.tileverse.parquetry.internal.read.BatchForm;
 import io.tileverse.parquetry.internal.read.BatchPipeline;
 import io.tileverse.parquetry.internal.read.DecryptionKeyRetriever;
@@ -112,14 +109,7 @@ public final class ParquetFileReader {
     private static final Materializer<Boolean> DISCARD_MATERIALIZER = (_, _) -> Boolean.TRUE;
 
     private final ByteRangeSource source;
-    private final ParquetSchema fileSchema;
-    private final CompactFooter compactFooter;
-    private final LeafIndex leafIndex;
-    private final Map<String, String> keyValueMetadata;
-    private final List<RowGroupSummary> rowGroupView;
-    private final long columnChunkBytes;
-    private final Optional<GeoParquetMetadata> geoMetadata;
-    private final SpatialBoundsSource spatialBounds;
+    private final FooterMetadata footer;
     private final ParquetRuntime runtime;
     private final ReadResources readResources;
     private final SpatialReadGates spatialReadGates;
@@ -134,17 +124,10 @@ public final class ParquetFileReader {
             ParquetRuntime runtime,
             Optional<DecryptionKeyRetriever> decryptionKeyRetriever) {
         this.source = source;
-        this.fileSchema = footerMetadata.fileSchema();
-        this.compactFooter = footerMetadata.compactFooter();
-        this.leafIndex = footerMetadata.leafIndex();
-        this.keyValueMetadata = footerMetadata.keyValueMetadata();
-        this.rowGroupView = footerMetadata.rowGroups();
-        this.columnChunkBytes = footerMetadata.columnChunkBytes();
-        this.geoMetadata = footerMetadata.geoMetadata();
-        this.spatialBounds = footerMetadata.spatialBounds();
+        this.footer = footerMetadata;
         this.runtime = runtime;
-        this.readResources = new ReadResources(source, fileSchema, runtime);
-        this.spatialReadGates = new SpatialReadGates(spatialBounds, fileSchema, geoMetadata);
+        this.readResources = new ReadResources(source, footer.fileSchema(), runtime);
+        this.spatialReadGates = new SpatialReadGates(footer.spatialBounds(), footer.fileSchema(), footer.geoMetadata());
         this.decryptionKeyRetriever = decryptionKeyRetriever;
     }
 
@@ -189,41 +172,26 @@ public final class ParquetFileReader {
 
     /** Returns the file schema, with GeoParquet 1.x logical-type annotations folded in. */
     public ParquetSchema schema() {
-        return fileSchema;
+        return footer.fileSchema();
     }
 
     /** Returns the file's key/value metadata, collapsed to the last value per key. */
     public Map<String, String> keyValueMetadata() {
-        return keyValueMetadata;
+        return footer.keyValueMetadata();
     }
 
     /** Returns a public view of the row groups in file order. */
     public List<RowGroupSummary> rowGroups() {
-        return rowGroupView;
+        return footer.rowGroups();
     }
 
     /**
-     * The packed planning form of this file's footer, held in place of the decoded wire records. It is immutable and
-     * freely shareable between readers opened on the same file.
+     * The forms derived from the footer of this file and held in place of its decoded wire records: the packed planning
+     * footer, the leaf index and the spatial bounds among them. They are immutable and shared between the readers
+     * opened on the same file.
      */
-    CompactFooter compactFooter() {
-        return compactFooter;
-    }
-
-    /**
-     * The mapping between this file's leaf columns and the ordinals addressing them in the packed planning footer.
-     * Derived once with that footer and shared between readers opened on the same file.
-     */
-    LeafIndex leafIndex() {
-        return leafIndex;
-    }
-
-    /**
-     * The most precise bounds tier applicable to this file, answering a geometry column's file-level and per-row-group
-     * extents. Derived once with the packed planning footer and shared between readers opened on the same file.
-     */
-    SpatialBoundsSource spatialBounds() {
-        return spatialBounds;
+    FooterMetadata footer() {
+        return footer;
     }
 
     /**
@@ -233,7 +201,8 @@ public final class ParquetFileReader {
      * whole-file pruning, mirroring the Iceberg manifest-bounds path with the footer as the source.
      */
     public FileStats fileStats() {
-        return new FileStatsAggregator(spatialBounds, fileSchema, geoMetadata).aggregate(rowGroupChunks());
+        return new FileStatsAggregator(footer.spatialBounds(), footer.fileSchema(), footer.geoMetadata())
+                .aggregate(rowGroupChunks());
     }
 
     /** Streams rows matching {@code predicate} under {@code projection}, materialized via the default record shape. */
@@ -292,7 +261,7 @@ public final class ParquetFileReader {
         ReadOptions options = observation.options();
         Predicate predicate = lowerSpatialPredicates(rawPredicate);
         ProjectionPlan projectionPlan =
-                ProjectionPlan.resolve(fileSchema, projection, predicate, options.useRecordLevelFilter());
+                ProjectionPlan.resolve(footer.fileSchema(), projection, predicate, options.useRecordLevelFilter());
         List<RowPositionColumn> rowPositionRequests = projectionPlan.synthesizedColumns();
         boolean recordLevel = projectionPlan.recordLevel();
         Projection scanProjection = projectionPlan.scanProjection();
@@ -404,7 +373,7 @@ public final class ParquetFileReader {
     private Projection predicateScanProjection(Predicate predicate) {
         Set<ColumnPath> columns = physicalColumns(predicate);
         if (columns.isEmpty()) {
-            columns = Set.of(fileSchema.leafColumns().get(0));
+            columns = Set.of(footer.fileSchema().leafColumns().get(0));
         }
         return Projection.ofPhysical(columns);
     }
@@ -422,7 +391,7 @@ public final class ParquetFileReader {
      * geometry. A file without covering keeps its spatial leaf for the record-level WKB path.
      */
     private Predicate lowerSpatialPredicates(Predicate predicate) {
-        return SpatialCoveringRewrite.expand(predicate, fileSchema, geoMetadata);
+        return SpatialCoveringRewrite.expand(predicate, footer.fileSchema(), footer.geoMetadata());
     }
 
     /** Returns the per-row filter, or {@code null} when the predicate is trivially true (nothing to evaluate). */
@@ -459,7 +428,7 @@ public final class ParquetFileReader {
      * reporting to {@code observation}.
      */
     private long countLowered(Predicate predicate, QueryObservation observation) {
-        List<RowPositionColumn> rowPositionRequests = ProjectionPlan.rowPositionColumns(fileSchema, predicate);
+        List<RowPositionColumn> rowPositionRequests = ProjectionPlan.rowPositionColumns(footer.fileSchema(), predicate);
         Projection predicateProjection = predicateScanProjection(predicate);
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks(observation.fetchAccumulator());
         ExplainPlan plan = timedFilterPipeline(predicate, predicateProjection, rowGroupChunks, observation);
@@ -555,14 +524,14 @@ public final class ParquetFileReader {
         if (leafGate.isPresent()) {
             return Optional.empty();
         }
-        ParquetSchema noOutputColumns = fileSchema.project(Set.of());
+        ParquetSchema noOutputColumns = footer.fileSchema().project(Set.of());
         return maskedScanFor(scanSchema, noOutputColumns, normalized, true);
     }
 
     /** Total rows across every row group, read from the per-row-group summaries with no I/O. */
     private long totalRows() {
         long sum = 0L;
-        for (RowGroupSummary rowGroup : rowGroupView) {
+        for (RowGroupSummary rowGroup : footer.rowGroups()) {
             sum += rowGroup.rowCount();
         }
         return sum;
@@ -621,7 +590,7 @@ public final class ParquetFileReader {
      * The GeoParquet metadata's declared primary geometry column, when the file has {@code "geo"} metadata naming one.
      */
     private Optional<ColumnPath> declaredPrimaryGeometryColumn() {
-        return geoMetadata
+        return footer.geoMetadata()
                 .map(GeoParquetMetadata::primaryColumn)
                 .filter(name -> !name.isBlank())
                 .map(name -> ColumnPath.of(name.split("\\.")));
@@ -629,7 +598,7 @@ public final class ParquetFileReader {
 
     /** The file schema's sole geometry logical-type leaf, or empty when there is none or more than one. */
     private Optional<ColumnPath> soleSchemaGeometryColumn() {
-        Set<ColumnPath> geometryColumns = GeometryColumns.resolve(fileSchema, geoMetadata);
+        Set<ColumnPath> geometryColumns = GeometryColumns.resolve(footer.fileSchema(), footer.geoMetadata());
         if (geometryColumns.size() != 1) {
             return Optional.empty();
         }
@@ -643,7 +612,8 @@ public final class ParquetFileReader {
      * an extent is treated as absent. A row group without rows has no box and nothing to scan: it is skipped.
      */
     private Optional<BoundingBox> unfilteredBounds(ColumnPath geometryColumn, ReadOptions options) {
-        Optional<BoundingBox> fileBox = spatialBounds.fileBounds(geometryColumn).filter(BoundingBox::hasExtent);
+        Optional<BoundingBox> fileBox =
+                footer.spatialBounds().fileBounds(geometryColumn).filter(BoundingBox::hasExtent);
         if (fileBox.isPresent()) {
             return fileBox.map(BoundingBox::planarEnclosure);
         }
@@ -656,7 +626,7 @@ public final class ParquetFileReader {
         List<RowGroupSurvivor> boxLess = new ArrayList<>();
         for (int i = 0; i < rowGroupChunks.size(); i++) {
             RowGroupChunks chunks = rowGroupChunks.get(i);
-            Optional<BoundingBox> box = spatialBounds.rowGroupBounds(geometryColumn, i);
+            Optional<BoundingBox> box = footer.spatialBounds().rowGroupBounds(geometryColumn, i);
             if (box.isPresent()) {
                 accumulator.union(box.orElseThrow());
             } else if (chunks.numRows() != 0L) {
@@ -664,7 +634,7 @@ public final class ParquetFileReader {
             }
         }
         if (!boxLess.isEmpty()) {
-            ParquetSchema scanSchema = fileSchema.project(Set.of(geometryColumn));
+            ParquetSchema scanSchema = footer.fileSchema().project(Set.of(geometryColumn));
             List<Optional<RowMask>> masks = decodeMasksFor(boxLess, scanSchema, options);
             // An unfiltered box-less scan runs a null predicate: nothing to mask a scan on, and no row-position column.
             ParallelDecodeCoordinator coordinator = boundsDecodeCoordinator(
@@ -694,7 +664,7 @@ public final class ParquetFileReader {
             Predicate predicate, ColumnPath geometryColumn, QueryObservation observation) {
         BoundsAccumulator accumulator = new BoundsAccumulator();
         List<RowGroupChunks> rowGroupChunks = rowGroupChunks(observation.fetchAccumulator());
-        List<RowPositionColumn> rowPositionRequests = ProjectionPlan.rowPositionColumns(fileSchema, predicate);
+        List<RowPositionColumn> rowPositionRequests = ProjectionPlan.rowPositionColumns(footer.fileSchema(), predicate);
         Projection scanProjection = boundsScanProjection(predicate, geometryColumn);
         ExplainPlan plan = timedFilterPipeline(predicate, scanProjection, rowGroupChunks, observation);
         List<ResidualGroup> residual =
@@ -724,7 +694,7 @@ public final class ParquetFileReader {
         List<ResidualGroup> residual = new ArrayList<>();
         for (RowGroupPlan rgPlan : plan.rowGroups()) {
             RowGroupChunks chunks = rowGroupChunks.get(rgPlan.index());
-            Optional<BoundingBox> box = spatialBounds.rowGroupBounds(geometryColumn, rgPlan.index());
+            Optional<BoundingBox> box = footer.spatialBounds().rowGroupBounds(geometryColumn, rgPlan.index());
             switch (rgPlan.outcome()) {
                 case ELIMINATED -> {
                     /* pruned; contributes nothing */
@@ -806,7 +776,7 @@ public final class ParquetFileReader {
         List<RowPositionSynthesis> rowPositions =
                 rowPositionSynthesesFor(survivors, rowGroupChunks, rowPositionRequests);
         List<Optional<RowMask>> masks = decodeMasksFor(survivors, scanSchema, options);
-        ParquetSchema geometryOnly = fileSchema.project(Set.of(geometryColumn));
+        ParquetSchema geometryOnly = footer.fileSchema().project(Set.of(geometryColumn));
         Optional<MaskedScan> maskedScan = maskedScanFor(scanSchema, geometryOnly, predicate, true);
         ParallelDecodeCoordinator coordinator =
                 boundsDecodeCoordinator(survivors, scanSchema, masks, options, observation, rowPositions, maskedScan);
@@ -906,7 +876,7 @@ public final class ParquetFileReader {
         ReadOptions options = observation.options();
         Predicate predicate = lowerSpatialPredicates(rawPredicate);
         ProjectionPlan projectionPlan =
-                ProjectionPlan.resolve(fileSchema, projection, predicate, options.useRecordLevelFilter());
+                ProjectionPlan.resolve(footer.fileSchema(), projection, predicate, options.useRecordLevelFilter());
         List<RowPositionColumn> rowPositionRequests = projectionPlan.synthesizedColumns();
         boolean recordLevel = projectionPlan.recordLevel();
         Projection scanProjection = projectionPlan.scanProjection();
@@ -960,7 +930,7 @@ public final class ParquetFileReader {
             @NonNull Predicate rawPredicate, @NonNull Projection projection, @NonNull ReadOptions options) {
         Predicate predicate = lowerSpatialPredicates(rawPredicate);
         ProjectionPlan projectionPlan =
-                ProjectionPlan.resolve(fileSchema, projection, predicate, options.useRecordLevelFilter());
+                ProjectionPlan.resolve(footer.fileSchema(), projection, predicate, options.useRecordLevelFilter());
         Projection scanProjection = projectionPlan.scanProjection();
         return runFilterPipeline(predicate, scanProjection, options, rowGroupChunks());
     }
@@ -998,7 +968,7 @@ public final class ParquetFileReader {
      * to a no-op.
      */
     private IndexSectionLoader indexSectionLoader(FetchAccumulator accumulator) {
-        return new FooterIndexSectionLoader(source, accumulator, columnChunkBytes);
+        return new FooterIndexSectionLoader(source, accumulator, footer.columnChunkBytes());
     }
 
     /**
@@ -1016,10 +986,11 @@ public final class ParquetFileReader {
      */
     private List<RowGroupChunks> rowGroupChunks(FetchAccumulator accumulator) {
         IndexSectionLoader loader = indexSectionLoader(accumulator);
-        int rowGroupCount = compactFooter.rowGroupCount();
+        int rowGroupCount = footer.compactFooter().rowGroupCount();
         List<RowGroupChunks> chunks = new ArrayList<>(rowGroupCount);
         for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-            chunks.add(RowGroupChunks.of(compactFooter, rowGroupIndex, leafIndex, fileSchema, loader));
+            chunks.add(RowGroupChunks.of(
+                    footer.compactFooter(), rowGroupIndex, footer.leafIndex(), footer.fileSchema(), loader));
         }
         return chunks;
     }
@@ -1051,7 +1022,7 @@ public final class ParquetFileReader {
         List<FilterPipeline.RowGroupInputs> inputs =
                 filterInputsFor(rowGroupChunks, options, projectedLeaves, rowPositionDeletes);
         Set<Tier> disabledTiers = disabledTiers(options);
-        ExplainPlan plan = FilterPipeline.evaluate(fileSchema, projection, predicate, inputs, disabledTiers);
+        ExplainPlan plan = FilterPipeline.evaluate(footer.fileSchema(), projection, predicate, inputs, disabledTiers);
         notifyPlanned(plan, options.queryObserver());
         return plan;
     }
@@ -1094,7 +1065,7 @@ public final class ParquetFileReader {
             inputs.add(new FilterPipeline.RowGroupInputs(
                     chunks.numRows(),
                     statsLookup(chunks),
-                    spatialBounds,
+                    footer.spatialBounds(),
                     pageIndexLookupFor(chunks),
                     bloomLookupFor(chunks),
                     projectedCompressedBytes(chunks, projectedLeaves),
@@ -1115,7 +1086,7 @@ public final class ParquetFileReader {
         if (!options.useColumnIndexFilter()) {
             return Optional.empty();
         }
-        for (ColumnPath leaf : fileSchema.leafColumns()) {
+        for (ColumnPath leaf : footer.fileSchema().leafColumns()) {
             Optional<PageIndex> pages = chunks.pageLocations(leaf);
             if (pages.isPresent()) {
                 return pages;
@@ -1129,15 +1100,15 @@ public final class ParquetFileReader {
      */
     private List<ColumnPath> projectedLeafColumns(Projection projection) {
         return switch (projection) {
-            case Projection.All _ -> fileSchema.leafColumns();
+            case Projection.All _ -> footer.fileSchema().leafColumns();
             case Projection.Of _ -> projectionOf(projection).leafColumns();
         };
     }
 
     private ParquetSchema projectionOf(Projection projection) {
         return switch (projection) {
-            case Projection.All _ -> fileSchema;
-            case Projection.Of of -> fileSchema.project(of.physicalColumns());
+            case Projection.All _ -> footer.fileSchema();
+            case Projection.Of of -> footer.fileSchema().project(of.physicalColumns());
         };
     }
 
@@ -1287,7 +1258,7 @@ public final class ParquetFileReader {
     private List<Optional<RowMask>> decodeMasksFor(
             List<RowGroupSurvivor> survivors, ParquetSchema scanSchema, ReadOptions options) {
         List<Optional<RowMask>> masks = new ArrayList<>(survivors.size());
-        boolean scanFlat = options.useColumnIndexFilter() && allFlat(fileSchema, scanSchema.leafColumns());
+        boolean scanFlat = options.useColumnIndexFilter() && allFlat(footer.fileSchema(), scanSchema.leafColumns());
         for (RowGroupSurvivor survivor : survivors) {
             masks.add(scanFlat ? maskFor(survivor, scanSchema) : Optional.empty());
         }

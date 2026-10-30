@@ -425,8 +425,9 @@ class SpatialRowGroupPlannerTest {
         ParquetSchema schema = reader.schema();
         Optional<GeoParquetMetadata> geo =
                 Optional.of(GeoParquetMetadata.parse(reader.keyValueMetadata().get("geo")));
-        SpatialReadGates gates = new SpatialReadGates(reader.spatialBounds(), schema, geo);
-        List<RowGroupChunks> chunks = rowGroupChunks(reader, source, reader.compactFooter());
+        SpatialReadGates gates = new SpatialReadGates(reader.footer().spatialBounds(), schema, geo);
+        List<RowGroupChunks> chunks =
+                rowGroupChunks(reader, source, reader.footer().compactFooter());
         List<RowGroupChunks> emptied = rowGroupChunks(reader, source, footerWithoutRowsInTheFirstGroup(reader, source));
         return new Fixture(gates, chunks, schema, emptied);
     }
@@ -436,7 +437,7 @@ class SpatialRowGroupPlannerTest {
         IndexSectionLoader loader = indexLoader(source);
         List<RowGroupChunks> chunks = new ArrayList<>(GROUPS);
         for (int rowGroup = 0; rowGroup < footer.rowGroupCount(); rowGroup++) {
-            chunks.add(RowGroupChunks.of(footer, rowGroup, reader.leafIndex(), reader.schema(), loader));
+            chunks.add(RowGroupChunks.of(footer, rowGroup, reader.footer().leafIndex(), reader.schema(), loader));
         }
         return chunks;
     }
@@ -469,7 +470,7 @@ class SpatialRowGroupPlannerTest {
                 footer.columnOrders(),
                 footer.encryptionAlgorithm(),
                 footer.footerSigningKeyMetadata());
-        return CompactFooter.encode(emptied, reader.leafIndex());
+        return CompactFooter.encode(emptied, reader.footer().leafIndex());
     }
 
     private static IndexSectionLoader indexLoader(ByteRangeSource source) {

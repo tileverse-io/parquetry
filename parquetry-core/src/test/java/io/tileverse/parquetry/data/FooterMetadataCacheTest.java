@@ -327,7 +327,7 @@ class FooterMetadataCacheTest {
         assertThat(source.reads())
                 .as("reads performed by the second open of a named source")
                 .isEqualTo(readsAfterFirstOpen);
-        assertThat(second.compactFooter()).isSameAs(first.compactFooter());
+        assertThat(second.footer().compactFooter()).isSameAs(first.footer().compactFooter());
     }
 
     @Test
@@ -337,10 +337,12 @@ class FooterMetadataCacheTest {
         ParquetFileReader first = ParquetFileReader.open(source);
         ParquetFileReader second = ParquetFileReader.open(source);
 
-        assertThat(second.leafIndex()).as("the leaf index of the cached footer").isSameAs(first.leafIndex());
-        assertThat(second.spatialBounds())
+        assertThat(second.footer().leafIndex())
+                .as("the leaf index of the cached footer")
+                .isSameAs(first.footer().leafIndex());
+        assertThat(second.footer().spatialBounds())
                 .as("the spatial bounds source of the cached footer")
-                .isSameAs(first.spatialBounds());
+                .isSameAs(first.footer().spatialBounds());
     }
 
     @Test
@@ -354,7 +356,7 @@ class FooterMetadataCacheTest {
         assertThat(source.reads())
                 .as("an unnamed source has no cache identity, hence every open reads the footer")
                 .isGreaterThan(readsAfterFirstOpen);
-        assertThat(second.compactFooter()).isNotSameAs(first.compactFooter());
+        assertThat(second.footer().compactFooter()).isNotSameAs(first.footer().compactFooter());
     }
 
     @Test
@@ -368,7 +370,8 @@ class FooterMetadataCacheTest {
         assertThat(source.reads())
                 .as("reads performed by an open that received a decryption key")
                 .isGreaterThan(readsAfterPlainOpen);
-        assertThat(encrypted.compactFooter()).isNotSameAs(plain.compactFooter());
+        assertThat(encrypted.footer().compactFooter())
+                .isNotSameAs(plain.footer().compactFooter());
     }
 
     @Test

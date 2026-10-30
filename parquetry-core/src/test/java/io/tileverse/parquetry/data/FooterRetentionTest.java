@@ -113,7 +113,7 @@ class FooterRetentionTest {
             assertThat(rowGroups)
                     .as("the fixture needs several row groups for this check to discriminate")
                     .isGreaterThan(1);
-            assertThat(reader.compactFooter().rowGroupCount())
+            assertThat(reader.footer().compactFooter().rowGroupCount())
                     .as("row groups known to the retained planning footer")
                     .isEqualTo(rowGroups);
 
@@ -126,7 +126,7 @@ class FooterRetentionTest {
                     .isEmpty();
             assertThat(planningBoxesIn(walk))
                     .as("planning boxes of the bounds source, each one reachable from the reader")
-                    .containsAll(planningBoxesHeldBy(reader.spatialBounds()));
+                    .containsAll(planningBoxesHeldBy(reader.footer().spatialBounds()));
         }
     }
 
@@ -375,7 +375,7 @@ class FooterRetentionTest {
             List<MemorySegment> bounds = binaryBoundsOf(name);
             assertThat(bounds).as("decoded binary bounds of the string column").hasSize(2);
 
-            List<MemorySegment> windows = statisticWindowsOf(reader.compactFooter());
+            List<MemorySegment> windows = statisticWindowsOf(reader.footer().compactFooter());
             assertThat(windows).as("statistic windows into the packed footer").isNotEmpty();
             for (MemorySegment bound : bounds) {
                 assertThat(windows)

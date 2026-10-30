@@ -134,7 +134,7 @@ class SpatialReadGatesTest {
     /** The row-group gate of a read over a freshly written single-row-group file, consulting {@code probe}. */
     private RowGroupGate gateOver(SpatialReadProbe probe) throws Exception {
         ParquetFileReader reader = openTwoPointFile();
-        return gateOver(reader, reader.spatialBounds(), probe);
+        return gateOver(reader, reader.footer().spatialBounds(), probe);
     }
 
     /** The row-group gate of a read over {@code reader}, taking the row group's bounds from {@code bounds}. */
@@ -152,8 +152,8 @@ class SpatialReadGatesTest {
 
     /** The file's one row group, as the filter pipeline hands it over once it has cleared it in full. */
     private static List<RowGroupSurvivor> survivorsOf(ParquetFileReader reader) {
-        RowGroupChunks chunks =
-                RowGroupChunks.of(reader.compactFooter(), 0, reader.leafIndex(), reader.schema(), NO_INDEX_SECTIONS);
+        RowGroupChunks chunks = RowGroupChunks.of(
+                reader.footer().compactFooter(), 0, reader.footer().leafIndex(), reader.schema(), NO_INDEX_SECTIONS);
         return List.of(RowGroupSurvivor.full(chunks));
     }
 
