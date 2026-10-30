@@ -56,11 +56,11 @@ class StreamingBatchSourceSpillTest {
         DecodeBudget heapBudget = DecodeBudget.ofBytes(1); // nothing fits in heap; everything spills
         DiskBudget diskBudget = DiskBudget.ofBytes(1 << 20);
         BatchSpillStore store = new BatchSpillStore(dir, diskBudget, schema, SpillAccumulator.NONE);
-        RowGroupBatchDriver driver =
-                fakeDriver(intBatch(schema, "n", new int[] {1, 2}), intBatch(schema, "n", new int[] {3, 4, 5}));
+        BatchSource decoder =
+                fakeDecoder(intBatch(schema, "n", new int[] {1, 2}), intBatch(schema, "n", new int[] {3, 4, 5}));
 
         BatchHandoff handoff = new BatchHandoff(2);
-        StreamingBatchSource source = new StreamingBatchSource(handoff, driver, heapBudget, store, true);
+        StreamingBatchSource source = new StreamingBatchSource(handoff, decoder, heapBudget, store, true);
         ExecutorService executor = runProducerOnAThread(source);
 
         try {
@@ -89,10 +89,10 @@ class StreamingBatchSourceSpillTest {
         for (int i = 0; i < batches.length; i++) {
             batches[i] = intBatch(schema, "n", new int[] {i});
         }
-        RowGroupBatchDriver driver = fakeDriver(batches);
+        BatchSource decoder = fakeDecoder(batches);
 
         BatchHandoff handoff = new BatchHandoff(2);
-        StreamingBatchSource source = new StreamingBatchSource(handoff, driver, heapBudget, store, true);
+        StreamingBatchSource source = new StreamingBatchSource(handoff, decoder, heapBudget, store, true);
         ExecutorService executor = runProducerOnAThread(source);
 
         int count = 0;
@@ -124,10 +124,10 @@ class StreamingBatchSourceSpillTest {
         // zero. Counting the latch down inside nextBatch() lets the test cancel only after the producer is past the
         // loop's cancellation check and committed to admitting the batch, which makes the cancel/park path reliable.
         CountDownLatch enteredAdmit = new CountDownLatch(1);
-        RowGroupBatchDriver driver = signallingDriver(enteredAdmit, intBatch(schema, "n", new int[] {1, 2, 3}));
+        BatchSource decoder = signallingDecoder(enteredAdmit, intBatch(schema, "n", new int[] {1, 2, 3}));
 
         BatchHandoff handoff = new BatchHandoff(2);
-        StreamingBatchSource source = new StreamingBatchSource(handoff, driver, sharedBudget, store, false);
+        StreamingBatchSource source = new StreamingBatchSource(handoff, decoder, sharedBudget, store, false);
         ExecutorService executor = runProducerOnAThread(source);
 
         try {
@@ -143,17 +143,17 @@ class StreamingBatchSourceSpillTest {
         assertThat(sharedBudget.available()).isZero();
     }
 
-    private static RowGroupBatchDriver signallingDriver(CountDownLatch enteredAdmit, ParquetRecordBatch... batches) {
-        ListRowGroupDriver delegate = new ListRowGroupDriver(List.of(batches));
-        return new RowGroupBatchDriver() {
+    private static BatchSource signallingDecoder(CountDownLatch enteredAdmit, ParquetRecordBatch... batches) {
+        ListBatchSource delegate = new ListBatchSource(List.of(batches));
+        return new BatchSource() {
             @Override
-            public boolean hasMore() {
-                return delegate.hasMore();
+            public boolean hasNext() {
+                return delegate.hasNext();
             }
 
             @Override
-            public ParquetRecordBatch nextBatch() {
-                ParquetRecordBatch batch = delegate.nextBatch();
+            public ParquetRecordBatch next() {
+                ParquetRecordBatch batch = delegate.next();
                 enteredAdmit.countDown();
                 return batch;
             }
@@ -172,8 +172,8 @@ class StreamingBatchSourceSpillTest {
         return executor;
     }
 
-    private static RowGroupBatchDriver fakeDriver(ParquetRecordBatch... batches) {
-        return new ListRowGroupDriver(List.of(batches));
+    private static BatchSource fakeDecoder(ParquetRecordBatch... batches) {
+        return new ListBatchSource(List.of(batches));
     }
 
     private static ParquetRecordBatch intBatch(ParquetSchema schema, String name, int[] values) {

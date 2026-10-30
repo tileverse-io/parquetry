@@ -45,7 +45,7 @@ class StreamingBatchSourceTest {
                 List.of(TestBatches.intBatch(8), TestBatches.intBatch(8), TestBatches.intBatch(8));
         BatchHandoff handoff = new BatchHandoff(2);
         StreamingBatchSource source =
-                new StreamingBatchSource(handoff, new ListRowGroupDriver(batches), budget, store, true);
+                new StreamingBatchSource(handoff, new ListBatchSource(batches), budget, store, true);
 
         Thread producer = startProducer(source);
 

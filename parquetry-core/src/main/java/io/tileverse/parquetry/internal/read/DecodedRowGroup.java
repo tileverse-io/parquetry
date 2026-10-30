@@ -135,9 +135,9 @@ final class DecodedRowGroup implements AutoCloseable {
     }
 
     /**
-     * The source's decode measurement less the driver's predicate evaluation. The driver evaluates each window inside
-     * the bracket the source times as decode, and that evaluation is reported as record-filter time; taking it out here
-     * keeps the two phases from counting the same nanoseconds twice.
+     * The source's decode measurement less its predicate evaluation. A masked scan evaluates each window inside the
+     * bracket timed as decode, and that evaluation is reported as record-filter time; taking it out here keeps the two
+     * phases from counting the same nanoseconds twice.
      */
     private long decodeNanosWithoutPredicateEvaluation() {
         return Math.max(0L, source.decodeNanos() - source.recordFilterNanos());
@@ -145,7 +145,7 @@ final class DecodedRowGroup implements AutoCloseable {
 
     /**
      * The whole of the read's per-row testing: what the pipeline accumulated through
-     * {@link #addRecordFilterNanos(long)} plus what the decode driver spent evaluating the predicate in scan.
+     * {@link #addRecordFilterNanos(long)} plus the time spent by a masked scan evaluating the predicate.
      */
     private long totalRecordFilterNanos() {
         return recordFilterNanos + source.recordFilterNanos();

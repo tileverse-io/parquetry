@@ -381,7 +381,7 @@ class ParallelDecodeCoordinatorTest {
     }
 
     private static DecodedRowGroup failingStreamingRowGroup(ComputeExecutor pool) {
-        RowGroupBatchDriver driver = new FailingDriver(new IllegalStateException("decode blew up"));
+        BatchSource decoder = new FailingDecoder(new IllegalStateException("decode blew up"));
         BatchHandoff handoff = new BatchHandoff(2);
         BatchSpillStore spillStore = new BatchSpillStore(
                 Path.of(System.getProperty("java.io.tmpdir")),
@@ -389,7 +389,7 @@ class ParallelDecodeCoordinatorTest {
                 TestBatches.singleIntColumnSchema(),
                 SpillAccumulator.NONE);
         StreamingBatchSource source =
-                new StreamingBatchSource(handoff, driver, DecodeBudget.defaultBudget(), spillStore, true);
+                new StreamingBatchSource(handoff, decoder, DecodeBudget.defaultBudget(), spillStore, true);
         source.attachProducerTask(pool.submitAcquired(() -> {
             source.runProducer();
             return null;
@@ -435,22 +435,22 @@ class ParallelDecodeCoordinatorTest {
         return new ParquetSchema(root);
     }
 
-    /** A driver that fails on the first batch, modelling a worker-side decode failure. */
-    private static final class FailingDriver implements RowGroupBatchDriver {
+    /** A decoder that fails on the first batch, modelling a worker-side decode failure. */
+    private static final class FailingDecoder implements BatchSource {
 
         private final RuntimeException failure;
 
-        private FailingDriver(RuntimeException failure) {
+        private FailingDecoder(RuntimeException failure) {
             this.failure = failure;
         }
 
         @Override
-        public boolean hasMore() {
+        public boolean hasNext() {
             return true;
         }
 
         @Override
-        public ParquetRecordBatch nextBatch() {
+        public ParquetRecordBatch next() {
             throw failure;
         }
 

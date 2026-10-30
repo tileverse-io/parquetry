@@ -18,11 +18,13 @@ package io.tileverse.parquetry.internal.read;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 
 /**
- * Yields one row group's batches in order to the consuming read thread. An inline source decodes synchronously on the
- * consumer thread; a streaming source drains a worker-fed hand-off. {@link #close()} releases undelivered batches and
- * the underlying fetch.
+ * Yields one row group's batches in order to the consuming read thread. A {@link DecodingBatchSource} decodes on the
+ * calling thread; a {@link StreamingBatchSource} drains a hand-off fed by a decoding source on a worker.
+ * {@link #close()} releases undelivered batches and the underlying fetch.
+ *
+ * <p>The observability tallies default to zero, for the fixture sources of tests; both production sources report them.
  */
-sealed interface BatchSource extends AutoCloseable permits InlineBatchSource, StreamingBatchSource {
+interface BatchSource extends AutoCloseable {
 
     /** True while more batches remain; may block in the streaming source until the producer makes progress. */
     boolean hasNext();
@@ -34,25 +36,33 @@ sealed interface BatchSource extends AutoCloseable permits InlineBatchSource, St
      * Data pages decoded and skipped for this row group, for read observability. Read only after the source is drained
      * or closed; the streaming source's producer has then finished and its counters are stable.
      */
-    BatchRowGroupReader.PageCounts pageCounts();
+    default BatchRowGroupReader.PageCounts pageCounts() {
+        return BatchRowGroupReader.PageCounts.ZERO;
+    }
 
     /**
      * Logical rows actually run through decode for this row group, for read observability. Read only after the source
      * is drained or closed; the streaming source's producer has then finished and its counters are stable.
      */
-    long rowsProduced();
+    default long rowsProduced() {
+        return 0L;
+    }
 
     /**
      * Nanoseconds spent decoding this row group's batches, or zero when the observer did not opt into timings. Read
      * only after the source is drained or closed, under the same join as {@link #pageCounts()}.
      */
-    long decodeNanos();
+    default long decodeNanos() {
+        return 0L;
+    }
 
     /**
-     * Nanoseconds the decode driver spent evaluating the predicate over this row group, zero for a driver that
-     * evaluates none. Read only after the source is drained or closed, under the same join as {@link #pageCounts()}.
+     * Nanoseconds spent evaluating the predicate over this row group during decode, zero for a decode that evaluates
+     * none. Read only after the source is drained or closed, under the same join as {@link #pageCounts()}.
      */
-    long recordFilterNanos();
+    default long recordFilterNanos() {
+        return 0L;
+    }
 
     @Override
     void close();

@@ -46,8 +46,8 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.testsupport.VectorArrays;
 
-/** Unit tests for {@link ClassicRowGroupDriver}, the standard per-row-group streaming path. */
-class RowGroupBatchDriverTest {
+/** Decoding one fetched row group on the calling thread, and releasing its fetch. */
+class DecodingBatchSourceTest {
 
     private static final ColumnPath PATH_A = ColumnPath.of("a");
 
@@ -59,17 +59,9 @@ class RowGroupBatchDriverTest {
         ParquetSchema schema = flatSchema("a");
 
         List<int[]> decoded = new ArrayList<>();
-        try (ClassicRowGroupDriver driver = new ClassicRowGroupDriver(
-                TestDecodeBuffers.ample(),
-                fetch,
-                schema,
-                schema,
-                OptionalInt.empty(),
-                Optional.empty(),
-                BatchForm.ASSEMBLED,
-                Optional.empty())) {
-            while (driver.hasMore()) {
-                try (ParquetRecordBatch batch = driver.nextBatch()) {
+        try (DecodingBatchSource source = decodingSource(fetch, schema)) {
+            while (source.hasNext()) {
+                try (ParquetRecordBatch batch = source.next()) {
                     IntVector vec = (IntVector) batch.columns().get(PATH_A);
                     decoded.add(VectorArrays.toArray(vec));
                 }
@@ -77,7 +69,7 @@ class RowGroupBatchDriverTest {
         }
 
         assertThat(decoded)
-                .as("driver streams one batch per page, in file order")
+                .as("the source streams one batch per page, in file order")
                 .hasSize(2);
         assertThat(decoded.get(0)).containsExactly(10, 20, 30, 40);
         assertThat(decoded.get(1)).containsExactly(50, 60, 70, 80, 90, 100);
@@ -88,27 +80,32 @@ class RowGroupBatchDriverTest {
         RowGroupFetch fetch = fetchOf(singlePageInt32Chunk(PATH_A, new int[] {1, 2, 3}));
         ParquetSchema schema = flatSchema("a");
 
-        ClassicRowGroupDriver driver = new ClassicRowGroupDriver(
+        DecodingBatchSource source = decodingSource(fetch, schema);
+        try (ParquetRecordBatch batch = source.next()) {
+            assertThat(batch.rowCount()).isEqualTo(3);
+        }
+
+        source.close();
+        // The fetch is closed by the source; closing it again is a no-op (RowGroupFetch close is idempotent).
+        assertThatCode(fetch::close).doesNotThrowAnyException();
+        // A second close of the source must also be safe.
+        assertThatCode(source::close).doesNotThrowAnyException();
+    }
+
+    // --- fixture helpers ---
+
+    private static DecodingBatchSource decodingSource(RowGroupFetch fetch, ParquetSchema schema) {
+        BatchRowGroupReader reader = new BatchRowGroupReader(
                 TestDecodeBuffers.ample(),
-                fetch,
+                fetch.columns(),
                 schema,
                 schema,
                 OptionalInt.empty(),
                 Optional.empty(),
                 BatchForm.ASSEMBLED,
                 Optional.empty());
-        try (ParquetRecordBatch batch = driver.nextBatch()) {
-            assertThat(batch.rowCount()).isEqualTo(3);
-        }
-
-        driver.close();
-        // The fetch is closed by the driver; closing it again is a no-op (RowGroupFetch close is idempotent).
-        assertThatCode(fetch::close).doesNotThrowAnyException();
-        // A second driver close must also be safe.
-        assertThatCode(driver::close).doesNotThrowAnyException();
+        return new DecodingBatchSource(reader, fetch, false);
     }
-
-    // --- fixture helpers ---
 
     private static RowGroupFetch fetchOf(FetchedColumnChunk chunk) {
         return new RowGroupFetch(List.<Pooled>of(), List.of(chunk), BudgetReservation.NONE, 0L);

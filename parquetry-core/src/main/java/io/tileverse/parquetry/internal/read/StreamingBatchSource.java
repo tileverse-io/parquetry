@@ -37,16 +37,13 @@ import lombok.NonNull;
 final class StreamingBatchSource implements BatchSource {
 
     private final BatchHandoff handoff;
-    private final RowGroupBatchDriver driver;
+    // Drained by the producer thread; the consumer reads its tallies only after close() has joined the producer.
+    private final BatchSource decoder;
     private final DecodeBudget budget;
     private final BatchSpillStore spillStore;
     private final boolean spillEnabled;
-    private final boolean wantsTimings;
 
     private final BooleanSupplier giveUp;
-
-    // Written by the producer thread; the consumer reads it only after close() has joined the producer.
-    private long decodeNanos;
 
     // Written once by the coordinator right after submission, read once by the consumer in close().
     @SuppressWarnings("java:S3077")
@@ -54,30 +51,15 @@ final class StreamingBatchSource implements BatchSource {
 
     StreamingBatchSource(
             @NonNull BatchHandoff handoff,
-            @NonNull RowGroupBatchDriver driver,
+            @NonNull BatchSource decoder,
             @NonNull DecodeBudget budget,
             @NonNull BatchSpillStore spillStore,
             boolean spillEnabled) {
-        this(handoff, driver, budget, spillStore, spillEnabled, false);
-    }
-
-    /**
-     * Same as the five-argument constructor, additionally timing the producer's driver calls when {@code wantsTimings}
-     * is on: the elapsed decode time accumulates into {@link #decodeNanos()}. When off (the default), no clock is read.
-     */
-    StreamingBatchSource(
-            @NonNull BatchHandoff handoff,
-            @NonNull RowGroupBatchDriver driver,
-            @NonNull DecodeBudget budget,
-            @NonNull BatchSpillStore spillStore,
-            boolean spillEnabled,
-            boolean wantsTimings) {
         this.handoff = handoff;
-        this.driver = driver;
+        this.decoder = decoder;
         this.budget = budget;
         this.spillStore = spillStore;
         this.spillEnabled = spillEnabled;
-        this.wantsTimings = wantsTimings;
         this.giveUp = handoff::isCancelled;
     }
 
@@ -91,9 +73,9 @@ final class StreamingBatchSource implements BatchSource {
      */
     @SuppressWarnings("java:S1181") // an Error on the worker must reach the consumer, otherwise the hand-off hangs
     void runProducer() {
-        try (driver) {
-            while (hasMoreTimed() && !handoff.isCancelled()) {
-                ParquetRecordBatch batch = nextBatchTimed();
+        try (decoder) {
+            while (decoder.hasNext() && !handoff.isCancelled()) {
+                ParquetRecordBatch batch = decoder.next();
                 handoff.put(admit(batch));
             }
             handoff.complete();
@@ -103,28 +85,6 @@ final class StreamingBatchSource implements BatchSource {
         } catch (RuntimeException | Error e) {
             handoff.fail(e);
         }
-    }
-
-    // hasMore is timed too: the masked scan driver computes its first surviving window on the first hasMore call.
-    // Only the driver calls are bracketed, never the hand-off, which may park waiting on the consumer.
-    private boolean hasMoreTimed() {
-        if (!wantsTimings) {
-            return driver.hasMore();
-        }
-        long start = System.nanoTime();
-        boolean more = driver.hasMore();
-        decodeNanos += System.nanoTime() - start;
-        return more;
-    }
-
-    private ParquetRecordBatch nextBatchTimed() {
-        if (!wantsTimings) {
-            return driver.nextBatch();
-        }
-        long start = System.nanoTime();
-        ParquetRecordBatch batch = driver.nextBatch();
-        decodeNanos += System.nanoTime() - start;
-        return batch;
     }
 
     /**
@@ -167,39 +127,40 @@ final class StreamingBatchSource implements BatchSource {
     }
 
     /**
-     * The driver's page counts. The consumer reads this only after {@link #close()} has joined the producer, hence the
+     * The decoder's page counts. The consumer reads this only after {@link #close()} has joined the producer, hence the
      * producer-thread writes to the page cursors happen-before this read.
      */
     @Override
     public BatchRowGroupReader.PageCounts pageCounts() {
-        return driver.pageCounts();
+        return decoder.pageCounts();
     }
 
     /**
-     * The driver's decoded-row tally, under the same join as {@link #pageCounts()}: the consumer reads it only after
+     * The decoder's decoded-row tally, under the same join as {@link #pageCounts()}: the consumer reads it only after
      * {@link #close()} has awaited the producer.
      */
     @Override
     public long rowsProduced() {
-        return driver.rowsProduced();
+        return decoder.rowsProduced();
     }
 
     /**
-     * The producer's decode-time tally, under the same join as {@link #pageCounts()}: the consumer reads it only after
-     * {@link #close()} has awaited the producer.
+     * The decoder's decode-time tally, under the same join as {@link #pageCounts()}: the consumer reads it only after
+     * {@link #close()} has awaited the producer. Only the decoder calls are timed, never the hand-off, which may park
+     * waiting on the consumer.
      */
     @Override
     public long decodeNanos() {
-        return decodeNanos;
+        return decoder.decodeNanos();
     }
 
     /**
-     * The driver's predicate-evaluation tally, under the same join as {@link #pageCounts()}: the consumer reads it only
-     * after {@link #close()} has awaited the producer.
+     * The decoder's predicate-evaluation tally, under the same join as {@link #pageCounts()}: the consumer reads it
+     * only after {@link #close()} has awaited the producer.
      */
     @Override
     public long recordFilterNanos() {
-        return driver.recordFilterNanos();
+        return decoder.recordFilterNanos();
     }
 
     @Override

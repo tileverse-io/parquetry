@@ -203,16 +203,16 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     }
 
     // S2095: ownership of the row group transfers to the caller (the window, drained or closed by the coordinator); on
-    // rejection nothing was started, the empty hand-off needs no close, and the driver moves to the inline fallback.
+    // rejection nothing was started, the empty hand-off needs no close, and the decoding source moves to the inline
+    // fallback.
     @SuppressWarnings("java:S2095")
     private DecodedRowGroup submitSpeculative(RowGroupFetch fetch, int index) {
-        boolean wantsTimings = observation.wantsTimings();
-        RowGroupBatchDriver driver = buildDriver(fetch, plans.decodeMask(index), index);
+        DecodingBatchSource decoding = decodingSource(fetch, plans.decodeMask(index), index);
         BatchHandoff handoff = new BatchHandoff(HANDOFF_CAPACITY);
         BatchSpillStore spillStore =
                 new BatchSpillStore(spillDir, diskBudget, projectedSchema, observation.spillAccumulator());
         StreamingBatchSource source =
-                new StreamingBatchSource(handoff, driver, decodeBudget, spillStore, spillEnabled, wantsTimings);
+                new StreamingBatchSource(handoff, decoding, decodeBudget, spillStore, spillEnabled);
         DecodedRowGroup rowGroup =
                 new DecodedRowGroup(source, evalRequiredFor(index), observationFor(index, fetch.fetchNanos()));
         try {
@@ -222,11 +222,8 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
             });
             source.attachProducerTask(task);
         } catch (RejectedExecutionException _) {
-            // The slot was released by submitAcquired; fall back to inline streaming over the same driver.
-            return new DecodedRowGroup(
-                    new InlineBatchSource(driver, wantsTimings),
-                    evalRequiredFor(index),
-                    observationFor(index, fetch.fetchNanos()));
+            // The slot was released by submitAcquired; fall back to decoding inline through the same source.
+            return new DecodedRowGroup(decoding, evalRequiredFor(index), observationFor(index, fetch.fetchNanos()));
         }
         return rowGroup;
     }
@@ -234,20 +231,27 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     private DecodedRowGroup decodeInline(int index) throws IOException {
         RowGroupFetch fetch = prefetcher.take(index);
         nextToSubmit = Math.max(nextToSubmit, index + 1);
-        RowGroupBatchDriver driver = buildDriver(fetch, plans.decodeMask(index), index);
-        return new DecodedRowGroup(
-                new InlineBatchSource(driver, observation.wantsTimings()),
-                evalRequiredFor(index),
-                observationFor(index, fetch.fetchNanos()));
+        DecodingBatchSource decoding = decodingSource(fetch, plans.decodeMask(index), index);
+        return new DecodedRowGroup(decoding, evalRequiredFor(index), observationFor(index, fetch.fetchNanos()));
     }
 
-    private RowGroupBatchDriver buildDriver(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
+    /** The source decoding one fetched row group, which releases the fetch when closed. */
+    private DecodingBatchSource decodingSource(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
+        RowGroupReader reader = readerFor(fetch, mask, index);
+        return new DecodingBatchSource(reader, fetch, observation.wantsTimings());
+    }
+
+    /**
+     * The reader of one fetched row group: the masked scan when the read evaluates the predicate in scan and the row
+     * group still needs it, the projected columns over the rows to read otherwise.
+     */
+    private RowGroupReader readerFor(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
         if (maskedScan.isPresent() && Boolean.TRUE.equals(recordEvalRequired.get(index))) {
-            return buildMaskedScanDriver(fetch, mask, index);
+            return maskedScanReader(fetch, mask, index);
         }
-        return new ClassicRowGroupDriver(
+        return new BatchRowGroupReader(
                 decodeBufferAllocator,
-                fetch,
+                fetch.columns(),
                 projectedSchema,
                 fileSchema,
                 batchSizeCap,
@@ -265,13 +269,12 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     }
 
     /**
-     * The masked scan driver for one row group: the predicate columns decode and evaluate per window, and the output
+     * The masked scan reader for one row group: the predicate columns decode and evaluate per window, and the output
      * columns decode only the rows that survived.
      */
-    @SuppressWarnings("java:S2095") // the returned driver owns the reader and closes it
-    private RowGroupBatchDriver buildMaskedScanDriver(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
+    private MaskedScanRowGroupReader maskedScanReader(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
         MaskedScan scan = maskedScan.orElseThrow();
-        MaskedScanRowGroupReader reader = new MaskedScanRowGroupReader(
+        return new MaskedScanRowGroupReader(
                 decodeBufferAllocator,
                 fetch.columns(),
                 fileSchema,
@@ -283,7 +286,6 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
                 batchForm,
                 rowPositionFor(index),
                 plans.rowsToScan(index));
-        return new MaskedScanRowGroupDriver(fetch, reader);
     }
 
     /**

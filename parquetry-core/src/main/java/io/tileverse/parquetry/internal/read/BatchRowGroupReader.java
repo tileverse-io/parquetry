@@ -36,7 +36,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import lombok.NonNull;
 
 /**
- * Per-row-group driver that emits {@link ParquetRecordBatch} instances.
+ * Per-row-group reader that emits {@link ParquetRecordBatch} instances.
  *
  * <p>Owns one {@link BatchColumnReader} per projected leaf. Each {@link #nextBatch()} call:
  *
@@ -55,7 +55,7 @@ import lombok.NonNull;
  * into batch-owned off-heap buffers acquired through the decode allocator. A batch owns those buffers and nothing else,
  * and the consumer may close it on a thread other than the one that decoded it.
  */
-public final class BatchRowGroupReader implements AutoCloseable {
+public final class BatchRowGroupReader implements RowGroupReader {
 
     private final ParquetSchema projectedSchema;
     private final ParquetSchema batchSchema;
@@ -125,6 +125,7 @@ public final class BatchRowGroupReader implements AutoCloseable {
      * Returns true while any column reader still has rows. Before the first batch is read, returns true if there are
      * projected columns to read from.
      */
+    @Override
     public boolean hasMore() {
         if (columnReaders == null) {
             return !projectedLeaves.isEmpty();
@@ -149,6 +150,7 @@ public final class BatchRowGroupReader implements AutoCloseable {
      *
      * @throws IllegalStateException if called when {@link #hasMore()} returns false
      */
+    @Override
     @MustBeClosed
     public ParquetRecordBatch nextBatch() {
         if (!hasMore()) {
@@ -259,6 +261,7 @@ public final class BatchRowGroupReader implements AutoCloseable {
      * Sums the data pages decoded and skipped across every column reader, for the read observability callback. Returns
      * zeros before the first batch is pulled (no column reader has been built yet).
      */
+    @Override
     public PageCounts pageCounts() {
         if (columnReaders == null) {
             return PageCounts.ZERO;
@@ -281,6 +284,7 @@ public final class BatchRowGroupReader implements AutoCloseable {
      * Logical rows this reader has decoded into batches, for the read observability callback. Counts batch rows as they
      * are produced, never the row group's metadata row count; an abandoned reader reports only what it decoded.
      */
+    @Override
     public long rowsProduced() {
         return rowsProducedTotal;
     }

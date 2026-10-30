@@ -19,23 +19,23 @@ import java.util.List;
 
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 
-/** Test driver that replays a fixed list of pre-built batches. */
-final class ListRowGroupDriver implements RowGroupBatchDriver {
+/** Test source that replays a fixed list of pre-built batches. */
+final class ListBatchSource implements BatchSource {
 
     private final List<ParquetRecordBatch> batches;
     private int index;
 
-    ListRowGroupDriver(List<ParquetRecordBatch> batches) {
+    ListBatchSource(List<ParquetRecordBatch> batches) {
         this.batches = List.copyOf(batches);
     }
 
     @Override
-    public boolean hasMore() {
+    public boolean hasNext() {
         return index < batches.size();
     }
 
     @Override
-    public ParquetRecordBatch nextBatch() {
+    public ParquetRecordBatch next() {
         return batches.get(index++);
     }
 

@@ -61,7 +61,7 @@ import lombok.NonNull;
  * <p>A window whose rows all fail the predicate emits nothing: its output columns are stepped over without decoding a
  * value. Each emitted batch holds the window's survivors, dense and in row order, over the caller's output schema.
  */
-final class MaskedScanRowGroupReader implements AutoCloseable {
+final class MaskedScanRowGroupReader implements RowGroupReader {
 
     private final DecodeBufferAllocator decodeBufferAllocator;
     private final ParquetSchema filterSchema;
@@ -236,7 +236,8 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
      * Returns true while a surviving batch is available, computing it on demand. Windows whose rows all fail the
      * predicate are consumed here and emit nothing, which keeps empty batches out of the hand-off.
      */
-    boolean hasMore() {
+    @Override
+    public boolean hasMore() {
         if (pending != null) {
             return true;
         }
@@ -244,8 +245,9 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
         return pending != null;
     }
 
+    @Override
     @MustBeClosed
-    ParquetRecordBatch nextBatch() {
+    public ParquetRecordBatch nextBatch() {
         if (!hasMore()) {
             throw new IllegalStateException("No more rows to read");
         }
@@ -591,7 +593,8 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
     // --- tallies ---
 
     /** The data pages this scan decoded and skipped across its filter and output columns, for read observability. */
-    BatchRowGroupReader.PageCounts pageCounts() {
+    @Override
+    public BatchRowGroupReader.PageCounts pageCounts() {
         int decoded = 0;
         int skipped = 0;
         for (BatchColumnReader reader : scanReaders) {
@@ -602,7 +605,8 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
     }
 
     /** The rows this scan ran through decode: every filter-column row of every window it evaluated. */
-    long rowsProduced() {
+    @Override
+    public long rowsProduced() {
         return rowsDecodedTotal;
     }
 
@@ -612,7 +616,8 @@ final class MaskedScanRowGroupReader implements AutoCloseable {
     }
 
     /** Time spent evaluating the predicate over the windows, in nanoseconds. */
-    long recordFilterNanos() {
+    @Override
+    public long recordFilterNanos() {
         return recordFilterNanos;
     }
 

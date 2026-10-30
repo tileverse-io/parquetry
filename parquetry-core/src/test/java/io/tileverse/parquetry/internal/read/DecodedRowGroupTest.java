@@ -30,8 +30,7 @@ class DecodedRowGroupTest {
     void emitsBatchesInOrder() {
         ParquetRecordBatch b0 = TestBatches.emptyBatch();
         ParquetRecordBatch b1 = TestBatches.emptyBatch();
-        DecodedRowGroup rowGroup =
-                new DecodedRowGroup(new InlineBatchSource(new ListRowGroupDriver(List.of(b0, b1))), true);
+        DecodedRowGroup rowGroup = new DecodedRowGroup(new ListBatchSource(List.of(b0, b1)), true);
 
         assertThat(rowGroup.hasNext()).isTrue();
         assertThat(rowGroup.next()).isSameAs(b0);
@@ -48,8 +47,7 @@ class DecodedRowGroupTest {
         AtomicBoolean unemittedClosed = new AtomicBoolean();
         ParquetRecordBatch emitted = TestBatches.emptyBatch(emittedClosed);
         ParquetRecordBatch unemitted = TestBatches.emptyBatch(unemittedClosed);
-        DecodedRowGroup rowGroup =
-                new DecodedRowGroup(new InlineBatchSource(new ListRowGroupDriver(List.of(emitted, unemitted))), true);
+        DecodedRowGroup rowGroup = new DecodedRowGroup(new ListBatchSource(List.of(emitted, unemitted)), true);
 
         rowGroup.next(); // emit the first; the consumer now owns it
         rowGroup.close();
@@ -68,8 +66,7 @@ class DecodedRowGroupTest {
     void closeIsIdempotent() {
         AtomicBoolean closed = new AtomicBoolean();
         ParquetRecordBatch only = TestBatches.emptyBatch(closed);
-        DecodedRowGroup rowGroup =
-                new DecodedRowGroup(new InlineBatchSource(new ListRowGroupDriver(List.of(only))), true);
+        DecodedRowGroup rowGroup = new DecodedRowGroup(new ListBatchSource(List.of(only)), true);
         rowGroup.close();
         rowGroup.close();
         assertThat(closed.get()).isTrue();

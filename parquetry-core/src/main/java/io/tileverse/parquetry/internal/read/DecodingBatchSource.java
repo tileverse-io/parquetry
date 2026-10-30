@@ -20,59 +20,59 @@ import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import lombok.NonNull;
 
 /**
- * Decodes one row group synchronously on the consumer thread, one batch at a time. Used for the in-order current row
- * group and the inline fallback: it never reserves decode budget and keeps at most one batch live.
+ * Decodes one fetched row group on the calling thread, one batch at a time, and releases the fetch when closed. The
+ * consumer drains it directly for the in-order row group and for the inline fallback. A {@link StreamingBatchSource}
+ * drains it on a worker for a speculative decode.
  *
- * <p>When {@code wantsTimings} is on, each driver call is bracketed with {@code System.nanoTime()} and the elapsed
- * decode time accumulates into {@link #decodeNanos()}. When off (the default), no clock is read.
+ * <p>When {@code wantsTimings} is on, each reader call is bracketed with {@code System.nanoTime()} and the elapsed
+ * decode time accumulates into {@link #decodeNanos()}. When off, no clock is read.
  */
-final class InlineBatchSource implements BatchSource {
+final class DecodingBatchSource implements BatchSource {
 
-    private final RowGroupBatchDriver driver;
+    private final RowGroupReader reader;
+    private final RowGroupFetch fetch;
     private final boolean wantsTimings;
 
     private long decodeNanos;
 
-    InlineBatchSource(@NonNull RowGroupBatchDriver driver) {
-        this(driver, false);
-    }
-
-    InlineBatchSource(@NonNull RowGroupBatchDriver driver, boolean wantsTimings) {
-        this.driver = driver;
+    DecodingBatchSource(@NonNull RowGroupReader reader, @NonNull RowGroupFetch fetch, boolean wantsTimings) {
+        this.reader = reader;
+        this.fetch = fetch;
         this.wantsTimings = wantsTimings;
     }
 
-    // hasMore is timed too: the masked scan driver computes its first surviving window on the first hasMore call.
+    // hasNext is timed too: the masked scan reader computes its first surviving window on the first hasMore call.
     @Override
     public boolean hasNext() {
         if (!wantsTimings) {
-            return driver.hasMore();
+            return reader.hasMore();
         }
         long start = System.nanoTime();
-        boolean more = driver.hasMore();
+        boolean more = reader.hasMore();
         decodeNanos += System.nanoTime() - start;
         return more;
     }
 
     @Override
+    @SuppressWarnings("MustBeClosed") // the caller owns and closes the returned batch
     public ParquetRecordBatch next() {
         if (!wantsTimings) {
-            return driver.nextBatch();
+            return reader.nextBatch();
         }
         long start = System.nanoTime();
-        ParquetRecordBatch batch = driver.nextBatch();
+        ParquetRecordBatch batch = reader.nextBatch();
         decodeNanos += System.nanoTime() - start;
         return batch;
     }
 
     @Override
     public BatchRowGroupReader.PageCounts pageCounts() {
-        return driver.pageCounts();
+        return reader.pageCounts();
     }
 
     @Override
     public long rowsProduced() {
-        return driver.rowsProduced();
+        return reader.rowsProduced();
     }
 
     @Override
@@ -82,11 +82,15 @@ final class InlineBatchSource implements BatchSource {
 
     @Override
     public long recordFilterNanos() {
-        return driver.recordFilterNanos();
+        return reader.recordFilterNanos();
     }
 
     @Override
     public void close() {
-        driver.close();
+        try {
+            reader.close();
+        } finally {
+            fetch.close();
+        }
     }
 }
