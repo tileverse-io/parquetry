@@ -243,6 +243,18 @@ class SpatialBoundsSourceTest {
         assertThat(source.rowGroupBounds(GEOMETRY, 1)).isEmpty();
     }
 
+    // A minimum above its maximum bounds nothing, as in the statistics tier: the row group must not get a box.
+    @Test
+    void invertedCoveringGivesNoBox() {
+        ParquetSchema schema = schemaWithGeometryAndCoveringDoubles();
+        FileMetaData footer = footer(coveringRowGroup(0, 1, 2, 3), coveringRowGroupWithInvertedXmin());
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schema, of(geoWithCoveringAndFileBbox()));
+
+        assertThat(source.rowGroupBounds(GEOMETRY, 0)).contains(bbox(0, 1, 2, 3));
+        assertThat(source.rowGroupBounds(GEOMETRY, 1)).isEmpty();
+    }
+
     /** A native box with an infinite bound out of the box of empty geometries counts as no box too. */
     @Test
     void aNativeBoxWithAnInfiniteBoundCountsAsNoBox() {
@@ -428,6 +440,16 @@ class SpatialBoundsSourceTest {
                 columnChunk(doubleStatsMeta("xmax", xmax, xmax)),
                 columnChunk(doubleStatsMeta("ymin", ymin, ymin)),
                 columnChunk(doubleStatsMeta("ymax", ymax, ymax))));
+    }
+
+    /** The shape of {@link #coveringRowGroup}, its {@code xmin} leaf recording a minimum of 5 above a maximum of 1. */
+    private static RowGroup coveringRowGroupWithInvertedXmin() {
+        return rowGroup(List.of(
+                columnChunk(geometryMeta(empty())),
+                columnChunk(doubleStatsMeta("xmin", 5, 1)),
+                columnChunk(doubleStatsMeta("xmax", 20, 20)),
+                columnChunk(doubleStatsMeta("ymin", 0, 0)),
+                columnChunk(doubleStatsMeta("ymax", 10, 10))));
     }
 
     /** The same shape as {@link #coveringRowGroup}, with no statistics on the four sidecar leaves. */

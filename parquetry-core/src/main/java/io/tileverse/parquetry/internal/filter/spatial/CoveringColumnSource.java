@@ -15,19 +15,21 @@
  */
 package io.tileverse.parquetry.internal.filter.spatial;
 
-import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
-import static io.tileverse.parquetry.format.ParquetLayouts.FLOAT;
-
-import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.util.OptionalLong;
 
+import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.Statistics;
+import io.tileverse.parquetry.internal.filter.ColumnSummary;
+import io.tileverse.parquetry.internal.filter.FilterPipeline;
+import io.tileverse.parquetry.internal.filter.NaNCells;
+import io.tileverse.parquetry.internal.filter.StatsEvaluator;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
 import io.tileverse.parquetry.internal.footer.CompactFooter;
 import io.tileverse.parquetry.internal.footer.LeafIndex;
@@ -166,10 +168,10 @@ final class CoveringColumnSource implements SpatialBoundsSource {
     }
 
     private static Optional<BoundingBox> buildBboxForRowGroup(CompactFooter footer, int rowGroup, BboxAxes axes) {
-        OptionalDouble xmin = statsMin(footer, rowGroup, axes.xmin());
-        OptionalDouble xmax = statsMax(footer, rowGroup, axes.xmax());
-        OptionalDouble ymin = statsMin(footer, rowGroup, axes.ymin());
-        OptionalDouble ymax = statsMax(footer, rowGroup, axes.ymax());
+        OptionalDouble xmin = lowerBound(footer, rowGroup, axes.xmin());
+        OptionalDouble xmax = upperBound(footer, rowGroup, axes.xmax());
+        OptionalDouble ymin = lowerBound(footer, rowGroup, axes.ymin());
+        OptionalDouble ymax = upperBound(footer, rowGroup, axes.ymax());
         if (xmin.isEmpty() || xmax.isEmpty() || ymin.isEmpty() || ymax.isEmpty()) {
             return Optional.empty();
         }
@@ -185,42 +187,46 @@ final class CoveringColumnSource implements SpatialBoundsSource {
         return Optional.of(box);
     }
 
-    private static OptionalDouble statsMin(CompactFooter footer, int rowGroup, AxisRef axis) {
-        Optional<MemorySegment> min = chunkAt(footer, rowGroup, axis).flatMap(ChunkMeta::minValue);
-        return decodeDouble(axis.kind(), min);
+    private static OptionalDouble lowerBound(CompactFooter footer, int rowGroup, AxisRef axis) {
+        Optional<ColumnSummary> summary = summaryOf(footer, rowGroup, axis);
+        return asDouble(summary.flatMap(ColumnSummary::min));
     }
 
-    private static OptionalDouble statsMax(CompactFooter footer, int rowGroup, AxisRef axis) {
-        Optional<MemorySegment> max = chunkAt(footer, rowGroup, axis).flatMap(ChunkMeta::maxValue);
-        return decodeDouble(axis.kind(), max);
-    }
-
-    /** The axis chunk of {@code rowGroup}, empty when its bounds follow an order not applied by this reader. */
-    private static Optional<ChunkMeta> chunkAt(CompactFooter footer, int rowGroup, AxisRef axis) {
-        return footer.chunkIfPresent(rowGroup, axis.leaf()).filter(ChunkMeta::boundsOrdered);
+    private static OptionalDouble upperBound(CompactFooter footer, int rowGroup, AxisRef axis) {
+        Optional<ColumnSummary> summary = summaryOf(footer, rowGroup, axis);
+        return asDouble(summary.flatMap(ColumnSummary::max));
     }
 
     /**
-     * Decodes a Parquet PLAIN-encoded min/max value as a {@code double}. The Parquet spec writes FLOAT / DOUBLE
-     * little-endian; other kinds (and short / malformed payloads) decode as empty, which leaves the row group's bbox
-     * unknown rather than wrong. A NaN value bounds nothing and decodes as empty too.
+     * The statistics of the axis chunk of {@code rowGroup}, read by the rules of the statistics tier: a NaN bound is
+     * left out, and a minimum above its maximum leaves both out. Both tiers then agree on the bounds of a covering
+     * column. Empty when the row group has no such chunk, or when its bounds follow an order not applied by this
+     * reader.
      */
-    private static OptionalDouble decodeDouble(PrimitiveKind kind, Optional<MemorySegment> raw) {
-        if (raw.isEmpty()) {
-            return OptionalDouble.empty();
-        }
-        OptionalDouble decoded = decodePlain(kind, raw.orElseThrow());
-        if (decoded.isPresent() && Double.isNaN(decoded.getAsDouble())) {
-            return OptionalDouble.empty();
-        }
-        return decoded;
+    private static Optional<ColumnSummary> summaryOf(CompactFooter footer, int rowGroup, AxisRef axis) {
+        Optional<ChunkMeta> chunk = footer.chunkIfPresent(rowGroup, axis.leaf()).filter(ChunkMeta::boundsOrdered);
+        return chunk.map(meta -> StatsEvaluator.summarize(statisticsOf(meta, axis.kind())));
     }
 
-    private static OptionalDouble decodePlain(PrimitiveKind kind, MemorySegment value) {
-        long size = value.byteSize();
-        return switch (kind) {
-            case DOUBLE -> size >= 8 ? OptionalDouble.of(value.get(DOUBLE, 0)) : OptionalDouble.empty();
-            case FLOAT -> size >= 4 ? OptionalDouble.of(value.get(FLOAT, 0)) : OptionalDouble.empty();
+    private static FilterPipeline.ColumnStats statisticsOf(ChunkMeta chunk, PrimitiveKind kind) {
+        return new FilterPipeline.ColumnStats(
+                kind,
+                chunk.minValue(),
+                chunk.maxValue(),
+                OptionalLong.empty(),
+                chunk.numValues(),
+                Optional.empty(),
+                NaNCells.POSSIBLE);
+    }
+
+    /** A FLOAT or DOUBLE bound as a {@code double}; a bound of any other kind leaves the box unknown. */
+    private static OptionalDouble asDouble(Optional<Value> bound) {
+        if (bound.isEmpty()) {
+            return OptionalDouble.empty();
+        }
+        return switch (bound.orElseThrow()) {
+            case Value.DoubleVal(double value) -> OptionalDouble.of(value);
+            case Value.FloatVal(float value) -> OptionalDouble.of(value);
             default -> OptionalDouble.empty();
         };
     }
