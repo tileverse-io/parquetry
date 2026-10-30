@@ -138,6 +138,31 @@ class WriterCompressionTest {
     }
 
     @Test
+    void nestedLeafTakesItsDottedPath() throws Exception {
+        WriteOptions options = options()
+                .defaultCompression(Compression.zstd(3))
+                .compression("s.x", Compression.uncompressed())
+                .build();
+
+        Path file = writeNestedLeaf(options);
+
+        assertThat(columnMetadata(file, ColumnPath.of("s", "x")).codec()).isEqualTo(CompressionCodec.UNCOMPRESSED);
+        assertThat(columnMetadata(file, ColumnPath.of("a")).codec()).isEqualTo(CompressionCodec.ZSTD);
+    }
+
+    @Test
+    void leafNameMissesNestedLeaf() throws Exception {
+        WriteOptions options = options()
+                .defaultCompression(Compression.zstd(3))
+                .compression("x", Compression.uncompressed())
+                .build();
+
+        Path file = writeNestedLeaf(options);
+
+        assertThat(columnMetadata(file, ColumnPath.of("s", "x")).codec()).isEqualTo(CompressionCodec.ZSTD);
+    }
+
+    @Test
     void compressibleDataShrinksUnderSnappy() throws Exception {
         ParquetSchema schema = flatSchema(requiredInt32("v"));
         Path compressed = tempDir.resolve("snappy-compressible.parquet");
@@ -199,6 +224,24 @@ class WriterCompressionTest {
         }
     }
 
+    /** Writes a file with a top-level leaf {@code a} and a leaf {@code x} nested in a struct {@code s}. */
+    private Path writeNestedLeaf(WriteOptions options) throws Exception {
+        SchemaNode.Group struct =
+                new SchemaNode.Group("s", Repetition.REQUIRED, List.of(requiredInt32("x")), Optional.empty(), -1);
+        SchemaNode.Group root = new SchemaNode.Group(
+                "schema", Repetition.REQUIRED, List.of(requiredInt32("a"), struct), Optional.empty(), -1);
+        ParquetSchema schema = new ParquetSchema(root);
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 200; i++) {
+            rows.add(Map.of(ColumnPath.of("a"), i, ColumnPath.of("s", "x"), i % 10));
+        }
+        Path file = tempDir.resolve("nested.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
+        }
+        return file;
+    }
+
     private WriteOptions.Builder options() {
         return WriteOptions.builder().tempDir(tempDir);
     }
@@ -227,26 +270,33 @@ class WriterCompressionTest {
     }
 
     private static ColumnMetaData columnMetadata(Path file, String columnName) {
+        return columnMetadata(file, ColumnPath.of(columnName));
+    }
+
+    private static ColumnMetaData columnMetadata(Path file, ColumnPath column) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             FileMetaData footer = ParquetFormat.readFooter(source);
             for (RowGroup rg : footer.rowGroups()) {
-                ColumnMetaData meta = findColumnInRowGroup(rg, columnName);
+                ColumnMetaData meta = findColumnInRowGroup(rg, column);
                 if (meta != null) {
                     return meta;
                 }
             }
-            throw new AssertionError("column " + columnName + " not found");
+            throw new AssertionError("column " + column.dot() + " not found");
         }
     }
 
     private static ColumnMetaData findColumnInRowGroup(RowGroup rg, String columnName) {
+        return findColumnInRowGroup(rg, ColumnPath.of(columnName));
+    }
+
+    private static ColumnMetaData findColumnInRowGroup(RowGroup rg, ColumnPath column) {
         for (ColumnChunk chunk : rg.columns()) {
             ColumnMetaData meta = chunk.metaData().orElse(null);
             if (meta == null) {
                 continue;
             }
-            if (meta.pathInSchema().size() == 1
-                    && columnName.equals(meta.pathInSchema().get(0))) {
+            if (ColumnPath.of(meta.pathInSchema()).equals(column)) {
                 return meta;
             }
         }

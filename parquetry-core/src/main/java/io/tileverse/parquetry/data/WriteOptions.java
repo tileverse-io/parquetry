@@ -57,8 +57,8 @@ import lombok.NonNull;
  * @param defaultCompression codec used for any column without a per-column override
  * @param compression per-column compression overrides keyed by dotted column path; unmodifiable
  * @param encodingPolicies per-column encoding policy overrides keyed by dotted column path; unmodifiable
- * @param indexedColumns columns flagged for bloom filter emission; unmodifiable
- * @param bloomFilters per-column explicit bloom filter configs; unmodifiable
+ * @param indexedColumns dotted paths of the columns flagged for bloom filter emission; unmodifiable
+ * @param bloomFilters per-column explicit bloom filter configs keyed by dotted column path; unmodifiable
  * @param crs what each geometry column declares about its CRS, keyed by dotted column path; unmodifiable. A column with
  *     no entry is written with the GeoParquet default, OGC:CRS84.
  * @param keyValueMetadata caller-supplied file-level key/value metadata merged into the footer alongside the

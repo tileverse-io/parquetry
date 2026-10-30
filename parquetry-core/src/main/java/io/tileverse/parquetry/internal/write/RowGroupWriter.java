@@ -35,6 +35,7 @@ import io.tileverse.parquetry.data.ParquetWriteException;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
+import io.tileverse.parquetry.format.GeospatialStatistics;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.format.PhysicalType;
@@ -434,8 +435,21 @@ public final class RowGroupWriter implements AutoCloseable {
                                 ? OptionalLong.empty()
                                 : OptionalLong.of(absoluteDictionaryPageOffset))
                 .statistics(Optional.ofNullable(result.chunkStatistics()))
-                .geospatialStatistics(Optional.ofNullable(result.geospatialStatistics()))
+                .geospatialStatistics(nativeGeospatialStatistics(binding, result))
                 .build();
+    }
+
+    /**
+     * The geospatial statistics of the column chunk in the footer. They go with the GEOMETRY and GEOGRAPHY annotations
+     * of the format: a GeoParquet 1.1-only write leaves the annotation out, and keeps its statistics for the geo
+     * metadata alone.
+     */
+    private static Optional<GeospatialStatistics> nativeGeospatialStatistics(
+            LeafBinding binding, ColumnChunkResult result) {
+        if (!LeafWriteSettings.hasGeometryAnnotation(binding.leaf)) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(result.geospatialStatistics());
     }
 
     private static List<String> pathInSchema(ColumnPath path) {
@@ -502,7 +516,8 @@ public final class RowGroupWriter implements AutoCloseable {
                 throw new ParquetWriteException("Leaf path " + path.dot() + " resolved to a group node");
             }
             boolean nested = needsSchemaDerivedLevels(path, leaf);
-            bindings.add(openLeafBinding(options, schema, tempDir, path, leaf, nested, pageValueLimits.forLeaf(path)));
+            LeafWriteSettings settings = LeafWriteSettings.of(options, path, leaf, pageValueLimits.forLeaf(path));
+            bindings.add(openLeafBinding(options, schema, tempDir, path, leaf, nested, settings));
         }
         return bindings;
     }
@@ -514,14 +529,20 @@ public final class RowGroupWriter implements AutoCloseable {
             ColumnPath path,
             SchemaNode.Primitive leaf,
             boolean nested,
-            int pageValueLimit) {
+            LeafWriteSettings settings) {
         try {
             Path tempFile = Files.createTempFile(tempDir, "rgw-" + safeFileName(path) + "-", ".tmp");
-            ColumnChunkWriter writer = openLeafWriter(options, schema, leaf, path, tempFile, nested, pageValueLimit);
-            Compression compression = resolveCompression(options, leaf.name());
+            ColumnChunkWriter writer = openLeafWriter(options, schema, leaf, path, tempFile, nested, settings);
             boolean requiresStriping = requiresStriping(schema, path, leaf);
             return new LeafBinding(
-                    path, leaf, writer, tempFile, compression, nested, requiresStriping, new LeafStripeWorkspace());
+                    path,
+                    leaf,
+                    writer,
+                    tempFile,
+                    settings.codec(),
+                    nested,
+                    requiresStriping,
+                    new LeafStripeWorkspace());
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to open column writer for " + path.dot(), e);
         }
@@ -536,15 +557,15 @@ public final class RowGroupWriter implements AutoCloseable {
             ColumnPath path,
             Path tempFile,
             boolean nested,
-            int pageValueLimit)
+            LeafWriteSettings settings)
             throws IOException {
         if (!nested) {
-            return new ColumnChunkWriter(options, leaf, tempFile, pageValueLimit);
+            return new ColumnChunkWriter(options, leaf, settings, tempFile);
         }
         // For nested leaves the definition level is the count of optional ancestors plus the leaf's own optionality;
         // this cannot be derived from the leaf node alone and must be computed from the full path.
         LevelMaxima levelMaxima = schema.maxLevels(path);
-        return new ColumnChunkWriter(options, leaf, tempFile, levelMaxima, pageValueLimit);
+        return new ColumnChunkWriter(options, leaf, settings, tempFile, levelMaxima);
     }
 
     /**
@@ -575,14 +596,6 @@ public final class RowGroupWriter implements AutoCloseable {
             index.put(binding.path, binding);
         }
         return Map.copyOf(index);
-    }
-
-    private static Compression resolveCompression(WriteOptions options, String columnName) {
-        Compression override = options.compression().get(columnName);
-        if (override != null) {
-            return override;
-        }
-        return options.defaultCompression();
     }
 
     private static String safeFileName(ColumnPath path) {

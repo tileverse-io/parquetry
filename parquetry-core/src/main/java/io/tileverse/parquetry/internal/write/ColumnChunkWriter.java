@@ -29,16 +29,13 @@ import java.util.List;
 import io.tileverse.parquetry.columnar.ColumnVector;
 import io.tileverse.parquetry.columnar.Selection;
 import io.tileverse.parquetry.columnar.Validity;
-import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.data.ParquetWriteException;
 import io.tileverse.parquetry.data.WriteOptions;
-import io.tileverse.parquetry.data.WriteOptions.BloomFilterConfig;
 import io.tileverse.parquetry.data.WriteOptions.EncodingPolicy;
 import io.tileverse.parquetry.data.WriteOptions.ParquetVersion;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.GeospatialStatistics;
-import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.format.Statistics;
@@ -64,6 +61,7 @@ import io.tileverse.parquetry.internal.write.page.PlainInt64Encoder;
 import io.tileverse.parquetry.internal.write.page.PlainInt96Encoder;
 import io.tileverse.parquetry.internal.write.page.PreEncodedPageJob;
 import io.tileverse.parquetry.internal.write.page.PrimitiveDictionaryEncoder;
+import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.LevelMaxima;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -158,24 +156,25 @@ public final class ColumnChunkWriter implements AutoCloseable {
     /** Page cap for this column alone, which a per-column or covering limit may narrow below the shared one. */
     private final int pageValueLimit;
 
+    /** Constructs a writer for a top-level leaf, which the per-column entries of {@code options} name by its name. */
     public ColumnChunkWriter(@NonNull WriteOptions options, @NonNull SchemaNode.Primitive leaf, @NonNull Path tempFile)
             throws IOException {
-        this(options, leaf, tempFile, options.pageValueLimit());
+        this(options, leaf, topLevelSettings(options, leaf), tempFile);
     }
 
-    /** Constructs a writer whose pages are capped at {@code pageValueLimit} values rather than the shared limit. */
-    public ColumnChunkWriter(
+    /** Constructs a writer for a leaf whose level maxima follow from its own repetition. */
+    ColumnChunkWriter(
             @NonNull WriteOptions options,
             @NonNull SchemaNode.Primitive leaf,
-            @NonNull Path tempFile,
-            int pageValueLimit)
+            @NonNull LeafWriteSettings settings,
+            @NonNull Path tempFile)
             throws IOException {
         this(
                 options,
                 leaf,
+                settings,
                 tempFile,
-                new LevelMaxima(maxRepetitionLevelFor(leaf), maxDefinitionLevelFor(leaf)),
-                pageValueLimit);
+                new LevelMaxima(maxRepetitionLevelFor(leaf), maxDefinitionLevelFor(leaf)));
     }
 
     /**
@@ -186,14 +185,11 @@ public final class ColumnChunkWriter implements AutoCloseable {
     ColumnChunkWriter(
             @NonNull WriteOptions options,
             @NonNull SchemaNode.Primitive leaf,
+            @NonNull LeafWriteSettings settings,
             @NonNull Path tempFile,
-            @NonNull LevelMaxima levelMaxima,
-            int pageValueLimit)
+            @NonNull LevelMaxima levelMaxima)
             throws IOException {
-        if (pageValueLimit <= 0) {
-            throw new IllegalArgumentException("pageValueLimit must be positive: " + pageValueLimit);
-        }
-        this.pageValueLimit = pageValueLimit;
+        this.pageValueLimit = settings.pageValueLimit();
         this.options = options;
         this.leaf = leaf;
         this.tempFile = tempFile;
@@ -202,31 +198,29 @@ public final class ColumnChunkWriter implements AutoCloseable {
         this.tempFileChannel = FileChannel.open(
                 tempFile, StandardOpenOption.WRITE, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
 
-        Compression compression = resolveCompression(options, leaf.name());
         this.column = new ColumnContext(
                 levelMaxima.maxRepetitionLevel(),
                 levelMaxima.maxDefinitionLevel(),
                 kind,
                 options.parquetVersion(),
-                compression);
+                settings.codec());
         this.pageWriter = new PageWriter(column);
 
-        LogicalType logicalType = leaf.logicalType().orElse(null);
-        BoundsOrder boundsOrder = BoundsOrder.of(leaf, options.floatColumnOrder());
+        BoundsOrder boundsOrder = settings.boundsOrder();
         this.chunkStats = StatisticsAccumulator.forColumn(leaf, boundsOrder);
         this.pageStats = StatisticsAccumulator.forColumn(leaf, boundsOrder);
-        this.geoStats = isGeometryLike(logicalType) ? new GeospatialStatisticsAccumulator() : null;
+        this.geoStats = settings.geometry() ? new GeospatialStatisticsAccumulator() : null;
 
         boolean useIndexes = options.parquetVersion() == ParquetVersion.V2_0;
         this.columnIndexBuilder = useIndexes ? new ColumnIndexBuilder(boundsOrder) : null;
         this.offsetIndexBuilder = useIndexes ? new OffsetIndexBuilder() : null;
 
-        this.bloomFilter = createBloomFilterIfRequested(options, leaf.name());
+        this.bloomFilter = settings.bloomFilter().map(BloomFilterBuilder::new).orElse(null);
 
         this.valueBuffer = ValueBuffer.forKind(kind);
         this.levels = new WriteLeafLevels(column.maxRepetitionLevel(), column.maxDefinitionLevel());
 
-        this.dictionary = createDictionaryAttempt(options, leaf, kind);
+        this.dictionary = createDictionaryAttempt(options, leaf, settings.encodingPolicy());
         this.bufferedPages = dictionary != null ? new ArrayList<>() : null;
         this.dictValueSink = dictionary != null ? new GrowableByteSink(256) : null;
     }
@@ -1165,32 +1159,13 @@ public final class ColumnChunkWriter implements AutoCloseable {
                 .orElseThrow(() -> new ParquetWriteException(FIXED_LEN_TYPE_LENGTH_REQUIRED_MESSAGE + leaf.name()));
     }
 
-    private static Compression resolveCompression(WriteOptions options, String columnName) {
-        Compression override = options.compression().get(columnName);
-        if (override != null) {
-            return override;
-        }
-        return options.defaultCompression();
-    }
-
-    private static BloomFilterBuilder createBloomFilterIfRequested(WriteOptions options, String columnName) {
-        BloomFilterConfig explicit = options.bloomFilters().get(columnName);
-        if (explicit != null) {
-            return new BloomFilterBuilder(explicit);
-        }
-        if (options.indexedColumns().contains(columnName)) {
-            return new BloomFilterBuilder(BloomFilterConfig.defaults());
-        }
-        return null;
-    }
-
-    private static boolean isGeometryLike(LogicalType logicalType) {
-        return logicalType instanceof LogicalType.Geometry || logicalType instanceof LogicalType.Geography;
+    private static LeafWriteSettings topLevelSettings(WriteOptions options, SchemaNode.Primitive leaf) {
+        return LeafWriteSettings.of(options, ColumnPath.of(leaf.name()), leaf, options.pageValueLimit());
     }
 
     private static DictionaryAttempt createDictionaryAttempt(
-            WriteOptions options, SchemaNode.Primitive leaf, PrimitiveKind kind) {
-        EncodingPolicy policy = resolveEncodingPolicy(options, leaf);
+            WriteOptions options, SchemaNode.Primitive leaf, EncodingPolicy policy) {
+        PrimitiveKind kind = leaf.kind();
         if (!dictionaryAttemptAllowed(policy, kind)) {
             return null;
         }
@@ -1205,23 +1180,6 @@ public final class ColumnChunkWriter implements AutoCloseable {
             case INT96 -> DictionaryAttempt.BinaryAttempt.createFixedLen(byteLimit, 12);
             case BOOLEAN -> null;
         };
-    }
-
-    /**
-     * Resolves the effective encoding policy for a leaf. An explicit per-column override always wins. Absent one,
-     * geometry and geography columns default to {@link EncodingPolicy#FORCE_PLAIN}: their WKB is effectively unique per
-     * row, where the dictionary attempt overflows and never pays for itself. Every other column defaults to
-     * {@link EncodingPolicy#AUTO}.
-     */
-    private static EncodingPolicy resolveEncodingPolicy(WriteOptions options, SchemaNode.Primitive leaf) {
-        EncodingPolicy explicit = options.encodingPolicies().get(leaf.name());
-        if (explicit != null) {
-            return explicit;
-        }
-        if (isGeometryLike(leaf.logicalType().orElse(null))) {
-            return EncodingPolicy.FORCE_PLAIN;
-        }
-        return EncodingPolicy.AUTO;
     }
 
     private static boolean dictionaryAttemptAllowed(EncodingPolicy policy, PrimitiveKind kind) {

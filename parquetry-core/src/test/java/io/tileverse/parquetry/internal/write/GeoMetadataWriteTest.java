@@ -37,11 +37,13 @@ import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.CoveringMode;
 import io.tileverse.parquetry.data.WriteOptions.GeoParquetMetadataMode;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
+import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.KeyValue;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.SchemaElement;
+import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -119,6 +121,34 @@ class GeoMetadataWriteTest {
         SchemaElement geometryElement = footerElementByName(footer, "geometry");
         assertThat(geometryElement.logicalType())
                 .as("V1_1_ONLY must not annotate the schema element with a v2 logical type")
+                .isEmpty();
+    }
+
+    // The 1.1 document holds the geometry types and the bbox; the WKB stays PLAIN and without byte-order bounds.
+    @Test
+    void v1OnlyModeKeepsGeometryHandling() throws Exception {
+        ParquetSchema schema = flatSchema(requiredBinary("geometry"));
+        WriteOptions options = options()
+                .geoParquetMetadata(GeoParquetMetadataMode.V1_1_ONLY)
+                .crsEpsg("geometry", 4326)
+                .bboxCovering(CoveringMode.NONE)
+                .build();
+        Path file = tempDir.resolve("v1-geometry.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
+            writer.writeBatch(WriteFixtures.batch(schema, List.of(geometryRow(-5.0, -3.0), geometryRow(4.0, 6.0))));
+        }
+
+        FileMetaData footer = readFooter(file);
+        GeoColumn geometryColumn =
+                GeoParquetMetadata.parse(geoJsonOrThrow(footer)).columns().get("geometry");
+        assertThat(geometryColumn.geometryTypes()).containsExactly("Point");
+        assertThat(geometryColumn.bbox().orElseThrow().xmax()).isEqualTo(4.0);
+        ColumnMetaData chunk =
+                footer.rowGroups().get(0).columns().get(0).metaData().orElseThrow();
+        assertThat(chunk.dictionaryPageOffset()).isEmpty();
+        assertThat(chunk.statistics().map(Statistics::preferredMax)).hasValue(MemorySegment.NULL);
+        assertThat(chunk.geospatialStatistics())
+                .as("native statistics go with the native annotation, absent here")
                 .isEmpty();
     }
 

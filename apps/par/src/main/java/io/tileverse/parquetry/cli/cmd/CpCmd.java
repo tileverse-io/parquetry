@@ -296,7 +296,7 @@ public final class CpCmd implements Callable<Integer> {
             SchemaNode node = writeSchema.find(leaf).orElseThrow();
             SchemaNode.Primitive prim = (SchemaNode.Primitive) node;
             if (prim.kind() == PrimitiveKind.FIXED_LEN_BYTE_ARRAY) {
-                builder.encodingPolicy(prim.name(), WriteOptions.EncodingPolicy.FORCE_PLAIN);
+                builder.encodingPolicy(leaf.dot(), WriteOptions.EncodingPolicy.FORCE_PLAIN);
             }
         }
         forwardOpaqueMetadata(builder, sourceKeyValue);
