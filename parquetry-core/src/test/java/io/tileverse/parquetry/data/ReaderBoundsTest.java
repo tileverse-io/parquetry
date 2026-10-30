@@ -25,10 +25,12 @@ import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 
@@ -53,6 +55,8 @@ import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.observe.QueryObserver;
+import io.tileverse.parquetry.observe.QueryStarted;
+import io.tileverse.parquetry.observe.QueryStats;
 import io.tileverse.parquetry.observe.RowGroupRead;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -137,6 +141,27 @@ class ReaderBoundsTest {
             assertThat(observer.events.get(0).rowsMatched())
                     .as("the rows folded into the bounds are the rows the group contributed")
                     .isEqualTo(3L);
+        }
+    }
+
+    @Test
+    void boundsFinishTheObserverOnce() throws IOException {
+        Path file = writeGeometryFixture("bounds-observer.parquet", 50L, grid(400));
+        Predicate predicate = Pred.col("id").gt(200);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            RecordingObserver observer = new RecordingObserver();
+            ReadOptions options = ReadOptions.builder().queryObserver(observer).build();
+
+            reader.bounds(predicate, options);
+
+            assertThat(observer.started).isEqualTo(1);
+            assertThat(observer.planned).isNotEmpty();
+            assertThat(observer.plannedRowGroups)
+                    .as("a planned decision for each row group")
+                    .hasSize(reader.rowGroups().size());
+            assertThat(observer.finished).isEqualTo(1);
+            assertThat(observer.lastStats).isNotNull();
         }
     }
 
@@ -612,10 +637,33 @@ class ReaderBoundsTest {
     private static final class RecordingObserver implements QueryObserver {
 
         private final List<RowGroupRead> events = new ArrayList<>();
+        // The calling thread plans and finishes a bounds query, hence these fields need no lock.
+        private final List<PruningDecision> planned = new ArrayList<>();
+        private final Set<Integer> plannedRowGroups = new HashSet<>();
+        private int started;
+        private int finished;
+        private QueryStats lastStats;
+
+        @Override
+        public void onQueryStarted(QueryStarted event) {
+            started++;
+        }
+
+        @Override
+        public void onRowGroupPlanned(int rowGroup, PruningDecision decision) {
+            planned.add(decision);
+            plannedRowGroups.add(rowGroup);
+        }
 
         @Override
         public synchronized void onRowGroupRead(RowGroupRead event) {
             events.add(event);
+        }
+
+        @Override
+        public void onQueryFinished(QueryStats stats) {
+            finished++;
+            lastStats = stats;
         }
 
         synchronized List<Integer> readRowGroupIndexes() {
