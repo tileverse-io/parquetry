@@ -13,24 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.tileverse.parquetry.internal.filter.spatial;
+package io.tileverse.parquetry.schema.geo.geoparquet;
 
 import java.util.Optional;
 
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaNode;
-import io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering;
-import io.tileverse.parquetry.schema.geo.geoparquet.Covering;
-import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
-import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
-import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
 
 /**
- * Finds the bbox covering of a geometry column: four numeric columns holding a box around the geometry of each row. The
- * covering rewrite, the page bounds and the row-group and file bounds find the covering here, and agree on it.
+ * Finds the bbox covering of a geometry column: four numeric columns holding a box around the geometry of each row.
+ * Spatial pruning, file bounds and the attributes hidden from a GeoTools feature type find the covering here, and agree
+ * on it.
  */
-final class BboxCoverings {
+public final class BboxCoverings {
 
     private BboxCoverings() {}
 
@@ -43,7 +39,8 @@ final class BboxCoverings {
      * <p>The struct describes one geometry column. A file with several of them does not tell which one, and the struct
      * counts as the covering of the primary geometry column alone.
      */
-    static Optional<BboxCovering> coveringOf(ColumnPath geometryColumn, ParquetSchema schema, GeoParquetMetadata geo) {
+    public static Optional<BboxCovering> coveringOf(
+            ColumnPath geometryColumn, ParquetSchema schema, GeoParquetMetadata geo) {
         GeoColumn geoColumn = geo.columns().get(geometryColumn.dot());
         if (geoColumn == null) {
             return Optional.empty();

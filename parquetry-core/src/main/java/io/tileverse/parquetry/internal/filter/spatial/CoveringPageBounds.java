@@ -29,6 +29,7 @@ import io.tileverse.parquetry.internal.read.RowGroupChunks;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering;
+import io.tileverse.parquetry.schema.geo.geoparquet.BboxCoverings;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**

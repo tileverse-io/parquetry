@@ -327,7 +327,7 @@ class FeatureTypeMapperTest {
 
     @Test
     void hidesDeclaredBboxCoveringColumnsFromTheFeatureType() {
-        ParquetSchema schema = schemaWithDeclaredCovering();
+        ParquetSchema schema = schemaWithBoxStruct("geom_bbox");
         String geoJson = """
                 {"version":"1.1.0","primary_column":"geom","columns":{"geom":{"encoding":"WKB",\
                 "geometry_types":[],"covering":{"bbox":{"xmin":["geom_bbox","xmin"],"ymin":["geom_bbox","ymin"],\
@@ -336,13 +336,30 @@ class FeatureTypeMapperTest {
         FeatureTypeMapper.Mapping mapping =
                 FeatureTypeMapper.map("countries", null, schema, Optional.of(GeoParquetMetadata.parse(geoJson)), null);
 
-        List<String> attributeNames = mapping.featureType().getAttributeDescriptors().stream()
-                .map(AttributeDescriptor::getLocalName)
-                .toList();
-        assertThat(attributeNames)
+        assertThat(attributeNames(mapping))
                 .contains("geom", "name")
                 .as("the bbox covering is an internal spatial index, not a user attribute")
-                .doesNotContain("geom_bbox.xmin", "geom_bbox.ymin", "geom_bbox.xmax", "geom_bbox.ymax");
+                .doesNotContain("geom_bbox");
+    }
+
+    // GeoParquet 1.0 writers such as Overture and GDAL write the bbox struct without declaring it.
+    @Test
+    void hidesUndeclaredBboxStruct() {
+        ParquetSchema schema = schemaWithBoxStruct("bbox");
+        String geoJson = """
+                {"version":"1.0.0","primary_column":"geom","columns":{"geom":{"encoding":"WKB",\
+                "geometry_types":[]}}}""";
+
+        FeatureTypeMapper.Mapping mapping =
+                FeatureTypeMapper.map("buildings", null, schema, Optional.of(GeoParquetMetadata.parse(geoJson)), null);
+
+        assertThat(attributeNames(mapping)).contains("geom", "name").doesNotContain("bbox");
+    }
+
+    private static List<String> attributeNames(FeatureTypeMapper.Mapping mapping) {
+        return mapping.featureType().getAttributeDescriptors().stream()
+                .map(AttributeDescriptor::getLocalName)
+                .toList();
     }
 
     @Test
@@ -401,7 +418,8 @@ class FeatureTypeMapperTest {
         return new ParquetSchema(root);
     }
 
-    private static ParquetSchema schemaWithDeclaredCovering() {
+    /** A geometry, a name, and a struct named {@code structName} holding the four leaves of a box. */
+    private static ParquetSchema schemaWithBoxStruct(String structName) {
         SchemaNode.Primitive geom = new SchemaNode.Primitive(
                 "geom",
                 Repetition.OPTIONAL,
@@ -417,7 +435,7 @@ class FeatureTypeMapperTest {
                 Optional.of(new LogicalType.StringType()),
                 -1);
         SchemaNode.Group bbox = new SchemaNode.Group(
-                "geom_bbox",
+                structName,
                 Repetition.OPTIONAL,
                 List.of(coveringLeaf("xmin"), coveringLeaf("ymin"), coveringLeaf("xmax"), coveringLeaf("ymax")),
                 Optional.empty(),

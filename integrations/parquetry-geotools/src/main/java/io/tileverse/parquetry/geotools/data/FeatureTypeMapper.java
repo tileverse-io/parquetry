@@ -43,8 +43,9 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.ParquetCrs;
+import io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering;
+import io.tileverse.parquetry.schema.geo.geoparquet.BboxCoverings;
 import io.tileverse.parquetry.schema.geo.geoparquet.ColumnCrs;
-import io.tileverse.parquetry.schema.geo.geoparquet.Covering;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.schema.geo.projjson.Identifier;
@@ -155,7 +156,7 @@ final class FeatureTypeMapper {
         List<AttributeMapping> attributes = new ArrayList<>();
         Map<ColumnPath, Integer> geometrySrids = new LinkedHashMap<>();
         String defaultGeometryName = null;
-        Set<ColumnPath> coveringColumns = coveringColumns(geo);
+        Set<ColumnPath> coveringColumns = coveringColumns(schema, geo);
 
         for (SchemaNode child : schema.root().children()) {
             Optional<AttributeMapping> mapped = mapTopLevelField(schema, child, geo, coveringColumns, ftb);
@@ -295,26 +296,32 @@ final class FeatureTypeMapper {
     }
 
     /**
-     * Collects the bbox covering sidecar columns declared in the GeoParquet metadata. These columns hold each row's
-     * bounding box for spatial pruning, not user data; keeping them out of the feature type stops them showing up as
-     * attributes in WFS DescribeFeatureType. The spatial filter pushdown still reads them directly from the file.
+     * Collects the bbox covering columns of the geometry columns, as found by {@link BboxCoverings}: a covering
+     * declared in the GeoParquet metadata, or the conventional {@code bbox} struct of the primary geometry column.
+     * These columns hold each row's bounding box for spatial pruning, not user data; keeping them out of the feature
+     * type stops them showing up as attributes in WFS DescribeFeatureType. The spatial filter pushdown still reads them
+     * directly from the file.
      */
-    private static Set<ColumnPath> coveringColumns(Optional<GeoParquetMetadata> geo) {
+    private static Set<ColumnPath> coveringColumns(ParquetSchema schema, Optional<GeoParquetMetadata> geo) {
         if (geo.isEmpty()) {
             return Set.of();
         }
+        GeoParquetMetadata metadata = geo.orElseThrow();
         Set<ColumnPath> columns = new HashSet<>();
-        for (GeoColumn column : geo.orElseThrow().columns().values()) {
-            column.covering().map(Covering::bbox).ifPresent(bbox -> {
-                columns.add(bbox.xmin());
-                columns.add(bbox.xmax());
-                columns.add(bbox.ymin());
-                columns.add(bbox.ymax());
-                bbox.zmin().ifPresent(columns::add);
-                bbox.zmax().ifPresent(columns::add);
-            });
+        for (String geometryColumn : metadata.columns().keySet()) {
+            Optional<BboxCovering> covering = BboxCoverings.coveringOf(ColumnPath.of(geometryColumn), schema, metadata);
+            covering.ifPresent(bbox -> addLeaves(bbox, columns));
         }
         return columns;
+    }
+
+    private static void addLeaves(BboxCovering bbox, Set<ColumnPath> columns) {
+        columns.add(bbox.xmin());
+        columns.add(bbox.xmax());
+        columns.add(bbox.ymin());
+        columns.add(bbox.ymax());
+        bbox.zmin().ifPresent(columns::add);
+        bbox.zmax().ifPresent(columns::add);
     }
 
     /**
