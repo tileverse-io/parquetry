@@ -127,6 +127,43 @@ class ExplainAnalyzeIT {
         }
     }
 
+    // A shaping projection reads through the batch path, and analyze must measure that path.
+    @Test
+    void analyzeMeasuresTheShapedRead(@TempDir Path tmp) throws Exception {
+        Path file = writeThreeRowGroups(tmp);
+        Projection.Column renamed = new Projection.Column.Physical(ColumnPath.of("p"), ColumnPath.of("payload"));
+        Projection shaping = Projection.of(new LinkedHashSet<>(List.of(renamed)));
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            FinishCapture finish = new FinishCapture();
+            drain(reader.read(
+                    MATCHES_SUBSET,
+                    shaping,
+                    ReadOptions.builder().queryObserver(finish).build()));
+
+            QueryStats analyzed = reader.explainAnalyze(MATCHES_SUBSET, shaping, ReadOptions.DEFAULTS)
+                    .execution()
+                    .orElseThrow();
+
+            QueryStats read = finish.stats;
+            assertThat(analyzed.rowsDecoded()).as("rows decoded").isEqualTo(read.rowsDecoded());
+            assertThat(analyzed.rowsMatched()).as("rows matched").isEqualTo(read.rowsMatched());
+            assertThat(analyzed.pagesDecoded()).as("pages decoded").isEqualTo(read.pagesDecoded());
+            assertThat(analyzed.totalFetch().totalBytes()).as("bytes fetched").isPositive();
+        }
+    }
+
+    /** Keeps the stats delivered at the end of a query. */
+    private static final class FinishCapture implements QueryObserver {
+
+        private QueryStats stats;
+
+        @Override
+        public void onQueryFinished(QueryStats finished) {
+            this.stats = finished;
+        }
+    }
+
     /** The calls to the byte source made by {@code action}, once the reader has read the footer. */
     private static int sourceCallsOf(Path file, Consumer<ParquetFileReader> action) {
         try (RecordingByteRangeSource source = new RecordingByteRangeSource(ByteRangeSource.ofFile(file))) {
