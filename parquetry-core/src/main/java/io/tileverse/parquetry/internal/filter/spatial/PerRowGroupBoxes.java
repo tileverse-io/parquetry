@@ -25,16 +25,46 @@ import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.schema.ColumnPath;
 
 /**
- * The row-group bounds precomputed by a {@link SpatialBoundsSource}: per geometry column, one slot per row group,
- * holding that row group's box where its bounds are known and {@link Optional#empty()} where they are not. A box
- * proving nothing about its geometries ({@link BoundingBox#provesNothing()}) counts as not known.
+ * The bounds held by a {@link SpatialBoundsSource} with a box per row group. For each geometry column it keeps one slot
+ * per row group, holding the box of that row group where its bounds are known and {@link Optional#empty()} where they
+ * are not. A box proving nothing about its geometries ({@link BoundingBox#provesNothing()}) counts as not known. The
+ * file bounds of a column are the union of its row-group boxes, known only when each row group has a box.
  */
 final class PerRowGroupBoxes {
 
-    private PerRowGroupBoxes() {}
+    private final Map<ColumnPath, List<Optional<BoundingBox>>> perRowGroup;
+    private final Map<ColumnPath, BoundingBox> fileLevel;
+
+    /**
+     * @param perRowGroup the slots of each geometry column, one per row group
+     * @param union the union of two row-group boxes, which builds the file bounds
+     */
+    PerRowGroupBoxes(Map<ColumnPath, List<Optional<BoundingBox>>> perRowGroup, BinaryOperator<BoundingBox> union) {
+        this.perRowGroup = Map.copyOf(perRowGroup);
+        this.fileLevel = Map.copyOf(fileLevelUnions(perRowGroup, union));
+    }
+
+    /** See {@link SpatialBoundsSource#fileBounds}. */
+    Optional<BoundingBox> fileBounds(ColumnPath geometryColumn) {
+        return Optional.ofNullable(fileLevel.get(geometryColumn));
+    }
+
+    /** See {@link SpatialBoundsSource#rowGroupBounds}. */
+    Optional<BoundingBox> rowGroupBounds(ColumnPath geometryColumn, int rowGroupIndex) {
+        List<Optional<BoundingBox>> byGroup = perRowGroup.get(geometryColumn);
+        if (byGroup == null || rowGroupIndex < 0 || rowGroupIndex >= byGroup.size()) {
+            return Optional.empty();
+        }
+        return byGroup.get(rowGroupIndex);
+    }
+
+    /** One box per geometry column and row group with a box, plus the known file bounds of each column. */
+    int retainedBoxCount() {
+        return fileLevel.size() + presentBoxes();
+    }
 
     /** The row-group slots filled with a box; the misses hold {@link Optional#empty()} and nothing more. */
-    static int presentBoxes(Map<ColumnPath, List<Optional<BoundingBox>>> perRowGroup) {
+    private int presentBoxes() {
         int boxes = 0;
         for (List<Optional<BoundingBox>> byGroup : perRowGroup.values()) {
             for (Optional<BoundingBox> box : byGroup) {
@@ -50,7 +80,7 @@ final class PerRowGroupBoxes {
      * The file-level box of each column: the {@code union} of its row-group boxes, absent for a column with a row group
      * without a box. Such a row group could hold any geometry, and the file cannot bound it.
      */
-    static Map<ColumnPath, BoundingBox> fileLevelUnions(
+    private static Map<ColumnPath, BoundingBox> fileLevelUnions(
             Map<ColumnPath, List<Optional<BoundingBox>>> perRowGroup, BinaryOperator<BoundingBox> union) {
         Map<ColumnPath, BoundingBox> fileLevel = HashMap.newHashMap(perRowGroup.size());
         perRowGroup.forEach(

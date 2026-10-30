@@ -18,6 +18,7 @@ package io.tileverse.parquetry.internal.filter.spatial;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -108,12 +109,21 @@ class SpatialCoveringRewriteTest {
 
         Predicate rewritten = SpatialCoveringRewrite.expand(spatial, schemaWithBboxStruct, geoNoCovering);
 
-        Predicate expectedCovering = new Predicate.And(List.of(
-                Pred.col(ColumnPath.of("bbox", "xmin")).ltEq(10.0),
-                Pred.col(ColumnPath.of("bbox", "xmax")).gtEq(0.0),
-                Pred.col(ColumnPath.of("bbox", "ymin")).ltEq(10.0),
-                Pred.col(ColumnPath.of("bbox", "ymax")).gtEq(0.0)));
-        assertThat(rewritten).isEqualTo(new Predicate.And(List.of(expectedCovering, spatial)));
+        assertThat(rewritten).isEqualTo(new Predicate.And(List.of(structOverlapsQuery(), spatial)));
+    }
+
+    /** The struct describes one geometry column, and the primary one is the column it bounds. */
+    @Test
+    void structLowersThePrimaryAlone() {
+        Predicate onGeometry = Pred.col("geometry").bboxIntersects(Bbox.of2d(0, 0, 10, 10));
+        Predicate onOther = Pred.col("other").bboxIntersects(Bbox.of2d(0, 0, 10, 10));
+        ParquetSchema twoGeometries = schemaWithGeometriesAndBboxStruct("geometry", "other");
+        Optional<GeoParquetMetadata> otherIsPrimary = Optional.of(geoWithTwoGeometries("other"));
+
+        assertThat(SpatialCoveringRewrite.expand(onGeometry, twoGeometries, otherIsPrimary))
+                .isSameAs(onGeometry);
+        assertThat(SpatialCoveringRewrite.expand(onOther, twoGeometries, otherIsPrimary))
+                .isEqualTo(new Predicate.And(List.of(structOverlapsQuery(), onOther)));
     }
 
     @Test
@@ -256,6 +266,15 @@ class SpatialCoveringRewriteTest {
                 Pred.col(YMAX).gtEq(10.0)));
     }
 
+    /** The {@code bbox} struct shares at least one point with the query box {@code (0, 0, 10, 10)}. */
+    private static Predicate structOverlapsQuery() {
+        return new Predicate.And(List.of(
+                Pred.col(ColumnPath.of("bbox", "xmin")).ltEq(10.0),
+                Pred.col(ColumnPath.of("bbox", "xmax")).gtEq(0.0),
+                Pred.col(ColumnPath.of("bbox", "ymin")).ltEq(10.0),
+                Pred.col(ColumnPath.of("bbox", "ymax")).gtEq(0.0)));
+    }
+
     private static GeoParquetMetadata geoWithCovering() {
         BboxCovering bboxCovering = new BboxCovering(XMIN, XMAX, YMIN, YMAX, Optional.empty(), Optional.empty());
         GeoColumn geometry = geoColumn(Optional.of(new Covering(bboxCovering)));
@@ -265,6 +284,12 @@ class SpatialCoveringRewriteTest {
     private static GeoParquetMetadata geoWithoutCovering() {
         GeoColumn geometry = geoColumn(Optional.empty());
         return new GeoParquetMetadata.V1_1("1.1.0", "geometry", Map.of("geometry", geometry));
+    }
+
+    /** The {@code geometry} and {@code other} columns, none declaring a covering, {@code primary} being the primary. */
+    private static GeoParquetMetadata geoWithTwoGeometries(String primary) {
+        GeoColumn column = geoColumn(Optional.empty());
+        return new GeoParquetMetadata.V1_0("1.0.0", primary, Map.of("geometry", column, "other", column));
     }
 
     private static GeoColumn geoColumn(Optional<Covering> covering) {
@@ -287,14 +312,23 @@ class SpatialCoveringRewriteTest {
 
     /** A schema with a {@code geometry} leaf and a conventional {@code bbox} struct of four double leaves. */
     private static ParquetSchema schemaWithBboxStruct() {
+        return schemaWithGeometriesAndBboxStruct("geometry");
+    }
+
+    /** A schema with a binary leaf per name in {@code geometries}, and a conventional {@code bbox} struct. */
+    private static ParquetSchema schemaWithGeometriesAndBboxStruct(String... geometries) {
         SchemaNode.Group bbox = new SchemaNode.Group(
                 "bbox",
                 Repetition.OPTIONAL,
                 List.of(requiredDouble("xmin"), requiredDouble("xmax"), requiredDouble("ymin"), requiredDouble("ymax")),
                 Optional.empty(),
                 -1);
-        SchemaNode.Group root = new SchemaNode.Group(
-                "schema", Repetition.REQUIRED, List.of(requiredBinary("geometry"), bbox), Optional.empty(), -1);
+        List<SchemaNode> columns = new ArrayList<>();
+        for (String geometry : geometries) {
+            columns.add(requiredBinary(geometry));
+        }
+        columns.add(bbox);
+        SchemaNode.Group root = new SchemaNode.Group("schema", Repetition.REQUIRED, columns, Optional.empty(), -1);
         return new ParquetSchema(root);
     }
 

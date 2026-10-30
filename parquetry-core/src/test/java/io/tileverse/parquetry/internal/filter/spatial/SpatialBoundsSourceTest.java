@@ -62,6 +62,7 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 class SpatialBoundsSourceTest {
 
     private static final ColumnPath GEOMETRY = ColumnPath.of("geometry");
+    private static final ColumnPath OTHER = ColumnPath.of("other");
 
     @Test
     void emptyWhenNoNativeNoCoveringNoBbox() {
@@ -201,6 +202,33 @@ class SpatialBoundsSourceTest {
         assertThat(source.rowGroupBounds(GEOMETRY, 0)).contains(bbox(0, 1, 2, 3));
         assertThat(source.rowGroupBounds(GEOMETRY, 1)).contains(bbox(10, 20, 30, 40));
         assertThat(source.fileBounds(GEOMETRY)).contains(bbox(0, 20, 2, 40));
+    }
+
+    /** GeoParquet 1.0 producers such as Overture write the {@code bbox} struct without declaring it a covering. */
+    @Test
+    void undeclaredStructGivesBounds() {
+        ParquetSchema schema = schemaWithGeometryAndNestedCovering();
+        FileMetaData footer = footer(nestedCoveringRowGroup(0, 1, 2, 3), nestedCoveringRowGroup(10, 20, 30, 40));
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schema, of(geoWithFileBboxOnly()));
+
+        assertThat(source)
+                .as("the struct must outrank the file bbox of the geo metadata, as a declared covering does")
+                .isInstanceOf(CoveringColumnSource.class);
+        assertThat(source.rowGroupBounds(GEOMETRY, 1)).contains(bbox(10, 20, 30, 40));
+        assertThat(source.fileBounds(GEOMETRY)).contains(bbox(0, 20, 2, 40));
+    }
+
+    /** The struct describes one geometry column, and the primary one is the column it bounds. */
+    @Test
+    void structBoundsThePrimaryAlone() {
+        ParquetSchema schema = schemaWithTwoGeometriesAndNestedCovering();
+        FileMetaData footer = footer(nestedCoveringRowGroup(0, 1, 2, 3));
+
+        SpatialBoundsSource source = boundsSourceOf(footer, schema, of(geoWithTwoGeometries("other")));
+
+        assertThat(source.rowGroupBounds(OTHER, 0)).contains(bbox(0, 1, 2, 3));
+        assertThat(source.rowGroupBounds(GEOMETRY, 0)).isEmpty();
     }
 
     /** A NaN covering statistic bounds nothing: its row group is left without a box rather than with a NaN edge. */
@@ -495,19 +523,34 @@ class SpatialBoundsSourceTest {
     }
 
     private static ParquetSchema schemaWithGeometryAndNestedCovering() {
-        SchemaNode.Group bbox = new SchemaNode.Group(
+        return new ParquetSchema(
+                new SchemaNode.Group("root", Repetition.REQUIRED, List.of(geometryLeaf(), bboxGroup()), empty(), -1));
+    }
+
+    /**
+     * The {@code geometry} and {@code other} geometry columns, with the four sidecar leaves of a {@code bbox} group.
+     */
+    private static ParquetSchema schemaWithTwoGeometriesAndNestedCovering() {
+        List<SchemaNode> columns = List.of(geometryLeaf(), geometryLeaf("other"), bboxGroup());
+        return new ParquetSchema(new SchemaNode.Group("root", Repetition.REQUIRED, columns, empty(), -1));
+    }
+
+    private static SchemaNode.Group bboxGroup() {
+        return new SchemaNode.Group(
                 "bbox",
                 Repetition.OPTIONAL,
                 List.of(doubleLeaf("xmin"), doubleLeaf("xmax"), doubleLeaf("ymin"), doubleLeaf("ymax")),
                 empty(),
                 -1);
-        return new ParquetSchema(
-                new SchemaNode.Group("root", Repetition.REQUIRED, List.of(geometryLeaf(), bbox), empty(), -1));
     }
 
     private static SchemaNode.Primitive geometryLeaf() {
+        return geometryLeaf("geometry");
+    }
+
+    private static SchemaNode.Primitive geometryLeaf(String name) {
         return new SchemaNode.Primitive(
-                "geometry", Repetition.OPTIONAL, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), empty(), -1);
+                name, Repetition.OPTIONAL, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), empty(), -1);
     }
 
     private static SchemaNode.Primitive doubleLeaf(String name) {
@@ -547,6 +590,15 @@ class SpatialBoundsSourceTest {
                 .covering(of(new Covering(bboxCovering)))
                 .build();
         return new GeoParquetMetadata.V1_1("1.1.0", "geometry", Map.of("geometry", col));
+    }
+
+    /** The {@code geometry} and {@code other} columns, none declaring a covering, {@code primary} being the primary. */
+    private static GeoParquetMetadata geoWithTwoGeometries(String primary) {
+        GeoColumn column = GeoColumn.builder()
+                .encoding(of("WKB"))
+                .geometryTypes(List.of("Polygon"))
+                .build();
+        return new GeoParquetMetadata.V1_0("1.0.0", primary, Map.of("geometry", column, "other", column));
     }
 
     private static GeoParquetMetadata geoWithFileBboxOnly() {

@@ -38,13 +38,10 @@ import io.tileverse.parquetry.schema.ColumnPath;
  */
 final class NativeStatsSource implements SpatialBoundsSource {
 
-    private final Map<ColumnPath, List<Optional<BoundingBox>>> perRowGroup;
-    private final Map<ColumnPath, BoundingBox> fileLevel;
+    private final PerRowGroupBoxes boxes;
 
-    private NativeStatsSource(
-            Map<ColumnPath, List<Optional<BoundingBox>>> perRowGroup, Map<ColumnPath, BoundingBox> fileLevel) {
-        this.perRowGroup = perRowGroup;
-        this.fileLevel = fileLevel;
+    private NativeStatsSource(PerRowGroupBoxes boxes) {
+        this.boxes = boxes;
     }
 
     /**
@@ -63,29 +60,23 @@ final class NativeStatsSource implements SpatialBoundsSource {
         if (perRowGroup.isEmpty()) {
             return Optional.empty();
         }
-        Map<ColumnPath, BoundingBox> fileLevel =
-                PerRowGroupBoxes.fileLevelUnions(perRowGroup, NativeStatsSource::union);
-        return Optional.of(new NativeStatsSource(Map.copyOf(perRowGroup), Map.copyOf(fileLevel)));
+        return Optional.of(new NativeStatsSource(new PerRowGroupBoxes(perRowGroup, NativeStatsSource::union)));
     }
 
     @Override
     public Optional<BoundingBox> fileBounds(ColumnPath geometryColumn) {
-        return Optional.ofNullable(fileLevel.get(geometryColumn));
+        return boxes.fileBounds(geometryColumn);
     }
 
     @Override
     public Optional<BoundingBox> rowGroupBounds(ColumnPath geometryColumn, int rowGroupIndex) {
-        List<Optional<BoundingBox>> byGroup = perRowGroup.get(geometryColumn);
-        if (byGroup == null || rowGroupIndex < 0 || rowGroupIndex >= byGroup.size()) {
-            return Optional.empty();
-        }
-        return byGroup.get(rowGroupIndex);
+        return boxes.rowGroupBounds(geometryColumn, rowGroupIndex);
     }
 
-    /** One box per geometry column and row group with native statistics, plus that column's known file-level union. */
+    /** One box per geometry column and row group with native statistics, plus the known file bounds per column. */
     @Override
     public int retainedBoxCount() {
-        return fileLevel.size() + PerRowGroupBoxes.presentBoxes(perRowGroup);
+        return boxes.retainedBoxCount();
     }
 
     /**

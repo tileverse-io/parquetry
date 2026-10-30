@@ -36,15 +36,13 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering;
-import io.tileverse.parquetry.schema.geo.geoparquet.Covering;
-import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
- * {@link SpatialBoundsSource} backed by GeoParquet 1.1 {@code covering.bbox} sidecar columns. Each geometry column with
- * covering metadata declares four (or six) sibling numeric leaves whose per-row-group {@link Statistics} give the
- * row-group bbox: the {@code xmin} column's stats.min is the row group's xmin, the {@code xmax} column's stats.max is
- * the row group's xmax, and so on.
+ * {@link SpatialBoundsSource} backed by the bbox covering of each geometry column ({@link BboxCoverings}): the numeric
+ * leaves declared by a GeoParquet 1.1 {@code covering.bbox}, or the conventional {@code bbox} struct of GeoParquet 1.0
+ * producers. The per-row-group {@link Statistics} of the leaves give the row-group bbox: the {@code xmin} column's
+ * stats.min is the row group's xmin, the {@code xmax} column's stats.max is the row group's xmax, and so on.
  *
  * <p>Construction precomputes per-row-group bboxes and a file-level union per geometry column, known only when each row
  * group has a box. A geometry column with unresolvable sidecar leaves (path missing, non-numeric leaf, no stats on any
@@ -52,13 +50,10 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
  */
 final class CoveringColumnSource implements SpatialBoundsSource {
 
-    private final Map<ColumnPath, List<Optional<BoundingBox>>> perRowGroup;
-    private final Map<ColumnPath, BoundingBox> fileLevel;
+    private final PerRowGroupBoxes boxes;
 
-    private CoveringColumnSource(
-            Map<ColumnPath, List<Optional<BoundingBox>>> perRowGroup, Map<ColumnPath, BoundingBox> fileLevel) {
-        this.perRowGroup = perRowGroup;
-        this.fileLevel = fileLevel;
+    private CoveringColumnSource(PerRowGroupBoxes boxes) {
+        this.boxes = boxes;
     }
 
     /**
@@ -79,52 +74,45 @@ final class CoveringColumnSource implements SpatialBoundsSource {
         if (perRowGroup.isEmpty()) {
             return Optional.empty();
         }
-        Map<ColumnPath, BoundingBox> fileLevel =
-                PerRowGroupBoxes.fileLevelUnions(perRowGroup, CoveringColumnSource::union);
-        return Optional.of(new CoveringColumnSource(Map.copyOf(perRowGroup), Map.copyOf(fileLevel)));
+        return Optional.of(new CoveringColumnSource(new PerRowGroupBoxes(perRowGroup, CoveringColumnSource::union)));
     }
 
     @Override
     public Optional<BoundingBox> fileBounds(ColumnPath geometryColumn) {
-        return Optional.ofNullable(fileLevel.get(geometryColumn));
+        return boxes.fileBounds(geometryColumn);
     }
 
     @Override
     public Optional<BoundingBox> rowGroupBounds(ColumnPath geometryColumn, int rowGroupIndex) {
-        List<Optional<BoundingBox>> byGroup = perRowGroup.get(geometryColumn);
-        if (byGroup == null || rowGroupIndex < 0 || rowGroupIndex >= byGroup.size()) {
-            return Optional.empty();
-        }
-        return byGroup.get(rowGroupIndex);
+        return boxes.rowGroupBounds(geometryColumn, rowGroupIndex);
     }
 
-    /**
-     * One box per geometry column and row group with usable sidecar stats, plus that column's known file-level union.
-     */
+    /** One box per geometry column and row group with usable sidecar stats, plus the known file bounds per column. */
     @Override
     public int retainedBoxCount() {
-        return fileLevel.size() + PerRowGroupBoxes.presentBoxes(perRowGroup);
+        return boxes.retainedBoxCount();
     }
 
     /**
-     * Builds the {@link BboxAxes} entry for each geometry column whose {@link Covering} resolves cleanly against
-     * {@code schema}. Columns without a covering, or whose sidecar paths don't resolve to primitive numeric leaves, are
-     * skipped.
+     * Builds the {@link BboxAxes} entry for each geometry column with a bbox covering ({@link BboxCoverings}). Columns
+     * without a covering, or whose sidecar paths don't resolve to primitive numeric leaves, are skipped.
      */
     private static Map<ColumnPath, BboxAxes> resolveCoverings(
             LeafIndex leaves, ParquetSchema schema, GeoParquetMetadata geo) {
         Map<ColumnPath, BboxAxes> result = HashMap.newHashMap(geo.columns().size());
-        geo.columns().forEach((columnName, geoColumn) -> resolveOne(leaves, schema, columnName, geoColumn, result));
+        for (String columnName : geo.columns().keySet()) {
+            resolveOne(leaves, schema, geo, ColumnPath.of(columnName), result);
+        }
         return result;
     }
 
     private static void resolveOne(
             LeafIndex leaves,
             ParquetSchema schema,
-            String columnName,
-            GeoColumn geoColumn,
+            GeoParquetMetadata geo,
+            ColumnPath geometryColumn,
             Map<ColumnPath, BboxAxes> sink) {
-        Optional<BboxCovering> covering = geoColumn.covering().map(Covering::bbox);
+        Optional<BboxCovering> covering = BboxCoverings.coveringOf(geometryColumn, schema, geo);
         if (covering.isEmpty()) {
             return;
         }
@@ -137,7 +125,7 @@ final class CoveringColumnSource implements SpatialBoundsSource {
             return;
         }
         sink.put(
-                ColumnPath.of(columnName),
+                geometryColumn,
                 new BboxAxes(xmin.orElseThrow(), xmax.orElseThrow(), ymin.orElseThrow(), ymax.orElseThrow()));
     }
 

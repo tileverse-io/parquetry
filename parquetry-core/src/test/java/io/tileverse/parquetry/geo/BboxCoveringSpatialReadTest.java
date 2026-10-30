@@ -19,8 +19,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.MemorySegment;
 import java.nio.file.Path;
+import java.util.Optional;
 import java.util.stream.Stream;
 
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -32,6 +34,7 @@ import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -98,6 +101,25 @@ class BboxCoveringSpatialReadTest {
                     .as("read() on a struct-nested column must agree with count() and see every row")
                     .isEqualTo(reader.count(everyRow, ReadOptions.DEFAULTS))
                     .isEqualTo(TOTAL_ROWS);
+        }
+    }
+
+    // Both files keep in their geo metadata the bbox of a wider source, far larger than their rows.
+    @Test
+    void undeclaredStructBoundsTheFile() {
+        Optional<BoundingBox> declared = unfilteredBounds(COVERING_1_1);
+
+        assertThat(declared).isPresent();
+        assertThat(unfilteredBounds(CONVENTIONAL_1_0))
+                .as("the undeclared struct must bound the file as the declared covering does")
+                .isEqualTo(declared);
+    }
+
+    private Optional<BoundingBox> unfilteredBounds(String resource) {
+        Path file = TestCorpus.extractFile(resource, tempDir);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            return reader.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
         }
     }
 

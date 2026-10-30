@@ -32,11 +32,11 @@ import io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
- * The page-level geometry boxes provided for one geometry column by its GeoParquet 1.1 {@code bbox} covering. Each page
- * of the covering's {@code xmin} leaf is a unit whose row span is that page's, and whose box aggregates the per-page
- * minimum and maximum of the four covering leaves over the span: a leaf whose pages do not line up contributes every
- * one of its pages overlapping the span. A unit has a box only when at least one non-null value lies in the page, which
- * is what a substitute needs; it records nothing about nulls.
+ * The page-level geometry boxes provided for one geometry column by its bbox covering ({@link BboxCoverings}). Each
+ * page of the covering's {@code xmin} leaf is a unit whose row span is that page's, and whose box aggregates the
+ * per-page minimum and maximum of the four covering leaves over the span: a misaligned leaf contributes each of its
+ * pages overlapping the span. A unit has a box only when at least one non-null value lies in the page, which is what a
+ * substitute needs; it records nothing about nulls.
  *
  * <p>The indexes come from the row group's memoized sections, which the COLUMN_INDEX tier already loads for a bbox
  * query. A row group whose covering leaves have no usable index yields no units: the read then plans at row group level
@@ -56,7 +56,7 @@ public final class CoveringPageBounds {
         if (geo.isEmpty()) {
             return Optional.empty();
         }
-        Optional<BboxCovering> resolved = SpatialCoveringRewrite.coveringFor(geometryColumn, schema, geo.orElseThrow());
+        Optional<BboxCovering> resolved = BboxCoverings.coveringOf(geometryColumn, schema, geo.orElseThrow());
         return resolved.map(CoveringPageBounds::new);
     }
 

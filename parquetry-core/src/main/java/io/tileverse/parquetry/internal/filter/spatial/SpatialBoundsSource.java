@@ -35,8 +35,9 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
  * <ul>
  *   <li>{@link NativeStatsSource} - GeoParquet 2.0 native {@code GeospatialStatistics.bbox} on each row group's column
  *       metadata. Most precise; per-row-group AND file-level bounds available.
- *   <li>{@link CoveringColumnSource} - GeoParquet 1.1 {@code covering.bbox} sidecar columns. Bounds are recovered from
- *       the numeric {@code Statistics} (min/max) on the referenced bbox columns. Per-row-group AND file-level.
+ *   <li>{@link CoveringColumnSource} - the bbox covering columns: GeoParquet 1.1 {@code covering.bbox} sidecar columns,
+ *       or the undeclared {@code bbox} struct of GeoParquet 1.0 producers. Bounds are recovered from the numeric
+ *       {@code Statistics} (min/max) on those columns. Per-row-group AND file-level.
  *   <li>{@link GeoJsonFileBoundsSource} - GeoParquet 1.x {@code GeoColumn.bbox} (the 4- or 6-double bbox in the
  *       {@code "geo"} JSON). File-level only; row-group queries always return {@link Optional#empty()}.
  *   <li>{@link EmptyBoundsSource} - no geo / no usable bounds in any tier; every query returns

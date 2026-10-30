@@ -22,17 +22,13 @@ import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.GeometryFilter;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
-import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
-import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.schema.geo.geoparquet.BboxCovering;
-import io.tileverse.parquetry.schema.geo.geoparquet.Covering;
-import io.tileverse.parquetry.schema.geo.geoparquet.GeoColumn;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 
 /**
- * Adds numeric comparisons on a geometry column's GeoParquet 1.1 {@code covering.bbox} sidecar columns to a spatial
- * predicate, alongside the relation they were derived from.
+ * Adds numeric comparisons on the bbox covering of a geometry column ({@link BboxCoverings}) to a spatial predicate,
+ * alongside the relation used to derive them.
  *
  * <p>A covering's four leaves ({@code xmin}, {@code xmax}, {@code ymin}, {@code ymax}) hold a box that encloses each
  * row's geometry. GeoParquet allows that box to be wider than the geometry's own bounding box, and parquetry's own
@@ -94,7 +90,7 @@ public final class SpatialCoveringRewrite {
      * returned unchanged.
      */
     private static Predicate rewriteSpatial(Predicate.Spatial spatial, ParquetSchema schema, GeoParquetMetadata geo) {
-        Optional<BboxCovering> covering = coveringFor(spatial.col(), schema, geo);
+        Optional<BboxCovering> covering = BboxCoverings.coveringOf(spatial.col(), schema, geo);
         if (covering.isEmpty()) {
             return spatial;
         }
@@ -116,7 +112,7 @@ public final class SpatialCoveringRewrite {
             return gfp;
         }
         Predicate.Spatial spatial = lowering.orElseThrow();
-        Optional<BboxCovering> covering = coveringFor(spatial.col(), schema, geo);
+        Optional<BboxCovering> covering = BboxCoverings.coveringOf(spatial.col(), schema, geo);
         if (covering.isEmpty()) {
             return gfp;
         }
@@ -155,52 +151,5 @@ public final class SpatialCoveringRewrite {
                 Pred.col(c.xmax()).gtEq(q.maxX()),
                 Pred.col(c.ymin()).ltEq(q.minY()),
                 Pred.col(c.ymax()).gtEq(q.maxY())));
-    }
-
-    /**
-     * Resolves the bbox covering for {@code geometryColumn}: the GeoParquet {@code covering.bbox} declaration when the
-     * geo metadata provides one and all four of its leaves exist as primitive columns, otherwise the conventional
-     * {@code bbox} struct that GeoParquet 1.0 writers (Overture, GDAL) emit without declaring it. The geo metadata map
-     * is keyed by the geometry column's name, matching how the rest of the reader looks it up.
-     */
-    static Optional<BboxCovering> coveringFor(ColumnPath geometryColumn, ParquetSchema schema, GeoParquetMetadata geo) {
-        GeoColumn geoColumn = geo.columns().get(geometryColumn.dot());
-        if (geoColumn == null) {
-            return Optional.empty();
-        }
-        Optional<BboxCovering> declared = geoColumn.covering().map(Covering::bbox);
-        if (declared.isPresent()) {
-            BboxCovering c = declared.orElseThrow();
-            return allPrimitive(schema, c.xmin(), c.xmax(), c.ymin(), c.ymax()) ? declared : Optional.empty();
-        }
-        return conventionalBboxCovering(schema);
-    }
-
-    /**
-     * The de-facto bbox covering a file exposes without declaring it: a {@code bbox} struct whose four leaves
-     * {@code xmin}/{@code xmax}/{@code ymin}/{@code ymax} enclose each row's geometry. Resolves only when all four
-     * exist as primitive columns; the lowered comparisons are then trusted exactly like a declared covering.
-     */
-    private static Optional<BboxCovering> conventionalBboxCovering(ParquetSchema schema) {
-        BboxCovering c = BboxCovering.conventional();
-        if (allPrimitive(schema, c.xmin(), c.xmax(), c.ymin(), c.ymax())) {
-            return Optional.of(c);
-        }
-        return Optional.empty();
-    }
-
-    private static boolean allPrimitive(ParquetSchema schema, ColumnPath... paths) {
-        for (ColumnPath path : paths) {
-            if (!isPrimitive(schema, path)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static boolean isPrimitive(ParquetSchema schema, ColumnPath path) {
-        return schema.find(path)
-                .filter(node -> node instanceof SchemaNode.Primitive)
-                .isPresent();
     }
 }
