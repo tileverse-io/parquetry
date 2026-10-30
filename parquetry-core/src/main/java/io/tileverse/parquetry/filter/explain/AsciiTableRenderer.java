@@ -28,9 +28,6 @@ import io.tileverse.parquetry.observe.SpillStats;
 /** Renders an {@link ExplainPlan} as a compact fixed-width ASCII table. */
 final class AsciiTableRenderer {
 
-    private static final List<Tier> TIER_ORDER =
-            List.of(Tier.STATS, Tier.COLUMN_INDEX, Tier.BLOOM_FILTER, Tier.RECORD_LEVEL);
-
     private static final Map<Tier, String> TIER_HEADER = headerMap();
 
     private final ExplainPlan plan;
@@ -48,10 +45,9 @@ final class AsciiTableRenderer {
     }
 
     private String tierConfigurationLine() {
-        TierConfiguration config = TierConfiguration.from(plan);
         List<String> labels = new ArrayList<>();
-        for (Tier tier : TierConfiguration.ORDER) {
-            labels.add(config.isOff(tier) ? tier.name() + "(off)" : tier.name());
+        for (Tier tier : Tier.values()) {
+            labels.add(plan.disabledTiers().contains(tier) ? tier.name() + "(off)" : tier.name());
         }
         return "Tiers: " + String.join(", ", labels);
     }
@@ -76,7 +72,7 @@ final class AsciiTableRenderer {
         List<String> headers = new ArrayList<>();
         headers.add("RG");
         headers.add("Rows");
-        for (Tier t : TIER_ORDER) {
+        for (Tier t : Tier.values()) {
             headers.add(TIER_HEADER.get(t));
         }
         headers.add("Outcome");
@@ -98,7 +94,7 @@ final class AsciiTableRenderer {
         List<String> cells = new ArrayList<>();
         cells.add(Integer.toString(rg.index()));
         cells.add(Long.toString(rg.rowCount()));
-        for (Tier t : TIER_ORDER) {
+        for (Tier t : Tier.values()) {
             cells.add(cell(byTier.get(t), rg.rowCount()));
         }
         cells.add(outcomeCell(rg));
@@ -239,7 +235,7 @@ final class AsciiTableRenderer {
     private static Map<Tier, String> headerMap() {
         Map<Tier, String> m = new EnumMap<>(Tier.class);
         m.put(Tier.STATS, "Stats");
-
+        m.put(Tier.SPATIAL, "Spatial");
         m.put(Tier.COLUMN_INDEX, "ColIdx");
         m.put(Tier.BLOOM_FILTER, "Bloom");
         m.put(Tier.RECORD_LEVEL, "Record");

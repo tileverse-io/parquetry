@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.observe.QueryStats;
@@ -39,6 +40,7 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  * @param estimatedRowsScanned sum of surviving rows across all row groups
  * @param estimatedBytesRead sum, over the non-eliminated row groups, of the total compressed size of the projected leaf
  *     column chunks; an upper bound on the bytes a read would fetch (whole-chunk granularity, no page-level refinement)
+ * @param disabledTiers the tiers turned off by the read options; each row group reports such a tier as not applied
  * @param execution the whole-query execution stats when this plan was annotated with what a read actually did; empty
  *     for a plain explain that never read column data
  */
@@ -50,10 +52,12 @@ public record ExplainPlan(
         List<RowGroupPlan> rowGroups,
         long estimatedRowsScanned,
         long estimatedBytesRead,
+        Set<Tier> disabledTiers,
         Optional<QueryStats> execution) {
 
     public ExplainPlan {
         rowGroups = List.copyOf(rowGroups);
+        disabledTiers = Set.copyOf(disabledTiers);
         Objects.requireNonNull(execution, "execution");
     }
 
@@ -76,6 +80,7 @@ public record ExplainPlan(
                 annotated,
                 estimatedRowsScanned,
                 estimatedBytesRead,
+                disabledTiers,
                 Optional.of(stats));
     }
 

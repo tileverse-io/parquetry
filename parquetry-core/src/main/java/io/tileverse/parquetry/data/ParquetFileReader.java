@@ -17,6 +17,7 @@ package io.tileverse.parquetry.data;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -41,6 +42,7 @@ import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
 import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
 import io.tileverse.parquetry.filter.explain.RowGroupPlan;
+import io.tileverse.parquetry.filter.explain.Tier;
 import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.OffsetIndex;
@@ -1297,8 +1299,8 @@ public final class ParquetFileReader {
         boolean rowPositionDeletes = !Predicate.rowPositionColumns(predicate).isEmpty();
         List<FilterPipeline.RowGroupInputs> inputs =
                 filterInputsFor(rowGroupChunks, options, projectedLeaves, rowPositionDeletes);
-        FilterPipeline.FilterToggles toggles = new FilterPipeline.FilterToggles(options.useStatsFilter());
-        ExplainPlan plan = FilterPipeline.evaluate(fileSchema, projection, predicate, inputs, toggles);
+        Set<Tier> disabledTiers = disabledTiers(options);
+        ExplainPlan plan = FilterPipeline.evaluate(fileSchema, projection, predicate, inputs, disabledTiers);
         notifyPlanned(plan, options.queryObserver());
         return plan;
     }
@@ -1342,8 +1344,8 @@ public final class ParquetFileReader {
                     chunks.numRows(),
                     statsLookup(chunks),
                     spatialBounds,
-                    pageStatsLookupFor(chunks, options),
-                    bloomLookupFor(chunks, options),
+                    pageStatsLookupFor(chunks),
+                    bloomLookupFor(chunks),
                     projectedCompressedBytes(chunks, projectedLeaves),
                     rowPositionDeletes ? fileOffsets.get(chunks) : 0L,
                     rowPositionDeletes ? rowPositionPageFirstRows(chunks, options) : List.of()));
@@ -1359,6 +1361,7 @@ public final class ParquetFileReader {
      * column-index filter is off or no leaf exposes an offset index, in which case the page tier stays inert.
      */
     private List<Long> rowPositionPageFirstRows(RowGroupChunks chunks, ReadOptions options) {
+        // The page boundaries cost an offset-index read, skipped when the page tier is off.
         if (!options.useColumnIndexFilter()) {
             return List.of();
         }
@@ -1428,15 +1431,12 @@ public final class ParquetFileReader {
     }
 
     /**
-     * Returns the column-index tier lookup for {@code chunks}, or the no-op lookup when {@code useColumnIndexFilter} is
-     * off. Each call to the returned lookup delegates to {@link RowGroupChunks#pageStats}, which memoizes the result so
-     * each column's index sections are read at most once per call. The tier warms every consultable column before the
-     * first lookup, and the row group reads their index sections in one call.
+     * Returns the column-index tier lookup for {@code chunks}. Each call to the returned lookup delegates to
+     * {@link RowGroupChunks#pageStats}, which memoizes the result: each column's index sections are read at most once.
+     * The tier warms every consultable column before the first lookup, and the row group reads their index sections in
+     * one call.
      */
-    private ColumnPageStatsLookup pageStatsLookupFor(RowGroupChunks chunks, ReadOptions options) {
-        if (!options.useColumnIndexFilter()) {
-            return noColumnPageStatsLookup();
-        }
+    private ColumnPageStatsLookup pageStatsLookupFor(RowGroupChunks chunks) {
         return new ColumnPageStatsLookup() {
             @Override
             public Optional<ColumnPageStats> get(ColumnPath path) {
@@ -1452,15 +1452,28 @@ public final class ParquetFileReader {
 
     /**
      * Returns the bloom-filter lookup for {@code chunks}. Each call to the returned lookup delegates to
-     * {@link RowGroupChunks#bloom}, which memoizes the result so each column's bloom filter is read at most once per
-     * call. Returns {@link FilterPipeline#emptyBloomLookup()} when {@code options.useBloomFilter()} is off; the bloom
-     * tier degrades gracefully without forcing the evaluator to handle nulls.
+     * {@link RowGroupChunks#bloom}, which memoizes the result: each column's bloom filter is read at most once.
      */
-    private BloomFilterLookup bloomLookupFor(RowGroupChunks chunks, ReadOptions options) {
-        if (!options.useBloomFilter()) {
-            return FilterPipeline.emptyBloomLookup();
-        }
+    private BloomFilterLookup bloomLookupFor(RowGroupChunks chunks) {
         return chunks::bloom;
+    }
+
+    /** The tiers turned off by {@code options}; the pipeline reports them as not applied on each row group. */
+    private static Set<Tier> disabledTiers(ReadOptions options) {
+        Set<Tier> disabled = EnumSet.noneOf(Tier.class);
+        if (!options.useStatsFilter()) {
+            disabled.add(Tier.STATS);
+        }
+        if (!options.useColumnIndexFilter()) {
+            disabled.add(Tier.COLUMN_INDEX);
+        }
+        if (!options.useBloomFilter()) {
+            disabled.add(Tier.BLOOM_FILTER);
+        }
+        if (!options.useRecordLevelFilter()) {
+            disabled.add(Tier.RECORD_LEVEL);
+        }
+        return disabled;
     }
 
     /**
@@ -1551,9 +1564,5 @@ public final class ParquetFileReader {
     /** True when every {@code leaf} is non-repeated (max repetition level 0) in {@code schema}. Pure; testable. */
     static boolean allFlat(ParquetSchema schema, List<ColumnPath> leaves) {
         return RowMasks.allFlat(schema, leaves);
-    }
-
-    private static ColumnPageStatsLookup noColumnPageStatsLookup() {
-        return _ -> Optional.empty();
     }
 }

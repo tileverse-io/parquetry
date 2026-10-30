@@ -50,15 +50,15 @@ final class JsonRenderer {
     }
 
     private static void appendTierConfiguration(StringBuilder sb, ExplainPlan plan) {
-        TierConfiguration config = TierConfiguration.from(plan);
         sb.append(",\"tiers\":[");
-        for (int i = 0; i < TierConfiguration.ORDER.size(); i++) {
+        Tier[] tiers = Tier.values();
+        for (int i = 0; i < tiers.length; i++) {
             if (i > 0) {
                 sb.append(',');
             }
-            Tier tier = TierConfiguration.ORDER.get(i);
+            Tier tier = tiers[i];
             sb.append("{\"name\":\"").append(tier.name()).append('"');
-            sb.append(",\"off\":").append(config.isOff(tier));
+            sb.append(",\"off\":").append(plan.disabledTiers().contains(tier));
             sb.append('}');
         }
         sb.append(']');

@@ -21,6 +21,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
+import java.util.function.Supplier;
 
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -201,28 +203,15 @@ public final class FilterPipeline {
     }
 
     /**
-     * The metadata-tier toggle the pipeline honors directly: whether the STATS tier runs. The COLUMN_INDEX and
-     * BLOOM_FILTER toggles are honored upstream at input-build time (those tiers see an empty lookup and degrade on
-     * their own), which is why they are not part of this record.
-     *
-     * @param useStatsFilter when false, the STATS tier is skipped and reported as {@link PruningDecision.NotApplied}
-     */
-    public record FilterToggles(boolean useStatsFilter) {
-
-        /** The STATS tier enabled, the default. */
-        public static final FilterToggles ALL_ENABLED = new FilterToggles(true);
-    }
-
-    /**
-     * Runs the pipeline with all metadata tiers enabled. Equivalent to {@link #evaluate(ParquetSchema, Projection,
-     * Predicate, List, FilterToggles)} with {@link FilterToggles#ALL_ENABLED}.
+     * Runs the pipeline with each tier enabled. Equivalent to {@link #evaluate(ParquetSchema, Projection, Predicate,
+     * List, Set)} with no disabled tier.
      */
     public static ExplainPlan evaluate(
             ParquetSchema fileSchema,
             Projection projection,
             Predicate originalPredicate,
             List<RowGroupInputs> rowGroups) {
-        return evaluate(fileSchema, projection, originalPredicate, rowGroups, FilterToggles.ALL_ENABLED);
+        return evaluate(fileSchema, projection, originalPredicate, rowGroups, Set.of());
     }
 
     /**
@@ -232,15 +221,15 @@ public final class FilterPipeline {
      * @param projection projected columns (used only to record the projected schema in the plan)
      * @param originalPredicate the predicate as the caller wrote it; will be normalized before evaluation
      * @param rowGroups one {@link RowGroupInputs} per row group in the file, in file order
-     * @param toggles which metadata tiers to run; a disabled tier is reported as {@link PruningDecision.NotApplied}
-     *     instead of being skipped silently
+     * @param disabledTiers the tiers turned off by the read; each row group reports such a tier as
+     *     {@link PruningDecision.NotApplied}, and the plan lists them
      */
     public static ExplainPlan evaluate(
             ParquetSchema fileSchema,
             Projection projection,
             Predicate originalPredicate,
             List<RowGroupInputs> rowGroups,
-            FilterToggles toggles) {
+            Set<Tier> disabledTiers) {
         Predicate normalized = PredicateNormalizer.normalizeAndValidate(originalPredicate, fileSchema);
         ParquetSchema projectedSchema = projectionOf(fileSchema, projection);
         List<RowGroupPlan> plans = new ArrayList<>(rowGroups.size());
@@ -248,7 +237,7 @@ public final class FilterPipeline {
         long bytesRead = 0;
         for (int i = 0; i < rowGroups.size(); i++) {
             RowGroupInputs inputs = rowGroups.get(i);
-            RowGroupPlan plan = evaluateRowGroup(i, inputs, normalized, toggles);
+            RowGroupPlan plan = evaluateRowGroup(i, inputs, normalized, disabledTiers);
             plans.add(plan);
             rowsScanned += survivingRowsForOutcome(plan);
             bytesRead += projectedBytesForOutcome(plan, inputs);
@@ -261,6 +250,7 @@ public final class FilterPipeline {
                 plans,
                 rowsScanned,
                 bytesRead,
+                disabledTiers,
                 Optional.empty());
     }
 
@@ -278,17 +268,20 @@ public final class FilterPipeline {
     }
 
     private static RowGroupPlan evaluateRowGroup(
-            int index, RowGroupInputs inputs, Predicate normalized, FilterToggles toggles) {
+            int index, RowGroupInputs inputs, Predicate normalized, Set<Tier> disabledTiers) {
         if (inputs.rowCount() == 0L) {
             return withoutRows(index);
         }
         if (normalized instanceof Predicate.RowIndexExcluded) {
-            return evaluateRowPositionDeletes(index, inputs, normalized);
+            return evaluateRowPositionDeletes(index, inputs, normalized, disabledTiers);
         }
         List<PruningDecision> tierDecisions = new ArrayList<>(5);
         Optional<RowRanges> surviving = Optional.empty();
 
-        PruningDecision statsDecision = statsDecision(normalized, inputs, toggles);
+        PruningDecision statsDecision = decide(
+                Tier.STATS,
+                disabledTiers,
+                () -> StatsEvaluator.evaluate(normalized, inputs.stats(), inputs.rowCount()));
         tierDecisions.add(statsDecision);
         if (statsDecision instanceof PruningDecision.Eliminated) {
             return new RowGroupPlan(
@@ -300,15 +293,20 @@ public final class FilterPipeline {
                     index, inputs.rowCount(), tierDecisions, RowGroupOutcome.MATCHED, surviving, Optional.empty());
         }
 
-        PruningDecision spatialDecision = SpatialBoundsEvaluator.evaluate(normalized, inputs.spatialBounds(), index);
+        PruningDecision spatialDecision = decide(
+                Tier.SPATIAL,
+                disabledTiers,
+                () -> SpatialBoundsEvaluator.evaluate(normalized, inputs.spatialBounds(), index));
         tierDecisions.add(spatialDecision);
         if (spatialDecision instanceof PruningDecision.Eliminated) {
             return new RowGroupPlan(
                     index, inputs.rowCount(), tierDecisions, RowGroupOutcome.ELIMINATED, surviving, Optional.empty());
         }
 
-        PruningDecision indexDecision =
-                ColumnIndexEvaluator.evaluate(normalized, inputs.pageIndexes(), inputs.rowCount());
+        PruningDecision indexDecision = decide(
+                Tier.COLUMN_INDEX,
+                disabledTiers,
+                () -> ColumnIndexEvaluator.evaluate(normalized, inputs.pageIndexes(), inputs.rowCount()));
         tierDecisions.add(indexDecision);
         if (indexDecision instanceof PruningDecision.Eliminated) {
             return new RowGroupPlan(
@@ -318,7 +316,8 @@ public final class FilterPipeline {
             surviving = Optional.of(n.ranges());
         }
 
-        PruningDecision bloomDecision = BloomFilterEvaluator.evaluate(normalized, inputs.blooms());
+        PruningDecision bloomDecision = decide(
+                Tier.BLOOM_FILTER, disabledTiers, () -> BloomFilterEvaluator.evaluate(normalized, inputs.blooms()));
         tierDecisions.add(bloomDecision);
         if (bloomDecision instanceof PruningDecision.Eliminated) {
             return new RowGroupPlan(
@@ -343,7 +342,8 @@ public final class FilterPipeline {
      * needed); a partly-deleted group descends to the page tier, which drops fully-deleted pages and leaves the rest
      * for record-level evaluation.
      */
-    private static RowGroupPlan evaluateRowPositionDeletes(int index, RowGroupInputs inputs, Predicate normalized) {
+    private static RowGroupPlan evaluateRowPositionDeletes(
+            int index, RowGroupInputs inputs, Predicate normalized, Set<Tier> disabledTiers) {
         List<PruningDecision> tierDecisions = new ArrayList<>(2);
         long base = inputs.rowPositionBase();
         long rowCount = inputs.rowCount();
@@ -359,8 +359,11 @@ public final class FilterPipeline {
                     index, rowCount, tierDecisions, RowGroupOutcome.MATCHED, Optional.empty(), Optional.empty());
         }
 
-        PruningDecision pageDecision =
-                RowPositionEvaluator.evaluatePages(normalized, base, rowCount, inputs.rowPositionPageFirstRows());
+        PruningDecision pageDecision = decide(
+                Tier.COLUMN_INDEX,
+                disabledTiers,
+                () -> RowPositionEvaluator.evaluatePages(
+                        normalized, base, rowCount, inputs.rowPositionPageFirstRows()));
         tierDecisions.add(pageDecision);
         if (pageDecision instanceof PruningDecision.Eliminated) {
             return new RowGroupPlan(
@@ -380,14 +383,15 @@ public final class FilterPipeline {
     }
 
     /**
-     * The STATS-tier decision, honoring {@code useStatsFilter}. When stats filtering is off the tier is reported as
-     * {@link PruningDecision.NotApplied} and the row group continues to later tiers as if stats proved nothing.
+     * The decision of {@code tier}: {@link PruningDecision.NotApplied} when the read turned the tier off, which lets
+     * the row group continue to later tiers as if the tier proved nothing, and the outcome of {@code evaluation}
+     * otherwise.
      */
-    private static PruningDecision statsDecision(Predicate normalized, RowGroupInputs inputs, FilterToggles toggles) {
-        if (!toggles.useStatsFilter()) {
-            return new PruningDecision.NotApplied(Tier.STATS, TierReasons.STATS_FILTER_DISABLED);
+    private static PruningDecision decide(Tier tier, Set<Tier> disabledTiers, Supplier<PruningDecision> evaluation) {
+        if (disabledTiers.contains(tier)) {
+            return new PruningDecision.NotApplied(tier, TierReasons.disabled(tier));
         }
-        return StatsEvaluator.evaluate(normalized, inputs.stats(), inputs.rowCount());
+        return evaluation.get();
     }
 
     private static long survivingRowsForOutcome(RowGroupPlan plan) {

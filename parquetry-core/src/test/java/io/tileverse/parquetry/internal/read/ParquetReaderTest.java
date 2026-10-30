@@ -84,6 +84,26 @@ class ParquetReaderTest {
         return true;
     }
 
+    // A tier turned off by the read options shows as off in the plan, whichever tier it is.
+    @Test
+    void explainMarksTiersOff(@TempDir Path tmp) throws Exception {
+        Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, 4_000);
+        try (ByteRangeSource src = TestParquetFiles.openRangeReader(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(src);
+            ReadOptions options = ReadOptions.builder()
+                    .useColumnIndexFilter(false)
+                    .useBloomFilter(false)
+                    .build();
+
+            ExplainPlan plan = reader.explain(Pred.col("year").eq(2022), Projection.ALL, options);
+
+            assertThat(plan.toAsciiTable())
+                    .contains("COLUMN_INDEX(off)")
+                    .contains("BLOOM_FILTER(off)")
+                    .doesNotContain("STATS(off)");
+        }
+    }
+
     // ---- count() ----
 
     @ParameterizedTest

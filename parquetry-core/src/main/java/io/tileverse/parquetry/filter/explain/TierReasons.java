@@ -15,15 +15,19 @@
  */
 package io.tileverse.parquetry.filter.explain;
 
-/**
- * Shared {@link PruningDecision#reason()} literals for tiers that were turned off. The pipeline emits these when a tier
- * is disabled; the renderers match against them to mark a tier as off in the tier-configuration header. Keeping the
- * literals in one place lets both sides agree without fragile inline string comparisons.
- */
+/** The {@link PruningDecision#reason()} reported on each row group by a tier turned off by the read. */
 public final class TierReasons {
 
-    /** Reason emitted when the STATS tier is turned off. */
-    public static final String STATS_FILTER_DISABLED = "stats filter disabled";
+    /** The reason reported by {@code tier} when the read turns it off, for example "stats filter disabled". */
+    public static String disabled(Tier tier) {
+        return switch (tier) {
+            case STATS -> "stats filter disabled";
+            case SPATIAL -> "spatial filter disabled";
+            case COLUMN_INDEX -> "column index filter disabled";
+            case BLOOM_FILTER -> "bloom filter disabled";
+            case RECORD_LEVEL -> "record-level filter disabled";
+        };
+    }
 
     private TierReasons() {}
 }

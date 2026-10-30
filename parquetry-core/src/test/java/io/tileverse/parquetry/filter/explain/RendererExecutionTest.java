@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
@@ -102,6 +103,18 @@ class RendererExecutionTest {
         assertThat(active.toJson()).doesNotContain("\"off\":true");
     }
 
+    // A row group eliminated by the SPATIAL tier shows that verdict in a column of its own.
+    @Test
+    void spatialVerdictHasAColumn() {
+        List<PruningDecision> tiers = List.of(
+                new PruningDecision.Inconclusive(Tier.STATS, "min/max admit the value"),
+                new PruningDecision.Eliminated(Tier.SPATIAL, "box disjoint from the query"));
+
+        String table = planWithRowGroupTiers(tiers).toAsciiTable();
+
+        assertThat(table).contains("Spatial").contains("ELIM");
+    }
+
     @Test
     void outputIsAsciiOnly() {
         ExplainPlan plan = planWithAllTiersActive().withExecution(stats(), Map.of(0, rowGroupRead(0)));
@@ -126,16 +139,28 @@ class RendererExecutionTest {
 
     private static ExplainPlan planWithStatsDisabled() {
         List<PruningDecision> tiers =
-                List.of(new PruningDecision.NotApplied(Tier.STATS, TierReasons.STATS_FILTER_DISABLED));
-        return planWithRowGroupTiers(tiers);
+                List.of(new PruningDecision.NotApplied(Tier.STATS, TierReasons.disabled(Tier.STATS)));
+        return planWithRowGroupTiers(tiers, Set.of(Tier.STATS));
     }
 
     private static ExplainPlan planWithRowGroupTiers(List<PruningDecision> tiers) {
+        return planWithRowGroupTiers(tiers, Set.of());
+    }
+
+    private static ExplainPlan planWithRowGroupTiers(List<PruningDecision> tiers, Set<Tier> disabledTiers) {
         RowGroupPlan rowGroup =
                 new RowGroupPlan(0, 100, tiers, RowGroupOutcome.FULL, Optional.empty(), Optional.empty());
         Predicate predicate = col("year").eq(2020);
         return new ExplainPlan(
-                schema(), schema(), predicate, predicate, List.of(rowGroup), 100, 4096, Optional.empty());
+                schema(),
+                schema(),
+                predicate,
+                predicate,
+                List.of(rowGroup),
+                100,
+                4096,
+                disabledTiers,
+                Optional.empty());
     }
 
     private static QueryStats stats() {

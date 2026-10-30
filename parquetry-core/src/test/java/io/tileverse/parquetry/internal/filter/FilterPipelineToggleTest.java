@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
@@ -47,25 +48,26 @@ class FilterPipelineToggleTest {
 
     @Test
     void statsFilterDisabledSkipsEvaluatorAndReportsNotApplied() {
-        ExplainPlan plan = evaluate(eliminatingInputs(), new FilterPipeline.FilterToggles(false));
+        ExplainPlan plan = evaluate(eliminatingInputs(), Set.of(Tier.STATS));
 
         assertThat(plan.rowGroups().get(0).outcome()).isNotEqualTo(RowGroupOutcome.ELIMINATED);
         PruningDecision stats = tierDecision(plan, Tier.STATS);
         assertThat(stats).isInstanceOf(PruningDecision.NotApplied.class);
         assertThat(stats.reason()).isEqualTo("stats filter disabled");
+        assertThat(plan.disabledTiers()).containsExactly(Tier.STATS);
     }
 
     @Test
     void statsFilterEnabledStillEliminates() {
-        ExplainPlan plan = evaluate(eliminatingInputs(), new FilterPipeline.FilterToggles(true));
+        ExplainPlan plan = evaluate(eliminatingInputs(), Set.of());
 
         assertThat(plan.rowGroups().get(0).outcome()).isEqualTo(RowGroupOutcome.ELIMINATED);
         PruningDecision stats = tierDecision(plan, Tier.STATS);
         assertThat(stats).isInstanceOf(PruningDecision.Eliminated.class);
     }
 
-    private static ExplainPlan evaluate(FilterPipeline.RowGroupInputs rg, FilterPipeline.FilterToggles toggles) {
-        return FilterPipeline.evaluate(flatSchema(), Projection.ALL, col("year").eq(2030), List.of(rg), toggles);
+    private static ExplainPlan evaluate(FilterPipeline.RowGroupInputs rg, Set<Tier> disabledTiers) {
+        return FilterPipeline.evaluate(flatSchema(), Projection.ALL, col("year").eq(2030), List.of(rg), disabledTiers);
     }
 
     private static PruningDecision tierDecision(ExplainPlan plan, Tier tier) {

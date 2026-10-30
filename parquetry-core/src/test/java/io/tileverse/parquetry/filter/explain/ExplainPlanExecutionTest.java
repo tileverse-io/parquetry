@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
@@ -86,6 +87,7 @@ class ExplainPlanExecutionTest {
                 List.of(rowGroups),
                 0L,
                 0L,
+                Set.of(),
                 Optional.empty());
     }
 
