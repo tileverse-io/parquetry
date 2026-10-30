@@ -216,9 +216,9 @@ class WriteOptionsTest {
     @Test
     void perColumnPageValueLimitsAreUnmodifiable() {
         WriteOptions o = WriteOptions.builder().pageValueLimit("bbox.xmin", 512).build();
+        Map<String, Integer> limits = o.pageValueLimits();
 
-        assertThatThrownBy(() -> o.pageValueLimits().put("bbox.ymin", 512))
-                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> limits.put("bbox.ymin", 512)).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test

@@ -290,8 +290,10 @@ class PageNarrowedPlanTest {
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
             RowGroupSurvivor moved = fixture.survivorWithDataPageOffset(A, dataPageOffset);
+            RowGroupFetcher fetcher = fixture.fetcher();
+            Optional<RowMask> noMask = Optional.empty();
 
-            assertThatThrownBy(() -> fixture.fetcher().planFor(moved, Optional.empty()))
+            assertThatThrownBy(() -> fetcher.planFor(moved, noMask))
                     .isInstanceOf(MalformedFileException.class)
                     .hasMessageContaining(A.dot())
                     .hasMessageContaining("from offset " + dataPageOffset + ", outside the " + source.size());
@@ -304,8 +306,10 @@ class PageNarrowedPlanTest {
             Fixture fixture = Fixture.open(source);
             long lastByte = source.size() - 1;
             RowGroupSurvivor moved = fixture.survivorWithDataPageOffset(A, lastByte);
+            RowGroupFetcher fetcher = fixture.fetcher();
+            Optional<RowMask> noMask = Optional.empty();
 
-            assertThatThrownBy(() -> fixture.fetcher().planFor(moved, Optional.empty()))
+            assertThatThrownBy(() -> fetcher.planFor(moved, noMask))
                     .isInstanceOf(MalformedFileException.class)
                     .hasMessageContaining(A.dot())
                     .hasMessageContaining("from offset " + lastByte + ", outside the " + source.size());
