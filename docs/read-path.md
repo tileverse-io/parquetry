@@ -93,18 +93,25 @@ sequenceDiagram
     autonumber
     participant C as Consumer
     participant R as ParquetFileReader
+    participant RP as ReadPlanner
+    participant P as ReadPlan
     participant FP as FilterPipeline
     participant DC as ParallelDecodeCoordinator
     participant PF as RowGroupPrefetcher
     participant BP as BatchPipeline
 
     C->>R: read(predicate, projection, options)
-    R->>R: rowGroupChunks() (one view per row group)
-    R->>FP: runFilterPipeline(predicate, scanProjection)
-    FP-->>R: ExplainPlan (per row group: ELIMINATED / PARTIAL / FULL / MATCHED)
-    R->>R: survivorsFor(plan) -> survivors
-    R->>R: decodeMasksFor(survivors) -> per-group RowMask (page skip)
-    R->>DC: new coordinator(survivors, masks, maskedScan?)
+    R->>R: resolve the projection -> scanProjection, outputSchema
+    R->>RP: plan(predicate, scanProjection, observation)
+    RP->>RP: rowGroupChunks (one view per row group)
+    RP->>FP: evaluate(predicate, scanProjection)
+    FP-->>RP: ExplainPlan (per row group: ELIMINATED / PARTIAL / FULL / MATCHED)
+    RP-->>R: ReadPlan
+    R->>P: survivors() -> survivors
+    R->>P: decode(survivors, DecodeShape)
+    P->>P: per-group RowMask (page skip)
+    P->>DC: new coordinator(survivors, masks, maskedScan?)
+    P-->>R: coordinator
     R->>BP: rows(coordinator, materializer, outputSchema, recordFilter)
     BP-->>C: Stream (lazy)
 
@@ -134,6 +141,11 @@ Key points the diagram encodes:
   `MATCHED` (statistics proved every row matches - read every row, but skip the
   per-row record filter). `PARTIAL` becomes a `RowMask` that skips non-surviving
   pages during decode.
+- **The plan assembles the decode.** A `ReadPlan` holds the outcome of the
+  filter pipeline for one query. The entry points (`read`, `readBatches`,
+  `count` and the filtered `bounds`) state the rest of their decode as a
+  `DecodeShape` (masked scan, batch form, row positions to synthesize), and the
+  plan builds the coordinator from both in `decode`.
 
 `readBatches()` is the same spine without the last step: it returns the batches
 themselves, holding exactly the rows the predicate matched, narrowed to the
@@ -179,9 +191,11 @@ flowchart TD
   record filter, and [`count()`](counting.md) answers it from the row count with no
   decode at all. [Counting](counting.md#3-proving-a-whole-row-group-matches)
   explains the deliberately conservative proof that keeps this sound.
-- **The output is an `ExplainPlan`** - the same structure `explain()` returns and
-  `toAsciiTable()` / `toJson()` render. `survivorsFor` turns it into the
-  `RowGroupSurvivor` list the rest of the pipeline consumes.
+- **The output is an `ExplainPlan`** - the same structure returned by `explain()`
+  and rendered by `toAsciiTable()` / `toJson()`. The `ReadPlan` of the query
+  routes its row groups to the `RowGroupSurvivor` list consumed by the rest of
+  the pipeline. A read takes its `survivors()`. A count takes its `residual()`
+  and answers the `MATCHED` row groups from metadata.
 
 `RowGroupChunks` is what keeps this honest: the tiers ask it for a column's
 stats / column index / bloom filter, and it loads each section once and hands the
@@ -341,6 +355,16 @@ classDiagram
         +readBatches(...) Stream
         +explain(...) ExplainPlan
     }
+    class ReadPlanner {
+        plan(predicate, scanProjection, observation) ReadPlan
+        decodeUnplanned(survivors, scanSchema, options) ParallelDecodeCoordinator
+    }
+    class ReadPlan {
+        survivors() List
+        residual() List
+        decode(survivors, DecodeShape) ParallelDecodeCoordinator
+    }
+    class DecodeShape
     class RowGroupChunks {
         +offsetIndex(path)
         +columnIndex(path)
@@ -364,13 +388,17 @@ classDiagram
     class BatchPipeline
     class Materializer
 
-    ParquetFileReader --> RowGroupChunks : builds per call
-    ParquetFileReader --> FilterPipeline : runs
+    ParquetFileReader --> ReadPlanner : one per file
+    ParquetFileReader --> DecodeShape : per query
+    ReadPlanner --> RowGroupChunks : builds per call
+    ReadPlanner --> FilterPipeline : runs
     FilterPipeline --> ExplainPlan : produces
-    ParquetFileReader --> RowGroupSurvivor : survivorsFor
+    ReadPlanner --> ReadPlan : per query
+    ReadPlan --> RowGroupSurvivor : survivors / residual
     RowGroupSurvivor --> RowGroupChunks : holds
-    ParquetFileReader --> RowMask : page-skip mask
-    ParquetFileReader --> ParallelDecodeCoordinator : per read
+    ReadPlan --> RowMask : page-skip mask
+    ReadPlan --> ParallelDecodeCoordinator : decode
+    ReadPlanner --> ParallelDecodeCoordinator : decodeUnplanned for unfiltered bounds
     ParallelDecodeCoordinator --> RowGroupPrefetcher : pulls fetched bytes
     RowGroupPrefetcher --> RowGroupFetcher : batch range reads
     ParallelDecodeCoordinator --> ClassicRowGroupDriver : unfiltered or MATCHED
@@ -392,6 +420,7 @@ classDiagram
 | Stage | Start in |
 |------|----------|
 | Entry, orchestration | `data/ParquetFileReader.java`, `data/ReadOptions.java` |
+| Query plan + decode assembly | `data/ReadPlanner.java`, `data/ReadPlan.java`, `data/DecodeShape.java` |
 | Footer + schema | `format/ParquetFormat.java`, `schema/SchemaBuilder.java` |
 | Filter pipeline + tiers | `internal/filter/FilterPipeline.java`, `internal/filter/*Evaluator.java`, `filter/explain/ExplainPlan.java` |
 | Per-call chunk view | `internal/read/RowGroupChunks.java` |

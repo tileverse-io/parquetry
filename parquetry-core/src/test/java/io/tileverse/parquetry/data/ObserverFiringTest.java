@@ -59,6 +59,23 @@ class ObserverFiringTest {
     }
 
     @Test
+    void explainNeverFinishesTheQuery(@TempDir Path tmp) {
+        Path file = corpusFile(tmp);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            RecordingObserver observer = new RecordingObserver();
+            ReadOptions options = optionsWith(observer);
+
+            reader.explain(PREDICATE, Projection.ALL, options);
+
+            assertFired(observer);
+            assertThat(observer.finishedCount.get())
+                    .as("explain does not finish the query")
+                    .isZero();
+        }
+    }
+
+    @Test
     void countFiresQueryStartedAndPlannedDecisions(@TempDir Path tmp) {
         Path file = corpusFile(tmp);
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {

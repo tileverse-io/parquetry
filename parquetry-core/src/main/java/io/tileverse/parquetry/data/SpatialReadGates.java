@@ -24,6 +24,7 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.SpatialReadProbe;
 import io.tileverse.parquetry.filter.SpatialReadProbe.Decision;
 import io.tileverse.parquetry.format.BoundingBox;
+import io.tileverse.parquetry.internal.filter.PredicateNormalizer;
 import io.tileverse.parquetry.internal.filter.spatial.CoveringPageBounds;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.internal.read.RowGroupGate;
@@ -91,8 +92,10 @@ final class SpatialReadGates {
 
     /**
      * The per-row-group planner for this read, present only when {@code options} supplies a probe, the file has a
-     * primary geometry column, and {@code outputSchema} holds that column. It receives the normalized predicate
-     * supplied by the caller, before any covering rewrite.
+     * primary geometry column, and {@code outputSchema} holds that column. It plans against the normalized form of
+     * {@code rawPredicate}, the predicate of the query before any covering rewrite. The comparisons added by that
+     * rewrite are necessary conditions of their originating spatial leaf. A unit accepted on the raw leaf therefore
+     * satisfies them too.
      *
      * <p>The geometry must be in the output for the plan to be sound. A unit is dropped as covered only on the strength
      * of paint recorded by the per-row gate or by the probe's own substitutes, and {@link SpatialDecimationGate} reads
@@ -102,18 +105,16 @@ final class SpatialReadGates {
      * @param outputSchema the physical schema of the batches seen by the per-row gate
      */
     Optional<RowGroupPlanner> rowGroupPlanner(
-            List<RowGroupSurvivor> survivors,
-            Predicate normalizedPredicate,
-            ReadOptions options,
-            ParquetSchema outputSchema) {
+            List<RowGroupSurvivor> survivors, Predicate rawPredicate, ReadOptions options, ParquetSchema outputSchema) {
         Optional<SpatialReadProbe> probe = probeFor(options);
         if (probe.isEmpty() || !outputHoldsGeometry(outputSchema)) {
             return Optional.empty();
         }
+        Predicate normalized = PredicateNormalizer.normalize(rawPredicate);
         ColumnPath geometry = primaryGeometry.orElseThrow();
         Optional<CoveringPageBounds> pageBounds = CoveringPageBounds.resolve(geometry, fileSchema, geoMetadata);
         RowGroupPlanner planner = new SpatialRowGroupPlanner(
-                survivors, probe.orElseThrow(), normalizedPredicate, geometry, boundsSource, pageBounds);
+                survivors, probe.orElseThrow(), normalized, geometry, boundsSource, pageBounds);
         return Optional.of(planner);
     }
 

@@ -25,11 +25,14 @@ import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 import java.util.function.UnaryOperator;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -53,6 +56,8 @@ import io.tileverse.parquetry.internal.filter.spatial.WkbEnvelope;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.observe.QueryObserver;
+import io.tileverse.parquetry.observe.QueryStarted;
+import io.tileverse.parquetry.observe.QueryStats;
 import io.tileverse.parquetry.observe.RowGroupRead;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -137,6 +142,29 @@ class ReaderBoundsTest {
             assertThat(observer.events.get(0).rowsMatched())
                     .as("the rows folded into the bounds are the rows the group contributed")
                     .isEqualTo(3L);
+        }
+    }
+
+    @Test
+    void boundsFinishTheObserverOnce() throws IOException {
+        Path file = writeGeometryFixture("bounds-observer.parquet", 50L, grid(400));
+        Predicate predicate = Pred.col("id").gt(200);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            RecordingObserver observer = new RecordingObserver();
+            ReadOptions options = ReadOptions.builder().queryObserver(observer).build();
+            List<Integer> rowGroupIndexes =
+                    IntStream.range(0, reader.rowGroups().size()).boxed().toList();
+
+            reader.bounds(predicate, options);
+
+            assertThat(observer.started).isEqualTo(1);
+            assertThat(observer.planned).isNotEmpty();
+            assertThat(observer.plannedRowGroups)
+                    .as("a planned decision for each row group")
+                    .containsExactlyInAnyOrderElementsOf(rowGroupIndexes);
+            assertThat(observer.finished).isEqualTo(1);
+            assertThat(observer.lastStats).isNotNull();
         }
     }
 
@@ -314,13 +342,7 @@ class ReaderBoundsTest {
     // Without a declared primary column and footer boxes, the first geometry column in schema order is the primary.
     @Test
     void firstGeometryIsPrimary() throws IOException {
-        Path written = writeTwoGeometries("two-geometries.parquet");
-        UnaryOperator<FileMetaData> noGeoMetadata = FooterRewrite.geoMetadataRemoved();
-        UnaryOperator<FileMetaData> noGeometryBox = FooterRewrite.geospatialBboxRemoved("geometry", 0);
-        UnaryOperator<FileMetaData> noOtherBox = FooterRewrite.geospatialBboxRemoved("other", 0);
-        UnaryOperator<FileMetaData> undeclared =
-                footer -> noOtherBox.apply(noGeometryBox.apply(noGeoMetadata.apply(footer)));
-        Path file = FooterRewrite.rewrite(written, tempDir.resolve("undeclared.parquet"), undeclared);
+        Path file = writeUndeclaredGeometries("undeclared.parquet");
         BoundingBox firstColumn =
                 BoundingBox.builder().xmin(0).xmax(10).ymin(0).ymax(10).build();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
@@ -329,6 +351,27 @@ class ReaderBoundsTest {
             Optional<BoundingBox> unfiltered = reader.bounds(Predicate.ALWAYS_TRUE, ReadOptions.DEFAULTS);
 
             assertSameBox2d(unfiltered.orElseThrow(), firstColumn);
+        }
+    }
+
+    // Without footer boxes, the unfiltered bounds scan the row group of this file.
+    @Test
+    void unfilteredScanFiresNoEvent() throws IOException {
+        Path file = writeUndeclaredGeometries("unfiltered-scan.parquet");
+        BoundingBox firstColumn =
+                BoundingBox.builder().xmin(0).xmax(10).ymin(0).ymax(10).build();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            RecordingObserver observer = new RecordingObserver();
+            ReadOptions observed = ReadOptions.builder().queryObserver(observer).build();
+
+            Optional<BoundingBox> box = reader.bounds(Predicate.ALWAYS_TRUE, observed);
+
+            assertSameBox2d(box.orElseThrow(), firstColumn);
+            assertThat(observer.started).isZero();
+            assertThat(observer.planned).isEmpty();
+            assertThat(observer.readRowGroupIndexes()).isEmpty();
+            assertThat(observer.finished).isZero();
         }
     }
 
@@ -543,6 +586,20 @@ class ReaderBoundsTest {
         return file;
     }
 
+    /**
+     * A file with the two geometry columns of {@link #writeTwoGeometries}, stripped of its GeoParquet metadata and
+     * footer boxes.
+     */
+    private Path writeUndeclaredGeometries(String name) throws IOException {
+        Path written = writeTwoGeometries("two-geometries.parquet");
+        UnaryOperator<FileMetaData> noGeoMetadata = FooterRewrite.geoMetadataRemoved();
+        UnaryOperator<FileMetaData> noGeometryBox = FooterRewrite.geospatialBboxRemoved("geometry", 0);
+        UnaryOperator<FileMetaData> noOtherBox = FooterRewrite.geospatialBboxRemoved("other", 0);
+        UnaryOperator<FileMetaData> undeclared =
+                footer -> noOtherBox.apply(noGeometryBox.apply(noGeoMetadata.apply(footer)));
+        return FooterRewrite.rewrite(written, tempDir.resolve(name), undeclared);
+    }
+
     /** Two geometry columns, {@code geometry} then {@code other}, with points apart from one another. */
     private Path writeTwoGeometries(String name) throws IOException {
         ParquetSchema schema = flatSchema(requiredBinary("geometry"), requiredBinary("other"), requiredInt32("id"));
@@ -612,10 +669,33 @@ class ReaderBoundsTest {
     private static final class RecordingObserver implements QueryObserver {
 
         private final List<RowGroupRead> events = new ArrayList<>();
+        // The calling thread plans and finishes a bounds query, hence these fields need no lock.
+        private final List<PruningDecision> planned = new ArrayList<>();
+        private final Set<Integer> plannedRowGroups = new HashSet<>();
+        private int started;
+        private int finished;
+        private QueryStats lastStats;
+
+        @Override
+        public void onQueryStarted(QueryStarted event) {
+            started++;
+        }
+
+        @Override
+        public void onRowGroupPlanned(int rowGroup, PruningDecision decision) {
+            planned.add(decision);
+            plannedRowGroups.add(rowGroup);
+        }
 
         @Override
         public synchronized void onRowGroupRead(RowGroupRead event) {
             events.add(event);
+        }
+
+        @Override
+        public void onQueryFinished(QueryStats stats) {
+            finished++;
+            lastStats = stats;
         }
 
         synchronized List<Integer> readRowGroupIndexes() {
