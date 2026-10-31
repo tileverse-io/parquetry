@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.data;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -34,8 +35,14 @@ import io.tileverse.parquetry.internal.filter.FilterPipeline.PageIndexLookup;
 import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.filter.StatsEvaluator;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
+import io.tileverse.parquetry.internal.read.BatchForm;
 import io.tileverse.parquetry.internal.read.IndexSectionLoader;
+import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator;
+import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator.DecodeObservation;
 import io.tileverse.parquetry.internal.read.RowGroupChunks;
+import io.tileverse.parquetry.internal.read.RowGroupGate;
+import io.tileverse.parquetry.internal.read.RowGroupSurvivor;
+import io.tileverse.parquetry.internal.read.RowMask;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.observe.FetchAccumulator;
 import io.tileverse.parquetry.observe.FetchPurpose;
@@ -47,7 +54,8 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 /**
  * Plans the queries of one file. For a query, it builds the chunk views of the row groups, runs the filter pipeline
  * over them, and returns the {@link ReadPlan} used by the decode. A reader holds one planner, and each query gets a
- * plan of its own.
+ * plan of its own. The unfiltered bounds read some row groups without a plan, and the planner assembles that decode
+ * too.
  */
 final class ReadPlanner {
 
@@ -55,21 +63,32 @@ final class ReadPlanner {
 
     private final ByteRangeSource source;
     private final FooterMetadata footer;
+    private final ReadResources readResources;
+    private final SpatialReadGates spatialReadGates;
 
-    ReadPlanner(ByteRangeSource source, FooterMetadata footer) {
+    ReadPlanner(
+            ByteRangeSource source,
+            FooterMetadata footer,
+            ReadResources readResources,
+            SpatialReadGates spatialReadGates) {
         this.source = source;
         this.footer = footer;
+        this.readResources = readResources;
+        this.spatialReadGates = spatialReadGates;
     }
 
     /**
      * Plans one query. The chunk views record their index-section reads into the fetch accumulator of
      * {@code observation}, and the filter pipeline runs with its options. The time of the pipeline is reported to
-     * {@code observation} only when its observers asked for timings.
+     * {@code observation} only when its observers asked for timings. When the predicate has a positional delete, the
+     * filter pipeline and the plan share one computation of the file row offsets.
      */
     ReadPlan plan(Predicate predicate, Projection scanProjection, QueryObservation observation) {
         List<RowGroupChunks> chunks = rowGroupChunks(observation.fetchAccumulator());
-        ExplainPlan explainPlan = evaluateTimed(predicate, scanProjection, chunks, observation);
-        return new ReadPlan(chunks, explainPlan);
+        Optional<long[]> fileOffsets = fileOffsetsForRowPositions(predicate, chunks);
+        ExplainPlan explainPlan = evaluateTimed(predicate, scanProjection, chunks, fileOffsets, observation);
+        return new ReadPlan(
+                footer.fileSchema(), readResources, spatialReadGates, chunks, explainPlan, fileOffsets, observation);
     }
 
     /**
@@ -78,7 +97,9 @@ final class ReadPlanner {
      * finish of the query.
      */
     ExplainPlan explain(Predicate predicate, Projection scanProjection, ReadOptions options) {
-        return evaluate(predicate, scanProjection, options, chunks());
+        List<RowGroupChunks> chunks = chunks();
+        Optional<long[]> fileOffsets = fileOffsetsForRowPositions(predicate, chunks);
+        return evaluate(predicate, scanProjection, options, chunks, fileOffsets);
     }
 
     /**
@@ -89,7 +110,34 @@ final class ReadPlanner {
         return rowGroupChunks(FetchAccumulator.NONE);
     }
 
-    /** The columns referenced by {@code predicate}, minus the synthesized row-position columns. */
+    /**
+     * The coordinator of a decode of {@code survivors}, read in full without a filter pipeline. The unfiltered bounds
+     * use it for their row groups without a box. No event fires and no fetch is recorded.
+     *
+     * <p>The unfiltered bounds skip the filter pipeline on purpose, as {@link ParquetFileReader#count} does for an
+     * {@link Predicate.Always} literal. Planning {@link Predicate#ALWAYS_TRUE} would fire the planned events to an
+     * attached observer, and neither query fires an event.
+     */
+    ParallelDecodeCoordinator decodeUnplanned(
+            List<RowGroupSurvivor> survivors, ParquetSchema scanSchema, ReadOptions options) {
+        // A survivor read in full has no row set to mask on.
+        List<Optional<RowMask>> masks = Collections.nCopies(survivors.size(), Optional.empty());
+        Optional<RowGroupGate> rowGroupGate = spatialReadGates.rowGroupGate(survivors, options);
+        return readResources.newDecodeCoordinator(
+                survivors,
+                scanSchema,
+                masks,
+                options,
+                Optional.empty(),
+                BatchForm.LEVELS,
+                FetchAccumulator.NONE,
+                DecodeObservation.NONE,
+                List.of(),
+                rowGroupGate,
+                Optional.empty());
+    }
+
+    /** The leaf columns referenced by {@code predicate}, minus the synthesized row-position columns. */
     static Set<ColumnPath> physicalColumns(Predicate predicate) {
         Set<ColumnPath> columns = new LinkedHashSet<>(Predicate.columns(predicate));
         Predicate.rowPositionColumns(predicate).forEach(columns::remove);
@@ -141,6 +189,18 @@ final class ReadPlanner {
     }
 
     /**
+     * The file row offsets of the row groups when {@code predicate} names a row position (a positional delete), and
+     * empty otherwise. The row-position tier of the filter pipeline reads them only then, and the plan reuses them for
+     * its synthesized positions. Their computation stays off the common path.
+     */
+    private static Optional<long[]> fileOffsetsForRowPositions(Predicate predicate, List<RowGroupChunks> chunks) {
+        if (Predicate.rowPositionColumns(predicate).isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(fileOffsets(chunks));
+    }
+
+    /**
      * Runs {@link #evaluate} with the options of {@code observation} and, when the observers asked for timings, reports
      * the elapsed nanoseconds to it. When timings are off, no clock is read.
      */
@@ -148,24 +208,28 @@ final class ReadPlanner {
             Predicate predicate,
             Projection projection,
             List<RowGroupChunks> rowGroupChunks,
+            Optional<long[]> fileOffsets,
             QueryObservation observation) {
         ReadOptions options = observation.options();
         if (!observation.wantsTimings()) {
-            return evaluate(predicate, projection, options, rowGroupChunks);
+            return evaluate(predicate, projection, options, rowGroupChunks, fileOffsets);
         }
         long start = System.nanoTime();
-        ExplainPlan plan = evaluate(predicate, projection, options, rowGroupChunks);
+        ExplainPlan plan = evaluate(predicate, projection, options, rowGroupChunks, fileOffsets);
         observation.addPipelineNanos(System.nanoTime() - start);
         return plan;
     }
 
-    /** Builds inputs for and runs the filter pipeline. */
+    /** Builds the inputs of the filter pipeline and runs it. */
     private ExplainPlan evaluate(
-            Predicate predicate, Projection projection, ReadOptions options, List<RowGroupChunks> rowGroupChunks) {
+            Predicate predicate,
+            Projection projection,
+            ReadOptions options,
+            List<RowGroupChunks> rowGroupChunks,
+            Optional<long[]> fileOffsets) {
         List<ColumnPath> projectedLeaves = projectedLeafColumns(projection);
-        boolean rowPositionDeletes = !Predicate.rowPositionColumns(predicate).isEmpty();
         List<FilterPipeline.RowGroupInputs> inputs =
-                filterInputs(rowGroupChunks, options, projectedLeaves, rowPositionDeletes);
+                filterInputs(rowGroupChunks, options, projectedLeaves, fileOffsets);
         Set<Tier> disabledTiers = disabledTiers(options);
         ExplainPlan plan = FilterPipeline.evaluate(footer.fileSchema(), projection, predicate, inputs, disabledTiers);
         notifyPlanned(plan, options.queryObserver());
@@ -174,7 +238,7 @@ final class ReadPlanner {
 
     /**
      * Replays the planning outcome to {@code observer}. The observer receives one {@code onQueryStarted} for the query,
-     * then one {@code onRowGroupPlanned} per tier decision of every row group. With {@link QueryObserver#NONE}, the
+     * then one {@code onRowGroupPlanned} per tier decision of the row groups. With {@link QueryObserver#NONE}, the
      * method returns before any allocation, and the read path stays free of observability overhead.
      */
     private static void notifyPlanned(ExplainPlan plan, QueryObserver observer) {
@@ -196,15 +260,17 @@ final class ReadPlanner {
      * Builds one {@link FilterPipeline.RowGroupInputs} per row group from the pre-built chunk views.
      *
      * @param projectedLeaves the projected leaf column paths, used to size each row group's projected compressed bytes
-     * @param rowPositionDeletes whether the predicate has a positional delete. The file offset and the page boundaries
-     *     of each row group (the row-position pruning inputs) are computed only then, and stay off the common path.
+     * @param fileOffsets the file row offsets of the row groups, present only when the predicate names a row position.
+     *     The page boundaries of each row group, the other row-position pruning input, are read only then and stay off
+     *     the common path.
      */
     private List<FilterPipeline.RowGroupInputs> filterInputs(
             List<RowGroupChunks> rowGroupChunks,
             ReadOptions options,
             List<ColumnPath> projectedLeaves,
-            boolean rowPositionDeletes) {
-        long[] offsets = rowPositionDeletes ? fileOffsets(rowGroupChunks) : NO_OFFSETS;
+            Optional<long[]> fileOffsets) {
+        boolean rowPositionTier = fileOffsets.isPresent();
+        long[] offsets = fileOffsets.orElse(NO_OFFSETS);
         List<FilterPipeline.RowGroupInputs> inputs = new ArrayList<>(rowGroupChunks.size());
         for (int i = 0; i < rowGroupChunks.size(); i++) {
             RowGroupChunks chunks = rowGroupChunks.get(i);
@@ -215,8 +281,8 @@ final class ReadPlanner {
                     pageIndexLookup(chunks),
                     bloomLookup(chunks),
                     projectedCompressedBytes(chunks, projectedLeaves),
-                    rowPositionDeletes ? offsets[i] : 0L,
-                    rowPositionDeletes ? rowPositionPages(chunks, options) : Optional.empty()));
+                    rowPositionTier ? offsets[i] : 0L,
+                    rowPositionTier ? rowPositionPages(chunks, options) : Optional.empty()));
         }
         return inputs;
     }

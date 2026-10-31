@@ -23,6 +23,7 @@ import java.util.OptionalInt;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.internal.read.RowMasks;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -36,7 +37,7 @@ class ScanFlatnessTest {
         ParquetSchema schema = new ParquetSchema(
                 new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(v), Optional.empty(), -1));
 
-        assertThat(ParquetFileReader.allFlat(schema, schema.leafColumns())).isTrue();
+        assertThat(RowMasks.allFlat(schema, schema.leafColumns())).isTrue();
     }
 
     @Test
@@ -48,7 +49,7 @@ class ScanFlatnessTest {
         ParquetSchema schema = new ParquetSchema(
                 new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(v, tags), Optional.empty(), -1));
 
-        assertThat(ParquetFileReader.allFlat(schema, schema.leafColumns())).isFalse();
+        assertThat(RowMasks.allFlat(schema, schema.leafColumns())).isFalse();
     }
 
     private static SchemaNode.Primitive required(String name) {

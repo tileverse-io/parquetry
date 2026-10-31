@@ -30,13 +30,11 @@ import io.tileverse.parquetry.columnar.BatchRows;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
-import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
 import io.tileverse.parquetry.filter.explain.RowGroupPlan;
 import io.tileverse.parquetry.filter.prune.FileStats;
 import io.tileverse.parquetry.format.BoundingBox;
-import io.tileverse.parquetry.internal.filter.PredicateNormalizer;
 import io.tileverse.parquetry.internal.filter.spatial.BoundsAccumulator;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialCoveringRewrite;
 import io.tileverse.parquetry.internal.read.BatchForm;
@@ -44,19 +42,12 @@ import io.tileverse.parquetry.internal.read.BatchPipeline;
 import io.tileverse.parquetry.internal.read.DecryptionKeyRetriever;
 import io.tileverse.parquetry.internal.read.MaskedScan;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator;
-import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator.DecodeObservation;
 import io.tileverse.parquetry.internal.read.RowGroupChunks;
-import io.tileverse.parquetry.internal.read.RowGroupGate;
-import io.tileverse.parquetry.internal.read.RowGroupPlanner;
 import io.tileverse.parquetry.internal.read.RowGroupSurvivor;
-import io.tileverse.parquetry.internal.read.RowMask;
-import io.tileverse.parquetry.internal.read.RowMasks;
 import io.tileverse.parquetry.internal.read.RowPositionColumn;
-import io.tileverse.parquetry.internal.read.RowPositionSynthesis;
 import io.tileverse.parquetry.internal.read.SpatialDecimationGate;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.materializer.Materializer;
-import io.tileverse.parquetry.observe.FetchAccumulator;
 import io.tileverse.parquetry.observe.QueryStats;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.runtime.ParquetRuntime;
@@ -94,9 +85,7 @@ public final class ParquetFileReader {
     private static final Materializer<Boolean> DISCARD_MATERIALIZER = (_, _) -> Boolean.TRUE;
 
     private final FooterMetadata footer;
-    private final ParquetRuntime runtime;
     private final ReadPlanner readPlanner;
-    private final ReadResources readResources;
     private final SpatialReadGates spatialReadGates;
 
     // Held for an encrypted file; the footer-decryption path that reads it is not wired in yet.
@@ -109,11 +98,10 @@ public final class ParquetFileReader {
             ParquetRuntime runtime,
             Optional<DecryptionKeyRetriever> decryptionKeyRetriever) {
         this.footer = footerMetadata;
-        this.runtime = runtime;
-        this.readPlanner = new ReadPlanner(source, footer);
-        this.readResources = new ReadResources(source, footer.fileSchema(), runtime);
         this.spatialReadGates = new SpatialReadGates(
                 footer.primaryGeometry(), footer.spatialBounds(), footer.fileSchema(), footer.geoMetadata());
+        ReadResources readResources = new ReadResources(source, footer.fileSchema(), runtime);
+        this.readPlanner = new ReadPlanner(source, footer, readResources, spatialReadGates);
         this.decryptionKeyRetriever = decryptionKeyRetriever;
     }
 
@@ -251,32 +239,16 @@ public final class ParquetFileReader {
         List<RowPositionColumn> rowPositionRequests = projectionPlan.synthesizedColumns();
         boolean recordLevel = projectionPlan.recordLevel();
         Projection scanProjection = projectionPlan.scanProjection();
-        FetchAccumulator accumulator = observation.fetchAccumulator();
         ReadPlan plan = readPlanner.plan(predicate, scanProjection, observation);
         List<RowGroupSurvivor> survivors = plan.survivors();
-        ParquetSchema scanSchema = plan.scanSchema();
         ParquetSchema outputSchema = projectionPlan.physicalOutputSchema();
-        List<Optional<RowMask>> decodeMasks = decodeMasksFor(survivors, scanSchema, options);
         Optional<MaskedScan> maskedScan = recordLevel ? plan.maskedScan(outputSchema) : Optional.empty();
         Predicate recordFilter = (recordLevel && maskedScan.isEmpty()) ? plan.recordFilter() : null;
         BatchForm rowsBatchForm = maskedScan.isPresent() ? BatchForm.LEVELS : rowsForm(recordFilter);
-        DecodeObservation decodeObservation = observation.decodeObservation(false);
-        List<RowPositionSynthesis> rowPositions = plan.rowPositionSyntheses(survivors, rowPositionRequests);
-        Optional<RowGroupGate> rowGroupGate = spatialReadGates.rowGroupGate(survivors, options);
-        Optional<RowGroupPlanner> rowGroupPlanner =
-                spatialRowGroupPlanner(survivors, rawPredicate, options, outputSchema);
-        ParallelDecodeCoordinator coordinator = readResources.newDecodeCoordinator(
-                survivors,
-                scanSchema,
-                decodeMasks,
-                options,
-                maskedScan,
-                rowsBatchForm,
-                accumulator,
-                decodeObservation,
-                rowPositions,
-                rowGroupGate,
-                rowGroupPlanner);
+        DecodeShape.SpatialPlanning spatialPlanning = new DecodeShape.SpatialPlanning(rawPredicate, outputSchema);
+        DecodeShape shape =
+                new DecodeShape(maskedScan, rowsBatchForm, false, rowPositionRequests, Optional.of(spatialPlanning));
+        ParallelDecodeCoordinator coordinator = plan.decode(survivors, shape);
         Optional<SpatialDecimationGate> leafGate = spatialReadGates.leafGate(options);
         Stream<T> rows = BatchPipeline.rows(
                 coordinator,
@@ -291,18 +263,6 @@ public final class ParquetFileReader {
 
     /** A row stream and its plan. */
     private record PlannedRows<T>(ExplainPlan plan, Stream<T> rows) {}
-
-    /**
-     * The per-row-group spatial planner of a read that produces rows, present only when the read supplies a probe and
-     * {@code outputSchema} holds the file's primary geometry column. It plans against the normalized raw predicate,
-     * before the covering rewrite: the comparisons added by that rewrite are necessary conditions of the spatial leaf
-     * that they were derived from, hence a unit accepted on the raw leaf satisfies them too.
-     */
-    private Optional<RowGroupPlanner> spatialRowGroupPlanner(
-            List<RowGroupSurvivor> survivors, Predicate rawPredicate, ReadOptions options, ParquetSchema outputSchema) {
-        Predicate normalizedRaw = PredicateNormalizer.normalize(rawPredicate);
-        return spatialReadGates.rowGroupPlanner(survivors, normalizedRaw, options, outputSchema);
-    }
 
     /**
      * Picks the batch form for a streaming row read from whether a per-row filter will run. The levels form defers
@@ -372,8 +332,7 @@ public final class ParquetFileReader {
         if (residual.isEmpty()) {
             return matchedRows;
         }
-        List<RowPositionSynthesis> rowPositions = plan.rowPositionSyntheses(residual, rowPositionRequests);
-        return matchedRows + countResidual(residual, plan, observation, rowPositions);
+        return matchedRows + countResidual(residual, plan, observation, rowPositionRequests);
     }
 
     /**
@@ -400,27 +359,13 @@ public final class ParquetFileReader {
             List<RowGroupSurvivor> residual,
             ReadPlan plan,
             QueryObservation observation,
-            List<RowPositionSynthesis> rowPositions) {
+            List<RowPositionColumn> rowPositionRequests) {
         ReadOptions options = observation.options();
-        ParquetSchema scanSchema = plan.scanSchema();
         Predicate normalized = plan.normalized();
-        List<Optional<RowMask>> masks = decodeMasksFor(residual, scanSchema, options);
         Optional<SpatialDecimationGate> leafGate = spatialReadGates.leafGate(options);
         Optional<MaskedScan> maskedScan = countMaskedScan(plan, leafGate);
-        DecodeObservation decodeObservation = observation.decodeObservation(false);
-        Optional<RowGroupGate> rowGroupGate = spatialReadGates.rowGroupGate(residual, options);
-        ParallelDecodeCoordinator coordinator = readResources.newDecodeCoordinator(
-                residual,
-                scanSchema,
-                masks,
-                options,
-                maskedScan,
-                BatchForm.LEVELS,
-                observation.fetchAccumulator(),
-                decodeObservation,
-                rowPositions,
-                rowGroupGate,
-                Optional.empty());
+        DecodeShape shape = new DecodeShape(maskedScan, BatchForm.LEVELS, false, rowPositionRequests, Optional.empty());
+        ParallelDecodeCoordinator coordinator = plan.decode(residual, shape);
         boolean observe = observation.observing();
         if (maskedScan.isPresent()) {
             return BatchPipeline.countEmitted(coordinator, observe);
@@ -513,10 +458,7 @@ public final class ParquetFileReader {
         }
         if (!boxLess.isEmpty()) {
             ParquetSchema scanSchema = footer.fileSchema().project(Set.of(geometryColumn));
-            List<Optional<RowMask>> masks = decodeMasksFor(boxLess, scanSchema, options);
-            // An unfiltered box-less scan runs a null predicate: nothing to mask a scan on, and no row-position column.
-            ParallelDecodeCoordinator coordinator = boundsDecodeCoordinator(
-                    boxLess, scanSchema, masks, options, DecodeObservation.NONE, List.of(), Optional.empty());
+            ParallelDecodeCoordinator coordinator = readPlanner.decodeUnplanned(boxLess, scanSchema, options);
             BatchPipeline.boundsMatching(coordinator, null, geometryColumn, accumulator);
         }
         return accumulator.snapshot();
@@ -545,7 +487,7 @@ public final class ParquetFileReader {
         Projection scanProjection = boundsScanProjection(predicate, geometryColumn);
         ReadPlan plan = readPlanner.plan(predicate, scanProjection, observation);
         List<ResidualGroup> residual = unionMatchedAndCollectResidual(plan, geometryColumn, accumulator);
-        scanResidualBounds(residual, plan, geometryColumn, observation, accumulator, rowPositionRequests);
+        scanResidualBounds(residual, plan, geometryColumn, accumulator, rowPositionRequests);
         return accumulator.snapshot();
     }
 
@@ -597,82 +539,27 @@ public final class ParquetFileReader {
      * decode the row group's conservative box is re-checked against the accumulated bounds; a covered row group is
      * skipped without any fetch, and the growing extent lets a big early row group cover later ones. A box-less row
      * group sorts last and is never skipped.
+     *
+     * <p>The masked scan applies the predicate during decode and emits the geometry of the surviving rows alone. Where
+     * it does not run, the fold tests each decoded row.
      */
     private void scanResidualBounds(
             List<ResidualGroup> residual,
             ReadPlan plan,
             ColumnPath geometryColumn,
-            QueryObservation observation,
             BoundsAccumulator accumulator,
             List<RowPositionColumn> rowPositionRequests) {
-        ReadOptions options = observation.options();
-        DecodeObservation decodeObservation = observation.decodeObservation(false);
+        ParquetSchema geometryOnly = footer.fileSchema().project(Set.of(geometryColumn));
+        Optional<MaskedScan> maskedScan = plan.maskedScan(geometryOnly);
+        Predicate foldFilter = maskedScan.isPresent() ? null : plan.normalized();
+        DecodeShape shape = new DecodeShape(maskedScan, BatchForm.LEVELS, false, rowPositionRequests, Optional.empty());
         for (ResidualGroup group : orderedByDescendingArea(residual)) {
             if (isCovered(group, accumulator)) {
                 continue;
             }
-            scanResidualGroup(
-                    group.survivor(),
-                    plan,
-                    geometryColumn,
-                    options,
-                    decodeObservation,
-                    accumulator,
-                    rowPositionRequests);
+            ParallelDecodeCoordinator coordinator = plan.decode(List.of(group.survivor()), shape);
+            BatchPipeline.boundsMatching(coordinator, foldFilter, geometryColumn, accumulator);
         }
-    }
-
-    /**
-     * Folds one residual row group's matching rows into {@code accumulator}. The masked scan applies the predicate
-     * during decode and emits the geometry of the surviving rows alone, which the fold then unions row by row; where it
-     * does not run, every decoded row is tested as it is folded.
-     */
-    private void scanResidualGroup(
-            RowGroupSurvivor survivor,
-            ReadPlan plan,
-            ColumnPath geometryColumn,
-            ReadOptions options,
-            DecodeObservation observation,
-            BoundsAccumulator accumulator,
-            List<RowPositionColumn> rowPositionRequests) {
-        Predicate predicate = plan.normalized();
-        ParquetSchema scanSchema = plan.scanSchema();
-        List<RowGroupSurvivor> survivors = List.of(survivor);
-        List<RowPositionSynthesis> rowPositions = plan.rowPositionSyntheses(survivors, rowPositionRequests);
-        List<Optional<RowMask>> masks = decodeMasksFor(survivors, scanSchema, options);
-        ParquetSchema geometryOnly = footer.fileSchema().project(Set.of(geometryColumn));
-        Optional<MaskedScan> maskedScan = plan.maskedScan(geometryOnly);
-        ParallelDecodeCoordinator coordinator =
-                boundsDecodeCoordinator(survivors, scanSchema, masks, options, observation, rowPositions, maskedScan);
-        Predicate foldFilter = maskedScan.isPresent() ? null : predicate;
-        BatchPipeline.boundsMatching(coordinator, foldFilter, geometryColumn, accumulator);
-    }
-
-    /**
-     * Builds a decode coordinator over {@code survivors} that decodes only {@code scanSchema}, as count's residual
-     * does.
-     */
-    private ParallelDecodeCoordinator boundsDecodeCoordinator(
-            List<RowGroupSurvivor> survivors,
-            ParquetSchema scanSchema,
-            List<Optional<RowMask>> masks,
-            ReadOptions options,
-            DecodeObservation observation,
-            List<RowPositionSynthesis> rowPositions,
-            Optional<MaskedScan> maskedScan) {
-        Optional<RowGroupGate> rowGroupGate = spatialReadGates.rowGroupGate(survivors, options);
-        return readResources.newDecodeCoordinator(
-                survivors,
-                scanSchema,
-                masks,
-                options,
-                maskedScan,
-                BatchForm.LEVELS,
-                FetchAccumulator.NONE,
-                observation,
-                rowPositions,
-                rowGroupGate,
-                Optional.empty());
     }
 
     private static List<ResidualGroup> orderedByDescendingArea(List<ResidualGroup> residual) {
@@ -746,9 +633,7 @@ public final class ParquetFileReader {
         Projection scanProjection = projectionPlan.scanProjection();
         ReadPlan plan = readPlanner.plan(predicate, scanProjection, observation);
         List<RowGroupSurvivor> survivors = plan.survivors();
-        ParquetSchema scanSchema = plan.scanSchema();
         ParquetSchema outputSchema = projectionPlan.physicalOutputSchema();
-        List<Optional<RowMask>> decodeMasks = decodeMasksFor(survivors, scanSchema, options);
         Optional<MaskedScan> maskedScan = recordLevel ? plan.maskedScan(outputSchema) : Optional.empty();
         Predicate recordFilter = (recordLevel && maskedScan.isEmpty()) ? plan.recordFilter() : null;
         Optional<SpatialDecimationGate> leafGate = spatialReadGates.leafGate(options);
@@ -757,23 +642,10 @@ public final class ParquetFileReader {
         // where nothing downstream drops a row, which lets every decoded row be reported as matched; any other shape
         // tallies the rows it emits.
         boolean emitDecodedShape = recordFilter == null && leafGate.isEmpty() && maskedScan.isEmpty();
-        DecodeObservation decodeObservation = observation.decodeObservation(emitDecodedShape);
-        List<RowPositionSynthesis> rowPositions = plan.rowPositionSyntheses(survivors, rowPositionRequests);
-        Optional<RowGroupGate> rowGroupGate = spatialReadGates.rowGroupGate(survivors, options);
-        Optional<RowGroupPlanner> rowGroupPlanner =
-                spatialRowGroupPlanner(survivors, rawPredicate, options, outputSchema);
-        ParallelDecodeCoordinator coordinator = readResources.newDecodeCoordinator(
-                survivors,
-                scanSchema,
-                decodeMasks,
-                options,
-                maskedScan,
-                BatchForm.ASSEMBLED,
-                observation.fetchAccumulator(),
-                decodeObservation,
-                rowPositions,
-                rowGroupGate,
-                rowGroupPlanner);
+        DecodeShape.SpatialPlanning spatialPlanning = new DecodeShape.SpatialPlanning(rawPredicate, outputSchema);
+        DecodeShape shape = new DecodeShape(
+                maskedScan, BatchForm.ASSEMBLED, emitDecodedShape, rowPositionRequests, Optional.of(spatialPlanning));
+        ParallelDecodeCoordinator coordinator = plan.decode(survivors, shape);
         Stream<ParquetRecordBatch> batches = emitDecodedShape
                 ? BatchPipeline.batches(coordinator)
                 : BatchPipeline.batches(coordinator, recordFilter, outputSchema, leafGate);
@@ -818,34 +690,5 @@ public final class ParquetFileReader {
         }
         QueryStats stats = observation.finish();
         return drained.plan().withExecution(stats, observation.rowGroupReads());
-    }
-
-    /**
-     * Builds one decode mask per survivor, parallel to {@code survivors}. A mask is present only when page-skip is both
-     * wanted and safe for that row group: {@code useColumnIndexFilter} on, the column-index tier narrowed the row set,
-     * and the scanned columns flat, each with a page index. Otherwise the entry is empty and the row group decodes in
-     * full.
-     */
-    private List<Optional<RowMask>> decodeMasksFor(
-            List<RowGroupSurvivor> survivors, ParquetSchema scanSchema, ReadOptions options) {
-        List<Optional<RowMask>> masks = new ArrayList<>(survivors.size());
-        boolean scanFlat = options.useColumnIndexFilter() && allFlat(footer.fileSchema(), scanSchema.leafColumns());
-        for (RowGroupSurvivor survivor : survivors) {
-            masks.add(scanFlat ? maskFor(survivor, scanSchema) : Optional.empty());
-        }
-        return masks;
-    }
-
-    private static Optional<RowMask> maskFor(RowGroupSurvivor survivor, ParquetSchema scanSchema) {
-        if (survivor.survivingRows().isEmpty()) {
-            return Optional.empty();
-        }
-        RowRanges surviving = survivor.survivingRows().orElseThrow();
-        return RowMasks.maskFor(survivor.chunks(), surviving, scanSchema.leafColumns());
-    }
-
-    /** True when every {@code leaf} is non-repeated (max repetition level 0) in {@code schema}. Pure; testable. */
-    static boolean allFlat(ParquetSchema schema, List<ColumnPath> leaves) {
-        return RowMasks.allFlat(schema, leaves);
     }
 }
