@@ -19,6 +19,7 @@ import java.lang.foreign.MemorySegment;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.stream.IntStream;
 
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.format.ColumnIndex;
@@ -27,13 +28,16 @@ import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
+import lombok.NonNull;
+
 /**
  * The page index of one column chunk. It lists the data pages of the chunk in row order, with their bytes, their rows
  * and, when known, their statistics. Only validation builds it. The pruning tiers, the row masks and the fetch read the
  * pages of a chunk through it.
  *
- * <p>The page index declared by the writer is its source: the offset index of the chunk gives the pages, and the column
- * index gives their statistics.
+ * <p>A page index has two sources. The writer may declare it, with the pages in the offset index of the chunk and their
+ * statistics in the column index; see {@link #declared}. A read of the whole chunk may learn it from the page headers;
+ * see {@link #learned}. The same validation applies to both sources.
  */
 public final class PageIndex {
 
@@ -81,8 +85,44 @@ public final class PageIndex {
         if (!hasOneEntryPerPage(columnIndex) || !nullPagesAgreeWithNullCounts(columnIndex)) {
             return new PageIndex(pages, rowCount, Optional.empty());
         }
-        PageStatistics agreed = new PageStatistics(columnIndex, kind, logicalType, boundsOrdered);
+        PageStatistics agreed = new DeclaredStatistics(columnIndex, kind, logicalType, boundsOrdered);
         return new PageIndex(pages, rowCount, Optional.of(agreed));
+    }
+
+    /**
+     * The pages learned from the page headers of a chunk of {@code chunkLength} bytes from {@code chunkStart}, in a row
+     * group of {@code rowCount} rows. The offsets in {@code pages} count from the start of the chunk. The pages come
+     * with the statistics recorded in their headers. The result is empty when the pages fail the validation of
+     * {@link #declared}. It is empty too when a page marked as holding only nulls counts fewer nulls than rows. Such a
+     * mark cannot be trusted. The first rows of the pages come from the same headers and cannot be trusted either.
+     *
+     * <p>{@code kind} and {@code logicalType} must be the types given to {@link LearnedPages#builder} for
+     * {@code pages}. The entry does not store them, and decoding a bound with another type gives a wrong value without
+     * an error.
+     *
+     * @param kind the physical type of the column, used to decode the bounds
+     * @param logicalType the logical type of the column, used to decode the bounds into values of that type
+     * @param boundsOrdered whether the bounds follow an order applied by this reader. When false the statistics keep
+     *     the null marks and the counts alone.
+     */
+    public static Optional<PageIndex> learned(
+            LearnedPages pages,
+            long chunkStart,
+            long chunkLength,
+            long rowCount,
+            PrimitiveKind kind,
+            Optional<LogicalType> logicalType,
+            boolean boundsOrdered) {
+        List<PageLocation> locations = locationsOf(pages, chunkStart);
+        if (!placesItsPages(locations, chunkStart, chunkStart + chunkLength, rowCount)) {
+            return Optional.empty();
+        }
+        PageIndex located = new PageIndex(locations, rowCount, Optional.empty());
+        if (!located.nullPagesAgreeWithNullCounts(pages)) {
+            return Optional.empty();
+        }
+        PageStatistics agreed = new LearnedStatistics(pages, kind, logicalType, boundsOrdered);
+        return Optional.of(new PageIndex(locations, rowCount, Optional.of(agreed)));
     }
 
     public int pageCount() {
@@ -115,7 +155,10 @@ public final class PageIndex {
         return lastRow(page) - firstRow(page) + 1;
     }
 
-    /** Whether the column index of the chunk agrees with its pages, and gives the statistics of each page. */
+    /**
+     * Whether the page index gives the statistics of its pages. A declared page index has them when its column index
+     * agrees with its pages, and a learned one always has them.
+     */
     public boolean hasStatistics() {
         return statistics.isPresent();
     }
@@ -132,7 +175,7 @@ public final class PageIndex {
      * @throws IllegalStateException when the page index has no statistics
      */
     public ColumnSummary statistics(int page) {
-        return requireStatistics().of(page, rows(page), true);
+        return summaryOf(page, true);
     }
 
     /**
@@ -142,11 +185,61 @@ public final class PageIndex {
      * @throws IllegalStateException when the page index has no statistics
      */
     public ColumnSummary nullStatistics(int page) {
-        return requireStatistics().of(page, rows(page), false);
+        return summaryOf(page, false);
+    }
+
+    /**
+     * The statistics of page {@code page} as a unit holding one value per row. A page marked as holding only nulls
+     * counts each of its rows as null, and its bounds are not read. The bounds of the other pages are read only when
+     * {@code readBounds} is on.
+     */
+    private ColumnSummary summaryOf(int page, boolean readBounds) {
+        PageStatistics source = requireStatistics();
+        long rows = rows(page);
+        if (source.nullPage(page)) {
+            return nullPageStatistics(source.kind(), rows);
+        }
+        OptionalLong nullCount = trustedNullCount(source.nullCount(page), rows);
+        Optional<Value> min = readBounds ? decodedBound(source, source.min(page)) : Optional.empty();
+        Optional<Value> max = readBounds ? decodedBound(source, source.max(page)) : Optional.empty();
+        NaNCells counted = NaNCells.ofPageCounts(source.nanCount(page), nullCount, rows);
+        OptionalLong values = OptionalLong.of(rows);
+        return ColumnSummary.of(source.kind(), min, max, nullCount, values, counted);
     }
 
     private PageStatistics requireStatistics() {
         return statistics.orElseThrow(() -> new IllegalStateException("the page index has no statistics"));
+    }
+
+    /**
+     * The statistics of a page marked as holding only nulls, with {@code rows} rows. Its rows count as nulls, and the
+     * page has no bound.
+     */
+    private static ColumnSummary nullPageStatistics(PrimitiveKind kind, long rows) {
+        OptionalLong values = OptionalLong.of(rows);
+        return new ColumnSummary(kind, Optional.empty(), Optional.empty(), values, values, NaNCells.POSSIBLE);
+    }
+
+    /**
+     * The null count of a page not marked as holding only nulls, or empty when it contradicts the mark. Such a page
+     * holds a value, and fewer nulls than rows.
+     */
+    private static OptionalLong trustedNullCount(OptionalLong recorded, long rows) {
+        if (recorded.isPresent() && recorded.getAsLong() >= rows) {
+            return OptionalLong.empty();
+        }
+        return recorded;
+    }
+
+    /**
+     * A bound of a page decoded to a value. It is empty for a page without a bound, when the bound does not decode, or
+     * when the bounds of {@code source} follow an order not applied by this reader.
+     */
+    private static Optional<Value> decodedBound(PageStatistics source, Optional<MemorySegment> bound) {
+        if (!source.boundsOrdered() || bound.isEmpty()) {
+            return Optional.empty();
+        }
+        return StatisticsValueDecoder.decode(source.kind(), source.logicalType(), bound.orElseThrow());
     }
 
     /**
@@ -213,6 +306,65 @@ public final class PageIndex {
     }
 
     /**
+     * The locations of the pages of {@code learned} in the file, as an offset index gives them. The offsets of the
+     * entry count from {@code chunkStart}.
+     */
+    private static List<PageLocation> locationsOf(LearnedPages learned, long chunkStart) {
+        return IntStream.range(0, learned.pageCount())
+                .mapToObj(page -> locationOf(learned, page, chunkStart))
+                .toList();
+    }
+
+    /** The location of page {@code page} of {@code learned} in the file. */
+    private static PageLocation locationOf(LearnedPages learned, int page, long chunkStart) {
+        long offset = chunkStart + learned.offset(page);
+        return new PageLocation(offset, learned.size(page), learned.firstRow(page));
+    }
+
+    /** Whether the pages marked as holding only nulls in {@code learned} count at least one null per row. */
+    private boolean nullPagesAgreeWithNullCounts(LearnedPages learned) {
+        for (int page = 0; page < learned.pageCount(); page++) {
+            OptionalLong nullCount = learned.nullCount(page);
+            boolean shortOfNulls = nullCount.isPresent() && nullCount.getAsLong() < rows(page);
+            if (learned.nullPage(page) && shortOfNulls) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * A source of the statistics of the pages of a chunk, and the type used to decode their bounds. A page index holds
+     * a source only when the source agrees with the pages.
+     */
+    private sealed interface PageStatistics permits DeclaredStatistics, LearnedStatistics {
+
+        /** The physical type of the column. */
+        PrimitiveKind kind();
+
+        /** The logical type of the column. */
+        Optional<LogicalType> logicalType();
+
+        /** Whether the bounds follow an order applied by this reader. */
+        boolean boundsOrdered();
+
+        /** Whether page {@code page} is marked as holding only nulls. */
+        boolean nullPage(int page);
+
+        /** The null count of page {@code page}, or empty when the source records none. */
+        OptionalLong nullCount(int page);
+
+        /** The NaN count of page {@code page}, or empty when the source records none. */
+        OptionalLong nanCount(int page);
+
+        /** The PLAIN-encoded minimum of page {@code page}, or empty when the source has none. */
+        Optional<MemorySegment> min(int page);
+
+        /** The PLAIN-encoded maximum of page {@code page}, or empty when the source has none. */
+        Optional<MemorySegment> max(int page);
+    }
+
+    /**
      * The column index of a chunk, validated against its pages, and the type used to decode its bounds.
      *
      * @param index the column index, with one entry per page
@@ -220,36 +372,36 @@ public final class PageIndex {
      * @param logicalType the logical type of the column
      * @param boundsOrdered whether the bounds follow an order applied by this reader
      */
-    private record PageStatistics(
-            ColumnIndex index, PrimitiveKind kind, Optional<LogicalType> logicalType, boolean boundsOrdered) {
+    private record DeclaredStatistics(
+            @NonNull ColumnIndex index,
+            @NonNull PrimitiveKind kind,
+            @NonNull Optional<LogicalType> logicalType,
+            boolean boundsOrdered)
+            implements PageStatistics {
 
-        /**
-         * The statistics of page {@code page} of {@code rows} rows. A page marked as holding only nulls counts each of
-         * its rows as null, and its bounds are not read. The bounds of the other pages are read only when
-         * {@code readBounds} is on.
-         */
-        ColumnSummary of(int page, long rows, boolean readBounds) {
-            OptionalLong values = OptionalLong.of(rows);
-            if (Boolean.TRUE.equals(index.nullPages().get(page))) {
-                return new ColumnSummary(kind, Optional.empty(), Optional.empty(), values, values, NaNCells.POSSIBLE);
-            }
-            OptionalLong nullCount = trustedNullCount(countOf(index.nullCounts(), page), rows);
-            OptionalLong nanCount = countOf(index.nanCounts(), page);
-            Optional<Value> min = readBounds ? bound(index.minValues().get(page)) : Optional.empty();
-            Optional<Value> max = readBounds ? bound(index.maxValues().get(page)) : Optional.empty();
-            NaNCells counted = NaNCells.ofPageCounts(nanCount, nullCount, rows);
-            return ColumnSummary.of(kind, min, max, nullCount, values, counted);
+        @Override
+        public boolean nullPage(int page) {
+            return Boolean.TRUE.equals(index.nullPages().get(page));
         }
 
-        /**
-         * The null count of a page not marked as holding only nulls, or empty when it contradicts the mark. Such a page
-         * holds a value, and fewer nulls than rows.
-         */
-        private static OptionalLong trustedNullCount(OptionalLong recorded, long rows) {
-            if (recorded.isPresent() && recorded.getAsLong() >= rows) {
-                return OptionalLong.empty();
-            }
-            return recorded;
+        @Override
+        public OptionalLong nullCount(int page) {
+            return countOf(index.nullCounts(), page);
+        }
+
+        @Override
+        public OptionalLong nanCount(int page) {
+            return countOf(index.nanCounts(), page);
+        }
+
+        @Override
+        public Optional<MemorySegment> min(int page) {
+            return Optional.of(index.minValues().get(page));
+        }
+
+        @Override
+        public Optional<MemorySegment> max(int page) {
+            return Optional.of(index.maxValues().get(page));
         }
 
         /** The count of page {@code page} in a per-page list of the index, read only when it has one count per page. */
@@ -261,16 +413,48 @@ public final class PageIndex {
             }
             return OptionalLong.of(counts.orElseThrow().get(page));
         }
+    }
 
-        /**
-         * A bound of a page decoded to a value. It is empty when the bound does not decode, or when the bounds follow
-         * an order not applied by this reader.
-         */
-        private Optional<Value> bound(MemorySegment bound) {
-            if (!boundsOrdered) {
-                return Optional.empty();
-            }
-            return StatisticsValueDecoder.decode(kind, logicalType, bound);
+    /**
+     * The entry learned from the page headers of a chunk, validated against its pages, and the type used to decode its
+     * bounds.
+     *
+     * @param entry the learned entry, with one record per page
+     * @param kind the physical type of the column
+     * @param logicalType the logical type of the column
+     * @param boundsOrdered whether the bounds follow an order applied by this reader
+     */
+    private record LearnedStatistics(
+            @NonNull LearnedPages entry,
+            @NonNull PrimitiveKind kind,
+            @NonNull Optional<LogicalType> logicalType,
+            boolean boundsOrdered)
+            implements PageStatistics {
+
+        @Override
+        public boolean nullPage(int page) {
+            return entry.nullPage(page);
+        }
+
+        @Override
+        public OptionalLong nullCount(int page) {
+            return entry.nullCount(page);
+        }
+
+        @Override
+        public OptionalLong nanCount(int page) {
+            // A page header records no NaN count.
+            return OptionalLong.empty();
+        }
+
+        @Override
+        public Optional<MemorySegment> min(int page) {
+            return entry.min(page);
+        }
+
+        @Override
+        public Optional<MemorySegment> max(int page) {
+            return entry.max(page);
         }
     }
 }

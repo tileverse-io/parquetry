@@ -84,6 +84,14 @@ public final class StatisticsValueDecoder {
     }
 
     /**
+     * Whether the bounds of a {@code kind} column annotated {@code logicalType} can decode to values. The bounds of an
+     * INT96 column never do, and neither do bounds ordered unlike the compared cells of the column.
+     */
+    static boolean decodesBoundsOf(PrimitiveKind kind, Optional<LogicalType> logicalType) {
+        return kind != PrimitiveKind.INT96 && orderedAsCompared(kind, logicalType);
+    }
+
+    /**
      * Whether the statistics of a {@code kind} column annotated {@code logicalType} follow the order used by the filter
      * to compare the column's cells. A writer orders the bounds by the annotation, and a bound compared in another
      * order lets a pruning tier drop matching rows: a half float or a wide timestamp read as unsigned bytes, a binary
