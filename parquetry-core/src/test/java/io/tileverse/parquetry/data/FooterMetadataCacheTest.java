@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -50,20 +51,32 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Policy;
+
+import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.MalformedFileException;
+import io.tileverse.parquetry.format.Statistics;
+import io.tileverse.parquetry.internal.filter.LearnedPages;
 import io.tileverse.parquetry.internal.filter.spatial.EmptyBoundsSource;
 import io.tileverse.parquetry.internal.read.DecryptionKeyRetriever;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.runtime.ParquetRuntime;
+import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 import io.tileverse.cache.CacheManager;
+import io.tileverse.cache.CaffeineCacheManager;
 
 /**
  * Covers the identity and the bypass rules of the shared footer cache: what is reused by a repeat open of the same
  * file, what is dropped by a changed length or a {@link FooterMetadataCache#clear()}, and which opens never touch the
  * cache at all. Concurrent opens are covered too: one load per file, a load in flight that holds up no other file, and
  * a failed load that leaves nothing behind.
+ *
+ * <p>The learned page indexes held beside the footers are covered as well. The first entry learned for a chunk stays,
+ * an entry is charged its bytes, a clear drops it, and a footer lookup never reads one.
  */
 class FooterMetadataCacheTest {
 
@@ -87,6 +100,12 @@ class FooterMetadataCacheTest {
     private static final Supplier<FooterMetadata> MUST_NOT_LOAD = () -> {
         throw new AssertionError("A caller joining a load in flight must not begin a load of its own");
     };
+
+    /** The size of a small learned entry, far below any heap share. */
+    private static final int SMALL_ENTRY_BYTES = 256;
+
+    /** The annotation of the learned entries built here. A decimal keeps its bounds whole, at any length. */
+    private static final Optional<LogicalType> DECIMAL = Optional.of(new LogicalType.Decimal(0, 38));
 
     @TempDir
     Path tempDir;
@@ -465,6 +484,103 @@ class FooterMetadataCacheTest {
                 Arguments.of("a tenth", 10));
     }
 
+    @Test
+    void learnedEntryIsReadBack() {
+        LearnedPages pages = learnedPagesOf(SMALL_ENTRY_BYTES);
+
+        FooterMetadataCache.learnedPagesIfAbsent("mem://learned.parquet", FILE_LENGTH, 2, 5, pages);
+
+        assertThat(FooterMetadataCache.learnedPages("mem://learned.parquet", FILE_LENGTH, 2, 5))
+                .containsSame(pages);
+        assertThat(FooterMetadataCache.learnedPages("mem://learned.parquet", FILE_LENGTH, 2, 6))
+                .as("another column of the row group")
+                .isEmpty();
+        assertThat(FooterMetadataCache.learnedPages("mem://learned.parquet", FILE_LENGTH, 3, 5))
+                .as("the same column in another row group")
+                .isEmpty();
+        assertThat(FooterMetadataCache.learnedPages("mem://learned.parquet", 2 * FILE_LENGTH, 2, 5))
+                .as("the file rewritten to another length")
+                .isEmpty();
+    }
+
+    // Two reads learning one chunk at once store equal entries, and the cache keeps the first.
+    @Test
+    void firstLearnedEntryStays() {
+        LearnedPages first = learnedPagesOf(SMALL_ENTRY_BYTES);
+        LearnedPages second = learnedPagesOf(SMALL_ENTRY_BYTES);
+
+        FooterMetadataCache.learnedPagesIfAbsent("mem://raced.parquet", FILE_LENGTH, 0, 0, first);
+        FooterMetadataCache.learnedPagesIfAbsent("mem://raced.parquet", FILE_LENGTH, 0, 0, second);
+
+        assertThat(FooterMetadataCache.learnedPages("mem://raced.parquet", FILE_LENGTH, 0, 0))
+                .containsSame(first);
+    }
+
+    // Two entries above half the heap share cannot both stay. The cache may evict either one.
+    @Test
+    void learnedEntriesWeighTheirBytes() {
+        CacheManager shared = CacheManager.getDefault();
+        CaffeineCacheManager isolated = new CaffeineCacheManager();
+        try {
+            System.setProperty(FooterMetadataCache.MAX_HEAP_PERCENT_PROPERTY, "1");
+            // A cache is built once per manager. The shared manager built its own under the default share.
+            CacheManager.setDefault(isolated);
+            long heapShare = Runtime.getRuntime().maxMemory() / 100;
+            int entryBytes = Math.toIntExact(heapShare * 3 / 5);
+            LearnedPages first = learnedPagesOf(entryBytes);
+            LearnedPages second = learnedPagesOf(entryBytes);
+
+            FooterMetadataCache.learnedPagesIfAbsent("mem://large.parquet", FILE_LENGTH, 0, 0, first);
+            assertThat(weightedSize(isolated))
+                    .as("the weight charged for the first entry")
+                    .isGreaterThanOrEqualTo(first.byteSize());
+            FooterMetadataCache.learnedPagesIfAbsent("mem://large.parquet", FILE_LENGTH, 0, 1, second);
+            runPendingEvictions(isolated);
+
+            List<Optional<LearnedPages>> lookups = List.of(
+                    FooterMetadataCache.learnedPages("mem://large.parquet", FILE_LENGTH, 0, 0),
+                    FooterMetadataCache.learnedPages("mem://large.parquet", FILE_LENGTH, 0, 1));
+            assertThat(lookups)
+                    .as("Two entries outweigh the heap share together. The cache keeps one of them.")
+                    .filteredOn(Optional::isPresent)
+                    .hasSize(1);
+        } finally {
+            System.clearProperty(FooterMetadataCache.MAX_HEAP_PERCENT_PROPERTY);
+            CacheManager.setDefault(shared);
+        }
+    }
+
+    @Test
+    void clearDropsLearnedEntries() {
+        LearnedPages pages = learnedPagesOf(SMALL_ENTRY_BYTES);
+        FooterMetadataCache.learnedPagesIfAbsent("mem://cleared-pages.parquet", FILE_LENGTH, 0, 0, pages);
+        assertThat(FooterMetadataCache.learnedPages("mem://cleared-pages.parquet", FILE_LENGTH, 0, 0))
+                .as("the entry before the clear")
+                .isPresent();
+
+        FooterMetadataCache.clear();
+
+        assertThat(FooterMetadataCache.learnedPages("mem://cleared-pages.parquet", FILE_LENGTH, 0, 0))
+                .isEmpty();
+    }
+
+    @Test
+    void aFooterKeyNeverReadsLearned() {
+        LearnedPages pages = learnedPagesOf(SMALL_ENTRY_BYTES);
+        FooterMetadataCache.learnedPagesIfAbsent("mem://learned-first.parquet", FILE_LENGTH, 0, 0, pages);
+        ParseCountingLoader loader = new ParseCountingLoader();
+
+        FooterMetadata metadata = FooterMetadataCache.get("mem://learned-first.parquet", FILE_LENGTH, loader);
+
+        assertThat(metadata).isNotNull();
+        assertThat(loader.invocations())
+                .as("footer loads for a file holding a learned entry")
+                .isOne();
+        assertThat(FooterMetadataCache.learnedPages("mem://learned-first.parquet", FILE_LENGTH, 0, 0))
+                .as("the learned entry after the footer load")
+                .containsSame(pages);
+    }
+
     private static FooterMetadata withKeyValueMetadata(FooterMetadata metadata, Map<String, String> keyValueMetadata) {
         return new FooterMetadata(
                 metadata.compactFooter(),
@@ -499,6 +615,37 @@ class FooterMetadataCacheTest {
     /** The fixture's footer metadata, derived afresh: two calls give two instances of equal content. */
     private FooterMetadata parseFixture() {
         return FooterMetadata.parse(CountingSource.anonymous(fixtureBytes));
+    }
+
+    /** A learned entry of one decimal page, about {@code bytes} long. Its minimum and its maximum make up the bytes. */
+    private static LearnedPages learnedPagesOf(int bytes) {
+        MemorySegment bound = MemorySegment.ofArray(new byte[bytes / 2]);
+        Statistics statistics = Statistics.builder()
+                .nullCount(OptionalLong.of(0))
+                .minValue(bound)
+                .maxValue(bound)
+                .build();
+        LearnedPages.Builder builder = LearnedPages.builder(PrimitiveKind.FIXED_LEN_BYTE_ARRAY, DECIMAL, 1);
+        builder.add(0, 100, 0, 10, Encoding.PLAIN, Optional.of(statistics));
+        return builder.build();
+    }
+
+    /**
+     * Runs the evictions pending in the metadata cache of {@code manager} now, on this thread. The cache would run them
+     * later on a pool thread.
+     */
+    private static void runPendingEvictions(CaffeineCacheManager manager) {
+        Cache<Object, Object> entries = manager.getNativeCache(FooterMetadataCache.CACHE_NAME);
+        entries.cleanUp();
+    }
+
+    /** The weight of the entries kept by the metadata cache of {@code manager}, once its pending evictions have run. */
+    private static long weightedSize(CaffeineCacheManager manager) {
+        runPendingEvictions(manager);
+        Cache<Object, Object> entries = manager.getNativeCache(FooterMetadataCache.CACHE_NAME);
+        Policy<Object, Object> policy = entries.policy();
+        Policy.Eviction<Object, Object> eviction = policy.eviction().orElseThrow();
+        return eviction.weightedSize().orElseThrow();
     }
 
     /**
