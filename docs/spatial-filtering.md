@@ -71,7 +71,7 @@ flowchart TD
 
     covering -->|yes| lower["lower to numeric comparisons<br/>SpatialCoveringRewrite"]
     lower --> tiers["STATS + COLUMN_INDEX tiers<br/>prune row groups AND pages"]
-    tiers --> recordCmp["record level: covering-column<br/>comparisons (no WKB decode)"]
+    tiers --> recordCmp["record level: covering comparisons,<br/>then WkbEnvelope.matches on the<br/>surviving rows"]
 
     covering -->|no| native["SPATIAL tier<br/>SpatialBoundsEvaluator"]
     native --> rg["eliminate row groups whose native<br/>per-row-group geometry bbox is disjoint"]
@@ -95,16 +95,22 @@ codes, whichever encoding the input used.
 **Row-group and page pruning** comes from one of two mechanisms:
 
 - **Covering-column lowering.** A GeoParquet file with a `bbox` covering (1.1 or
-  2.0) stores each row's bounding box in four `bbox.*` sidecar columns. Since those columns are the geometry's
-  exact 2D box, every relation is equivalent to a conjunction of numeric
-  comparisons on them - for example `BboxIntersects(q)` is `xmin <= q.maxX AND
-  xmax >= q.minX AND ymin <= q.maxY AND ymax >= q.minY`. `SpatialCoveringRewrite`
-  rewrites the spatial leaf into that conjunction at read time, and the existing
-  STATS and COLUMN_INDEX tiers prune row groups *and* pages from the sidecar
-  columns' statistics. Page pruning needs a column index on those columns, or
-  pages learned from their page headers by an earlier read
-  ([Without a page index](read-path.md#without-a-page-index)). The geometry WKB
-  is never decoded for the filter.
+  2.0) stores a box enclosing each row's geometry in four `bbox.*` sidecar
+  columns. GeoParquet allows that box to be wider than the geometry's own
+  bounding box, and parquetry's FLOAT covering rounds its bounds outward. A
+  relation lowers to the comparisons on those columns satisfied by the matching
+  rows, a necessary condition rather than an equivalent. `BboxIntersects(q)` and
+  `BboxCoveredBy(q)` lower to an overlap test,
+  `xmin <= q.maxX AND xmax >= q.minX AND ymin <= q.maxY AND ymax >= q.minY`.
+  `BboxContains(q)` and `BboxEquals(q)` lower to a test that the covering
+  encloses the query box. `SpatialCoveringRewrite` adds that conjunction beside
+  the spatial leaf at read time, and the existing STATS and COLUMN_INDEX tiers
+  prune row groups *and* pages from the sidecar columns' statistics. Page
+  pruning needs a column index on those columns, or pages learned from their
+  page headers by an earlier read
+  ([Without a page index](read-path.md#without-a-page-index)). The spatial leaf
+  stays in the predicate and decides the surviving rows from their geometry
+  WKB. That test keeps the answer exact.
 - **Native row-group bounds.** A GeoParquet 2.0 file stores a per-row-group
   geometry bounding box in the column chunk's statistics. The `SPATIAL` tier
   (`SpatialBoundsEvaluator`) eliminates a row group whose box is disjoint from the
