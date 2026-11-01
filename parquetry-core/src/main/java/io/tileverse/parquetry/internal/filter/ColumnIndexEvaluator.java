@@ -45,7 +45,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
  * <p>Each page is judged as a unit by {@link LeafVerdicts}, with the rules of the STATS tier. Assumes the predicate has
  * already been normalized (Not pushed to leaves, Always folded, And/Or flattened).
  */
-final class ColumnIndexEvaluator {
+public final class ColumnIndexEvaluator {
 
     private static final Tier TIER = Tier.COLUMN_INDEX;
     private static final String NO_APPLICABLE_INDEX = "no applicable column index for predicate";

@@ -26,8 +26,10 @@ import lombok.NonNull;
  * data-page ordinal order.
  *
  * @param units the ranges to read, ordered by file offset
+ * @param unmasked whether the plan was built without a mask. Such a plan reads each chunk whole, in one unit. A plan
+ *     built with a mask is not unmasked, even when each of its units is a whole chunk.
  */
-public record FetchPlan(@NonNull List<FetchUnit> units) {
+public record FetchPlan(@NonNull List<FetchUnit> units, boolean unmasked) {
 
     public FetchPlan {
         units = List.copyOf(units);

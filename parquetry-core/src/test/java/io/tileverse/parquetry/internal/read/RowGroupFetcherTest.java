@@ -17,6 +17,7 @@ package io.tileverse.parquetry.internal.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.IOException;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.file.Path;
@@ -30,14 +31,22 @@ import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.filter.RowRanges;
+import io.tileverse.parquetry.filter.RowRanges.Range;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.internal.filter.PageIndex;
+import io.tileverse.parquetry.internal.footer.ChunkMeta;
+import io.tileverse.parquetry.internal.read.PageIndexLearner.WholeChunk;
 import io.tileverse.parquetry.internal.read.page.Dictionary;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -46,6 +55,7 @@ import io.tileverse.parquetry.runtime.FetchBudget;
 import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaBuilder;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
 
@@ -57,10 +67,22 @@ import io.tileverse.parquetry.testsupport.CorpusFixtures;
  * {@code RowGroupFetcher.fetch}, which now allocates one buffer per row group through the valve. The test pins a
  * tiny-RAM/ample-disk runtime and asserts both that the mandatory fetch spilled to a disk mapping and that the rows
  * read are byte-identical to a default RAM runtime.
+ *
+ * <p>To check the learner, the tests fetch one row group of two long columns in pages of {@value #PAGE_VALUES} values.
+ * A fetch planned without a mask hands its whole chunks to the learner of the read, and a fetch through a mask hands
+ * nothing.
  */
 class RowGroupFetcherTest {
 
     private static final Path FILE = CorpusFixtures.parquetTestingData().resolve("alltypes_plain.parquet");
+
+    private static final ColumnPath A = ColumnPath.of("a");
+    private static final ColumnPath B = ColumnPath.of("b");
+    private static final int PAGED_ROWS = 300;
+    private static final int PAGE_VALUES = 100;
+
+    @TempDir
+    Path tempDir;
 
     @Test
     @Timeout(30)
@@ -194,5 +216,140 @@ class RowGroupFetcherTest {
             borrowed.add(buffer);
         }
         borrowed.forEach(SegmentPool.Pooled::close);
+    }
+
+    @Test
+    // S7466: the project style declares explicit local types rather than var
+    @SuppressWarnings("java:S7466")
+    void wholeFetchHandsChunksOver() throws IOException {
+        RecordingLearner learner = new RecordingLearner(0);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(writePagedColumns())) {
+            RowGroupSurvivor survivor = pagedSurvivor(source);
+            RowGroupFetcher fetcher = TestFetchers.learning(source, pagedSchema(), SegmentPool.getDefault(), learner);
+            FetchPlan plan = fetcher.planFor(survivor, Optional.empty());
+
+            try (RowGroupFetch _ = fetcher.fetch(survivor, plan, BudgetReservation.NONE)) {
+                assertThat(plan.unmasked()).isTrue();
+            }
+
+            assertThat(learner.calls()).isEqualTo(1);
+            assertThat(learner.chunks()).extracting(WholeChunk::path).containsExactlyInAnyOrder(A, B);
+            for (WholeChunk chunk : learner.chunks()) {
+                String column = chunk.path().dot();
+                assertThat(chunk.bytes().toArray(ValueLayout.JAVA_BYTE))
+                        .as("the bytes of column %s from its first byte", column)
+                        .isEqualTo(bytesOf(source, chunk.meta()));
+            }
+        }
+    }
+
+    @Test
+    // S7466: the project style declares explicit local types rather than var
+    @SuppressWarnings("java:S7466")
+    void maskedFetchLearnsNothing() throws IOException {
+        RecordingLearner learner = new RecordingLearner(0);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(writePagedColumns())) {
+            RowGroupSurvivor survivor = pagedSurvivor(source);
+            RowGroupFetcher fetcher = TestFetchers.learning(source, pagedSchema(), SegmentPool.getDefault(), learner);
+            FetchPlan plan = fetcher.planFor(survivor, Optional.of(firstPageOf(survivor)));
+
+            try (RowGroupFetch _ = fetcher.fetch(survivor, plan, BudgetReservation.NONE)) {
+                assertThat(plan.unmasked()).isFalse();
+            }
+
+            assertThat(learner.calls()).isZero();
+        }
+    }
+
+    @Test
+    // S7466: the project style declares explicit local types rather than var
+    @SuppressWarnings("java:S7466")
+    void refusedGroupIsNotHandedOver() throws IOException {
+        RecordingLearner learner = new RecordingLearner(1);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(writePagedColumns())) {
+            RowGroupSurvivor survivor = pagedSurvivor(source);
+            RowGroupFetcher fetcher = TestFetchers.learning(source, pagedSchema(), SegmentPool.getDefault(), learner);
+            FetchPlan plan = fetcher.planFor(survivor, Optional.empty());
+
+            try (RowGroupFetch _ = fetcher.fetch(survivor, plan, BudgetReservation.NONE)) {
+                assertThat(plan.unmasked()).isTrue();
+            }
+
+            assertThat(learner.calls()).isZero();
+        }
+    }
+
+    /** One row group of {@value #PAGED_ROWS} rows over two long columns, in pages of {@value #PAGE_VALUES} values. */
+    private Path writePagedColumns() throws IOException {
+        WriteOptions options = WriteOptions.builder()
+                .tempDir(tempDir)
+                .pageValueLimit(PAGE_VALUES)
+                .build();
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>(PAGED_ROWS);
+        for (long row = 0; row < PAGED_ROWS; row++) {
+            rows.add(Map.of(A, row, B, 2 * row));
+        }
+        return WriteFixtures.writeRows(tempDir.resolve("paged.parquet"), pagedSchema(), options, rows);
+    }
+
+    private static ParquetSchema pagedSchema() {
+        return WriteFixtures.schemaOf(
+                WriteFixtures.requiredLeaf("a", PrimitiveKind.INT64),
+                WriteFixtures.requiredLeaf("b", PrimitiveKind.INT64));
+    }
+
+    private static RowGroupSurvivor pagedSurvivor(ByteRangeSource source) {
+        FileMetaData footer = ParquetFormat.readFooter(source);
+        ParquetSchema schema = SchemaBuilder.build(footer.schema());
+        return RowGroupSurvivor.full(TestRowGroupChunks.of(footer, 0, schema, TestRowGroupChunks.reading(source)));
+    }
+
+    /** A mask keeping the rows of the first page of both columns. */
+    private static RowMask firstPageOf(RowGroupSurvivor survivor) {
+        RowGroupChunks chunks = survivor.chunks();
+        PageIndex pagesOfA = chunks.pageLocations(A).orElseThrow();
+        PageIndex pagesOfB = chunks.pageLocations(B).orElseThrow();
+        RowRanges firstPage = new RowRanges(List.of(new Range(0, PAGE_VALUES - 1L)));
+        return new RowMask(firstPage, Map.of(A, pagesOfA, B, pagesOfB));
+    }
+
+    private static byte[] bytesOf(ByteRangeSource source, ChunkMeta meta) {
+        MemorySegment bytes = MemorySegment.ofArray(new byte[meta.totalCompressedSize()]);
+        source.readFully(meta.chunkStart(), bytes);
+        return bytes.toArray(ValueLayout.JAVA_BYTE);
+    }
+
+    /** A learner allowed one row group. It keeps a copy of each chunk handed to it, made while the fetch holds it. */
+    private static final class RecordingLearner implements PageIndexLearner {
+
+        private final int allowedRowGroup;
+        private final List<WholeChunk> chunks = new ArrayList<>();
+        private int calls;
+
+        RecordingLearner(int allowedRowGroup) {
+            this.allowedRowGroup = allowedRowGroup;
+        }
+
+        @Override
+        public boolean learns(int rowGroup) {
+            return rowGroup == allowedRowGroup;
+        }
+
+        @Override
+        public void learn(RowGroupSurvivor survivor, List<WholeChunk> handed) {
+            calls++;
+            for (WholeChunk chunk : handed) {
+                MemorySegment copy = MemorySegment.ofArray(chunk.bytes().toArray(ValueLayout.JAVA_BYTE));
+                chunks.add(new WholeChunk(chunk.path(), chunk.meta(), copy));
+            }
+        }
+
+        int calls() {
+            return calls;
+        }
+
+        List<WholeChunk> chunks() {
+            return chunks;
+        }
     }
 }

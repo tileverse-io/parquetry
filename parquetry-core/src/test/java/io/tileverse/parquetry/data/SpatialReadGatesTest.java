@@ -39,6 +39,7 @@ import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.internal.filter.spatial.SuppliedBoundsSource;
 import io.tileverse.parquetry.internal.read.IndexSectionLoader;
+import io.tileverse.parquetry.internal.read.LearnedPageIndexes;
 import io.tileverse.parquetry.internal.read.RowGroupChunks;
 import io.tileverse.parquetry.internal.read.RowGroupGate;
 import io.tileverse.parquetry.internal.read.RowGroupSurvivor;
@@ -156,7 +157,12 @@ class SpatialReadGatesTest {
     /** The file's one row group, as the filter pipeline hands it over once it has cleared it in full. */
     private static List<RowGroupSurvivor> survivorsOf(ParquetFileReader reader) {
         RowGroupChunks chunks = RowGroupChunks.of(
-                reader.footer().compactFooter(), 0, reader.footer().leafIndex(), reader.schema(), NO_INDEX_SECTIONS);
+                reader.footer().compactFooter(),
+                0,
+                reader.footer().leafIndex(),
+                reader.schema(),
+                NO_INDEX_SECTIONS,
+                LearnedPageIndexes.NONE);
         return List.of(RowGroupSurvivor.full(chunks));
     }
 

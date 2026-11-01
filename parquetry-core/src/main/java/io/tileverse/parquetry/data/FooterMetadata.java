@@ -42,7 +42,7 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
  * Everything derived from a file's footer by a {@link ParquetFileReader}, in the immutable forms kept by the reader:
  * the packed planning footer, the parquetry schema, the leaf index addressing that schema's columns, the parsed
  * GeoParquet metadata, the spatial bounds of each geometry column, the collapsed key/value metadata, the public
- * row-group view, and the bytes taken by the column chunks.
+ * row-group view, the bytes taken by the column chunks, and whether each chunk declares an offset index.
  *
  * <p>These forms depend on nothing but the footer bytes: the readers opened over one file share one record, the unit
  * held by {@link FooterMetadataCache}.
@@ -59,6 +59,8 @@ import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
  * @param rowGroups the public row-group view, in file order
  * @param columnChunkBytes the compressed bytes of the column chunks, as the footer declares them; the page indexes and
  *     the bloom filters lie in the rest of the file
+ * @param offsetIndexOnEachChunk whether each column chunk of the file declares an offset index. A read of such a file
+ *     finds the pages of each chunk through its offset index, and it learns none.
  */
 record FooterMetadata(
         CompactFooter compactFooter,
@@ -69,7 +71,8 @@ record FooterMetadata(
         SpatialBoundsSource spatialBounds,
         Map<String, String> keyValueMetadata,
         List<RowGroupSummary> rowGroups,
-        long columnChunkBytes) {
+        long columnChunkBytes,
+        boolean offsetIndexOnEachChunk) {
 
     /**
      * Reads {@code source}'s footer and derives every retained form from it. This is the only scope where the decoded
@@ -89,6 +92,7 @@ record FooterMetadata(
         CompactFooter compactFooter = CompactFooter.encode(footer, leafIndex);
         SpatialBoundsSource spatialBounds = SpatialBoundsSource.of(compactFooter, leafIndex, fileSchema, geoMetadata);
         long columnChunkBytes = columnChunkBytes(footer);
+        boolean offsetIndexOnEachChunk = offsetIndexOnEachChunk(footer);
         return new FooterMetadata(
                 compactFooter,
                 fileSchema,
@@ -98,7 +102,8 @@ record FooterMetadata(
                 spatialBounds,
                 kvMetadata,
                 rowGroups,
-                columnChunkBytes);
+                columnChunkBytes,
+                offsetIndexOnEachChunk);
     }
 
     /** The key/value metadata of the file, collapsed to the last value per key. */
@@ -141,5 +146,17 @@ record FooterMetadata(
             }
         }
         return total;
+    }
+
+    /** Whether each column chunk of {@code footer} declares an offset index. It holds for a file without row groups. */
+    private static boolean offsetIndexOnEachChunk(FileMetaData footer) {
+        for (RowGroup rowGroup : footer.rowGroups()) {
+            for (ColumnChunk chunk : rowGroup.columns()) {
+                if (chunk.offsetIndexOffset().isEmpty()) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 }

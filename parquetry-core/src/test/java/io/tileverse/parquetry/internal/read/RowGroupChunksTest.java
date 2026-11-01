@@ -37,12 +37,16 @@ import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.CompressionCodec;
+import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.format.ParquetLayouts;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.format.Statistics;
+import io.tileverse.parquetry.internal.filter.LearnedPages;
 import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.filter.bloom.BloomFilterReader;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
@@ -255,6 +259,51 @@ class RowGroupChunksTest {
                 .hasValueSatisfying(index -> assertThat(index.hasStatistics()).isFalse());
     }
 
+    @Test
+    void pagesComeFromALearnedEntry() {
+        InMemoryLearnedPageIndexes learned = new InMemoryLearnedPageIndexes();
+        learned.putIfAbsent(0, 0, twoLearnedPages());
+        RowGroupChunks chunks = TestRowGroupChunks.of(
+                thirtyRowsWithoutIndexes(),
+                flatSchema(requiredInt32("v")),
+                TestRowGroupChunks.noIndexSections(),
+                learned);
+
+        Optional<PageIndex> pages = chunks.pageLocations(V);
+
+        List<PageLocation> placedFromTheChunkStart =
+                List.of(new PageLocation(4L, 40, 0L), new PageLocation(44L, 60, 10L));
+        assertThat(pages.map(PageIndex::locations)).contains(placedFromTheChunkStart);
+        assertThat(chunks.pageIndex(V))
+                .hasValueSatisfying(index -> assertThat(index.hasStatistics()).isTrue());
+    }
+
+    @Test
+    void declaredIndexWinsOverLearned() {
+        OffsetIndex onePage = new OffsetIndex(List.of(new PageLocation(4L, 10, 0L)), Optional.empty());
+        InMemoryLearnedPageIndexes learned = new InMemoryLearnedPageIndexes();
+        learned.putIfAbsent(0, 0, oneLearnedPage(2, 8));
+        FailingColumnIndexLoader loader = new FailingColumnIndexLoader(onePage);
+        RowGroupChunks chunks =
+                TestRowGroupChunks.of(oneRowWithIndexes(), flatSchema(requiredInt32("v")), loader, learned);
+
+        Optional<PageIndex> pages = chunks.pageLocations(V);
+
+        assertThat(pages.map(PageIndex::locations)).contains(onePage.pageLocations());
+    }
+
+    @Test
+    void noneSourceLeavesNoPages() {
+        RowGroupChunks chunks = TestRowGroupChunks.of(
+                thirtyRowsWithoutIndexes(),
+                flatSchema(requiredInt32("v")),
+                TestRowGroupChunks.noIndexSections(),
+                LearnedPageIndexes.NONE);
+
+        assertThat(chunks.pageLocations(V)).isEmpty();
+        assertThat(chunks.pageIndex(V)).isEmpty();
+    }
+
     /**
      * Verifies that {@code isFlat} and {@code primitiveKind} agree with the schema: present/true for a flat primitive
      * leaf, empty for an unknown path.
@@ -431,6 +480,60 @@ class RowGroupChunksTest {
                 .totalByteSize(10L)
                 .numRows(1L)
                 .build();
+    }
+
+    /** Thirty rows of an INT32 column in the bytes [4, 104), without an offset index or a column index. */
+    private static RowGroup thirtyRowsWithoutIndexes() {
+        ColumnMetaData meta = ColumnMetaData.builder()
+                .type(PhysicalType.INT32)
+                .encodings(List.of())
+                .pathInSchema(List.of("v"))
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .numValues(30L)
+                .totalUncompressedSize(100L)
+                .totalCompressedSize(100L)
+                .keyValueMetadata(List.of())
+                .dataPageOffset(4L)
+                .encodingStats(List.of())
+                .build();
+        ColumnChunk chunk = ColumnChunk.builder()
+                .metaData(Optional.of(meta))
+                .encryptedColumnMetadata(MemorySegment.NULL)
+                .build();
+        return RowGroup.builder()
+                .columns(List.of(chunk))
+                .totalByteSize(100L)
+                .numRows(30L)
+                .build();
+    }
+
+    /** The pages of {@link #thirtyRowsWithoutIndexes()}, 10 rows in 40 bytes, then 20 rows in 60 bytes. */
+    private static LearnedPages twoLearnedPages() {
+        LearnedPages.Builder pages = LearnedPages.builder(PrimitiveKind.INT32, Optional.empty(), 2);
+        pages.add(0, 40, 0, 10, Encoding.PLAIN, Optional.of(int32Statistics(0, 9)));
+        pages.add(40, 60, 10, 20, Encoding.PLAIN, Optional.of(int32Statistics(10, 29)));
+        return pages.build();
+    }
+
+    /** One page of one INT32 row, {@code size} bytes from {@code offset} in the chunk. */
+    private static LearnedPages oneLearnedPage(long offset, int size) {
+        LearnedPages.Builder pages = LearnedPages.builder(PrimitiveKind.INT32, Optional.empty(), 1);
+        pages.add(offset, size, 0, 1, Encoding.PLAIN, Optional.of(int32Statistics(7, 7)));
+        return pages.build();
+    }
+
+    private static Statistics int32Statistics(int min, int max) {
+        return Statistics.builder()
+                .nullCount(OptionalLong.of(0))
+                .minValue(int32(min))
+                .maxValue(int32(max))
+                .build();
+    }
+
+    private static MemorySegment int32(int value) {
+        MemorySegment plain = MemorySegment.ofArray(new byte[Integer.BYTES]);
+        plain.set(ParquetLayouts.INT32, 0, value);
+        return plain;
     }
 
     /** Serves one offset index, and fails each column index read as an I/O error would, counting the reads. */

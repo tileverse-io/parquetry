@@ -39,7 +39,8 @@ import lombok.NonNull;
  * {@link io.tileverse.parquetry.io.ByteRangeSource} implementation, not the reader.
  *
  * @param useStatsFilter run the STATS tier
- * @param useColumnIndexFilter run the COLUMN_INDEX tier
+ * @param useColumnIndexFilter run the COLUMN_INDEX tier. When off, the read neither learns pages from page headers nor
+ *     uses the pages learned by earlier reads
  * @param useBloomFilter run the BLOOM_FILTER tier (when loaded)
  * @param useRecordLevelFilter run the RECORD_LEVEL tier inline during record assembly
  * @param usePageNarrowedFetch when the decode side qualifies a row group for page-skip, fetch only the surviving page

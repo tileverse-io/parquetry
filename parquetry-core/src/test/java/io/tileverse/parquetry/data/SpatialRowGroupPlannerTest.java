@@ -48,6 +48,7 @@ import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.footer.CompactFooter;
 import io.tileverse.parquetry.internal.read.IndexSectionLoader;
+import io.tileverse.parquetry.internal.read.LearnedPageIndexes;
 import io.tileverse.parquetry.internal.read.RowGroupChunks;
 import io.tileverse.parquetry.internal.read.RowGroupNarrowing;
 import io.tileverse.parquetry.internal.read.RowGroupPlanner;
@@ -453,7 +454,8 @@ class SpatialRowGroupPlannerTest {
         IndexSectionLoader loader = indexLoader(source);
         List<RowGroupChunks> chunks = new ArrayList<>(GROUPS);
         for (int rowGroup = 0; rowGroup < footer.rowGroupCount(); rowGroup++) {
-            chunks.add(RowGroupChunks.of(footer, rowGroup, reader.footer().leafIndex(), reader.schema(), loader));
+            chunks.add(RowGroupChunks.of(
+                    footer, rowGroup, reader.footer().leafIndex(), reader.schema(), loader, LearnedPageIndexes.NONE));
         }
         return chunks;
     }

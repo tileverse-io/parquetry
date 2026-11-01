@@ -26,6 +26,7 @@ import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
+import io.tileverse.parquetry.internal.footer.ChunkMeta;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 import lombok.NonNull;
@@ -90,6 +91,23 @@ public final class PageIndex {
     }
 
     /**
+     * The pages learned from the page headers of {@code chunk}, in a row group of {@code rowCount} rows. The chunk
+     * places the pages in the file, and it tells whether their bounds follow an order applied by this reader. This is
+     * the one derivation of the view of an entry, shared by the learner judging the entry and the read serving it. The
+     * result is empty when the pages fail the validation of {@link #declared}, and when a page marked as holding only
+     * nulls counts fewer nulls than rows.
+     *
+     * @param kind the physical type of the column, used to decode the bounds
+     * @param logicalType the logical type of the column, used to decode the bounds into values of that type
+     */
+    public static Optional<PageIndex> learned(
+            LearnedPages pages, ChunkMeta chunk, long rowCount, PrimitiveKind kind, Optional<LogicalType> logicalType) {
+        long chunkStart = chunk.chunkStart();
+        long chunkLength = chunk.totalCompressedSize();
+        return learned(pages, chunkStart, chunkLength, rowCount, kind, logicalType, chunk.boundsOrdered());
+    }
+
+    /**
      * The pages learned from the page headers of a chunk of {@code chunkLength} bytes from {@code chunkStart}, in a row
      * group of {@code rowCount} rows. The offsets in {@code pages} count from the start of the chunk. The pages come
      * with the statistics recorded in their headers. The result is empty when the pages fail the validation of
@@ -105,7 +123,7 @@ public final class PageIndex {
      * @param boundsOrdered whether the bounds follow an order applied by this reader. When false the statistics keep
      *     the null marks and the counts alone.
      */
-    public static Optional<PageIndex> learned(
+    static Optional<PageIndex> learned(
             LearnedPages pages,
             long chunkStart,
             long chunkLength,

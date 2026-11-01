@@ -37,6 +37,7 @@ import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.ColumnOrder;
 import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.format.ConvertedType;
+import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.FieldRepetitionType;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.OffsetIndex;
@@ -46,10 +47,12 @@ import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.format.SchemaElement;
 import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnStats;
+import io.tileverse.parquetry.internal.filter.LearnedPages;
 import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaBuilder;
 
 /**
@@ -136,6 +139,33 @@ class RowGroupChunksColumnOrderTest {
         assertThat(pages.boundsOrdered()).isTrue();
     }
 
+    static Stream<Arguments> learnedOrders() {
+        return Stream.of(
+                Arguments.of(new ColumnOrder.TypeDefined(), true),
+                Arguments.of(new ColumnOrder.Unknown((short) 9), false));
+    }
+
+    // A learned entry keeps the bounds of its page headers, and the column order of the footer decides their use.
+    @ParameterizedTest(name = "{0}: ordered bounds = {1}")
+    @MethodSource("learnedOrders")
+    void learnedBoundsFollowTheOrder(ColumnOrder order, boolean ordered) {
+        RowGroup withoutPageIndex = rowGroupWithoutPageIndex(PhysicalType.INT64);
+        FileMetaData footer =
+                footer(PhysicalType.INT64, Optional.empty(), Optional.of(List.of(order)), withoutPageIndex);
+        InMemoryLearnedPageIndexes learned = new InMemoryLearnedPageIndexes();
+        learned.putIfAbsent(0, 0, onePageOfTheChunk());
+
+        PageIndex pages = chunksOf(footer, learned).pageIndex(V).orElseThrow();
+
+        assertThat(pages.hasStatistics()).isTrue();
+        assertThat(pages.boundsOrdered()).isEqualTo(ordered);
+    }
+
+    private static RowGroupChunks chunksOf(FileMetaData footer, LearnedPageIndexes learned) {
+        ParquetSchema schema = SchemaBuilder.build(footer.schema());
+        return TestRowGroupChunks.of(footer, 0, schema, indexSectionsNotRead(), learned);
+    }
+
     private static RowGroupChunks chunksOf(FileMetaData footer, IndexSectionLoader loader) {
         ParquetSchema schema = SchemaBuilder.build(footer.schema());
         return TestRowGroupChunks.of(footer, 0, schema, loader);
@@ -144,11 +174,19 @@ class RowGroupChunksColumnOrderTest {
     /** A one-column, one-row-group footer with a chunk recording min 1, max 9, and a null count. */
     private static FileMetaData footer(
             PhysicalType type, Optional<ConvertedType> convertedType, Optional<List<ColumnOrder>> orders) {
+        return footer(type, convertedType, orders, rowGroup(type));
+    }
+
+    private static FileMetaData footer(
+            PhysicalType type,
+            Optional<ConvertedType> convertedType,
+            Optional<List<ColumnOrder>> orders,
+            RowGroup rowGroup) {
         return FileMetaData.builder()
                 .version(2)
                 .schema(List.of(rootElement(), leafElement(type, convertedType)))
                 .numRows(10L)
-                .rowGroups(List.of(rowGroup(type)))
+                .rowGroups(List.of(rowGroup))
                 .columnOrders(orders)
                 .build();
     }
@@ -183,28 +221,50 @@ class RowGroupChunksColumnOrderTest {
     }
 
     private static RowGroup rowGroup(PhysicalType type) {
-        Statistics statistics = Statistics.builder()
-                .minValue(int64(1L))
-                .maxValue(int64(9L))
-                .nullCount(OptionalLong.of(NULL_COUNT))
-                .build();
-        ColumnMetaData meta = ColumnMetaData.builder()
-                .type(type)
-                .codec(CompressionCodec.UNCOMPRESSED)
-                .pathInSchema(List.of("v"))
-                .numValues(10L)
-                .totalCompressedSize(10L)
-                .dataPageOffset(4L)
-                .statistics(Optional.of(statistics))
-                .build();
         ColumnChunk chunk = ColumnChunk.builder()
-                .metaData(Optional.of(meta))
+                .metaData(Optional.of(columnMetaData(type)))
                 .columnIndexOffset(OptionalLong.of(100L))
                 .columnIndexLength(OptionalInt.of(16))
                 .offsetIndexOffset(OptionalLong.of(200L))
                 .offsetIndexLength(OptionalInt.of(16))
                 .build();
         return RowGroup.builder().columns(List.of(chunk)).numRows(10L).build();
+    }
+
+    /** The row group of {@link #rowGroup}, without a page index for its chunk. */
+    private static RowGroup rowGroupWithoutPageIndex(PhysicalType type) {
+        ColumnChunk chunk = ColumnChunk.builder()
+                .metaData(Optional.of(columnMetaData(type)))
+                .build();
+        return RowGroup.builder().columns(List.of(chunk)).numRows(10L).build();
+    }
+
+    /** A chunk of 10 values in the bytes [4, 14), recording min 1, max 9, and a null count. */
+    private static ColumnMetaData columnMetaData(PhysicalType type) {
+        return ColumnMetaData.builder()
+                .type(type)
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .pathInSchema(List.of("v"))
+                .numValues(10L)
+                .totalCompressedSize(10L)
+                .dataPageOffset(4L)
+                .statistics(Optional.of(boundsOneToNine()))
+                .build();
+    }
+
+    /** The one data page of an INT64 chunk of {@link #columnMetaData}, with the statistics of the chunk. */
+    private static LearnedPages onePageOfTheChunk() {
+        LearnedPages.Builder pages = LearnedPages.builder(PrimitiveKind.INT64, Optional.empty(), 1);
+        pages.add(0, 10, 0, 10, Encoding.PLAIN, Optional.of(boundsOneToNine()));
+        return pages.build();
+    }
+
+    private static Statistics boundsOneToNine() {
+        return Statistics.builder()
+                .minValue(int64(1L))
+                .maxValue(int64(9L))
+                .nullCount(OptionalLong.of(NULL_COUNT))
+                .build();
     }
 
     private static MemorySegment int64(long value) {

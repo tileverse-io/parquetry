@@ -101,7 +101,10 @@ codes, whichever encoding the input used.
   xmax >= q.minX AND ymin <= q.maxY AND ymax >= q.minY`. `SpatialCoveringRewrite`
   rewrites the spatial leaf into that conjunction at read time, and the existing
   STATS and COLUMN_INDEX tiers prune row groups *and* pages from the sidecar
-  columns' statistics. The geometry WKB is never decoded for the filter.
+  columns' statistics. Page pruning needs a column index on those columns, or
+  pages learned from their page headers by an earlier read
+  ([Without a page index](read-path.md#without-a-page-index)). The geometry WKB
+  is never decoded for the filter.
 - **Native row-group bounds.** A GeoParquet 2.0 file stores a per-row-group
   geometry bounding box in the column chunk's statistics. The `SPATIAL` tier
   (`SpatialBoundsEvaluator`) eliminates a row group whose box is disjoint from the
@@ -118,15 +121,17 @@ whichever the file supports:
 
 | The file has ... | Row-group pruning | Page pruning | Record-level test |
 |------------------|-------------------|--------------|-------------------|
-| `bbox.*` covering columns (GeoParquet 1.1 or 2.0) | yes (lowered comparisons) | yes | covering comparisons, no WKB decode |
+| `bbox.*` covering columns (GeoParquet 1.1 or 2.0) | yes (lowered comparisons) | yes, with a column index or learned pages | covering comparisons, then `WkbEnvelope.matches` on the WKB |
 | native per-row-group geometry stats only (GeoParquet 2.0) | yes (SPATIAL tier) | no | `WkbEnvelope.matches` on WKB |
 | neither | no | no | `WkbEnvelope.matches` on WKB |
 
 A file with a covering takes the lowering path, whichever GeoParquet version its
-geo document declares, and prunes pages too. A GeoParquet 2.0 file without a
-covering takes the native path, at row-group granularity. With no usable
-statistics, pruning declines to nothing and the result is still exact - the
-record-level test decides every row.
+geo document declares. It prunes pages too, from the first read when its
+covering columns have a column index. Without one, pruning starts at the second
+read of a row group, when that read scans only learned columns. A GeoParquet 2.0
+file without a covering takes the native path, at row-group granularity. With no
+usable statistics, pruning declines to nothing and the result is still exact -
+the record-level test decides every row.
 
 The default write (`DUAL_V1_1_AND_V2_0`) emits both: native per-row-group
 geometry statistics and a `bbox` covering. `WriteOptions.bboxCovering` requests or

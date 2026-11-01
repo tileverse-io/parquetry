@@ -66,6 +66,7 @@ import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.filter.spatial.SpatialBoundsSource;
 import io.tileverse.parquetry.internal.read.FetchPlan;
 import io.tileverse.parquetry.internal.read.IndexSectionLoader;
+import io.tileverse.parquetry.internal.read.LearnedPageIndexes;
 import io.tileverse.parquetry.internal.read.RowGroupChunks;
 import io.tileverse.parquetry.internal.read.RowGroupFetcher;
 import io.tileverse.parquetry.internal.read.RowGroupSurvivor;
@@ -541,7 +542,8 @@ class CompactFooterRoundTripTest {
      */
     private static FetchPlan planWholeChunkFetch(
             ByteRangeSource source, ParquetSchema schema, CompactFooter compact, ColumnPath column) {
-        RowGroupChunks chunks = RowGroupChunks.of(compact, 0, LeafIndex.of(schema), schema, indexSectionsNotRead());
+        RowGroupChunks chunks = RowGroupChunks.of(
+                compact, 0, LeafIndex.of(schema), schema, indexSectionsNotRead(), LearnedPageIndexes.NONE);
         ParquetSchema projected = schema.project(Set.of(column));
         RowGroupFetcher fetcher = TestFetchers.over(source, schema, projected, SegmentPool.getDefault());
         return fetcher.planFor(RowGroupSurvivor.full(chunks), Optional.empty());

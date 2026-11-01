@@ -76,7 +76,9 @@ Two cross-cutting helpers thread through filter, fetch, and decode:
 
 - **`RowGroupChunks`** - a per-call view of one row group's column chunks that
   memoizes its index sections (offset index, column index, bloom filter); each is
-  read at most once no matter how many stages ask.
+  read at most once no matter how many stages ask. A chunk without an offset
+  index takes its pages from the metadata cache, once a read has learned them
+  (section 4).
 - **`ReadOptions`** - the tunables: which filter tiers run, the buffer pool, the
   off-heap fetch budget, the on-heap decode budget, prefetch depth, decode
   parallelism.
@@ -184,7 +186,9 @@ flowchart TD
   it runs later, inline during assembly, not here.
 - **COLUMN_INDEX is the lever for selective reads.** It narrows a row group to the
   pages whose min/max bounds overlap the predicate, producing `survivingRows` (a
-  `RowRanges`). That is what lets decode skip whole pages.
+  `RowRanges`). That is what lets decode skip whole pages. A file without a page
+  index gets the same lever from the second read of a row group, when that read
+  scans only learned columns ([Without a page index](#without-a-page-index)).
 - **STATS also proves the positive.** When a row group's statistics prove *every*
   row matches - not just that some might - the STATS tier short-circuits to the
   `MATCHED` outcome. A `MATCHED` row group is read in full but skips the per-row
@@ -198,12 +202,78 @@ flowchart TD
   and answers the `MATCHED` row groups from metadata.
 
 `RowGroupChunks` is what keeps this honest: the tiers ask it for a column's
-stats / column index / bloom filter, and it loads each section once and hands the
+stats / page index / bloom filter, and it loads each section once and hands the
 same instance to the decode-mask builder later.
 
 Bbox spatial predicates over a GeoParquet geometry column add one row-group tier,
 `SPATIAL`, after STATS, plus a covering-column lowering step that feeds the STATS
 and COLUMN_INDEX tiers above. See [Spatial filtering](spatial-filtering.md).
+
+### Without a page index
+
+The COLUMN_INDEX tier works from the page index of a chunk. The page index has
+two sections. The offset index places the pages, and the column index holds
+their min/max bounds. pyarrow writes no page index by default. A filtered read
+of such a file learns the pages from their page headers. Pruning starts at the
+second read of a row group, when that read scans only learned columns and the
+cache still holds their pages.
+
+A read keeps the pages of a row group only when three rules hold:
+
+1. Its predicate has a part evaluable by the COLUMN_INDEX tier, such as a
+   comparison, an `In` or a null test.
+2. The statistics of the row group do not already show each row passing that
+   part.
+3. That part drops at least one page of the row group.
+
+The planner checks the first two rules when it plans the read, and a row group
+failing them gets no learning pass. A full scan learns nothing.
+
+- **No extra read.** Without a page index, a read fetches the scanned column
+  chunks of a row group whole. The fetch thread parses the page headers out of
+  those bytes, and the read fetches nothing more. Learning costs one more parse
+  of the page headers, in memory. The fetch time shown by
+  `par explain --analyze --format json` leaves the learning pass out, because
+  the fetch clock stops before it.
+- **One packed entry per chunk.** An entry lists the data pages of its chunk,
+  with their offsets, sizes, first rows, null counts and min/max bounds. A chunk
+  gets an entry for all its data pages or no entry at all. A read learns only
+  row groups with flat scanned columns and no declared offset index. It keeps
+  the entries of the scanned chunks of a row group together or not at all,
+  because a row mask needs the pages of the scanned columns.
+- **Trusted bounds only.** A read uses page bounds only where the reader
+  applies an order to them and can decode them. Long binary bounds are cut to
+  64 bytes, and a cut bound still holds for its page. Geometry, geography and
+  INT96 columns keep page locations and null counts, without bounds.
+- **One page view.** The kept entries go into the metadata cache of the
+  process, beside the parsed footers
+  ([Memory and tuning](memory-and-tuning.md#the-metadata-cache)). A later read
+  of the row group takes them as it takes a declared page index. The
+  COLUMN_INDEX tier, the `RowMask` and the fetch of the surviving pages do not
+  tell the two sources apart. An `explain()` after the first read shows the
+  decisions of the next one.
+- **Turning it off.** `ReadOptions.builder().useColumnIndexFilter(false)` turns
+  the COLUMN_INDEX tier off for a read, and with it both the learning and the
+  use of learned pages. A heap share of 0 for the metadata cache turns learning
+  off for the process
+  ([Memory and tuning](memory-and-tuning.md#the-metadata-cache)). A source
+  without a name (`ByteRangeSource.sourceIdentifier()` is empty) and an
+  encrypted file learn nothing. A file with an offset index on each chunk learns
+  nothing and looks nothing up.
+
+`PageIndexLearningIT` writes a file of five row groups of 1,000 rows in
+uncompressed pages of 100 rows. Its name column holds plain-encoded strings of
+80 characters. In one run of the test, a query fetched 99,388 bytes on its
+first read and 9,613 on its second, for eleven rows on one page. Over the same
+rows written with a page index, the same query fetched 10,288 bytes, its index
+sections included. The test checks ratios between these figures, not the
+figures themselves.
+
+A declared page index is the recommended layout. It prunes from the first read
+and does not depend on the cache. pyarrow writes one with
+`write_page_index=True`, and `par cp` writes a copy with one, because
+parquetry's writer declares a page index by default. Learning is a bridge for
+the files written without one.
 
 ---
 
@@ -327,8 +397,9 @@ flowchart TD
 - **Offset indexes are not required.** The scan walks pages as it meets them.
   Where the `COLUMN_INDEX` tier did produce a `RowMask`, the scan's readers take
   it and walk only the surviving rows; the two compose. Building that mask still
-  needs offset indexes and flat scan columns (section 4), and it is the mask, not
-  the scan, that is flat-only.
+  needs flat scan columns and their page locations, from an offset index or
+  learned by an earlier read (section 4). Learned pages serve the mask as
+  declared ones do, and it is the mask, not the scan, that is flat-only.
 - **Nested output columns are supported.** Repetition and definition levels travel
   with each window and are gathered alongside the values. A row whose values
   outrun the page it started in is followed across the boundary as a one-row
@@ -366,8 +437,8 @@ classDiagram
     }
     class DecodeShape
     class RowGroupChunks {
-        +offsetIndex(path)
-        +columnIndex(path)
+        +pageIndex(path)
+        +pageLocations(path)
         +bloom(path)
         +stats(path)
     }
@@ -424,6 +495,10 @@ classDiagram
 | Footer + schema | `format/ParquetFormat.java`, `schema/SchemaBuilder.java` |
 | Filter pipeline + tiers | `internal/filter/FilterPipeline.java`, `internal/filter/*Evaluator.java`, `filter/explain/ExplainPlan.java` |
 | Per-call chunk view | `internal/read/RowGroupChunks.java` |
+| Page index from page headers | `internal/filter/PageLearning.java`, `internal/read/HeaderPageIndexLearner.java`, `internal/read/page/PageHeaderScan.java`, `internal/filter/LearnedPages.java`, `internal/filter/PageIndex.java` |
+| Which files learn and look up pages | `data/CachedPageIndexes.java` |
+| Bounds kept by a learned entry | `internal/filter/LearnedBounds.java` |
+| Metadata cache (footers + learned pages) | `data/FooterMetadataCache.java`, `data/ParquetCaches.java` |
 | Survivors + page-skip mask | `internal/read/RowGroupSurvivor.java`, `internal/read/RowMask.java`, `internal/read/page/PageSelection.java` |
 | Fetch | `internal/read/RowGroupFetcher.java`, `internal/read/RowGroupPrefetcher.java` |
 | Parallel decode + budgets | `internal/read/ParallelDecodeCoordinator.java`, `internal/read/StreamingBatchSource.java`, `runtime/DecodeBudget.java`, `internal/read/BatchRowGroupReader.java` |

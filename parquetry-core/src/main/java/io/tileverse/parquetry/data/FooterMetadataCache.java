@@ -53,9 +53,9 @@ import lombok.NonNull;
  * A share of 0 keeps nothing. The cache registers with the shared tileverse {@link CacheManager}, alongside the storage
  * layer's range cache.
  *
- * <p>The statistics of the cache count the hits, the misses and the entries of both kinds together. A read of a file
- * without a page index looks up the learned entries of its column chunks, and these lookups dominate the hit rate seen
- * by an operator.
+ * <p>The statistics of the cache count the hits, the misses and the entries of both kinds together. A filtered read of
+ * a file without a page index looks up the learned entries of its column chunks, and these lookups dominate the hit
+ * rate seen by an operator.
  *
  * <p>An entry unused for ten minutes expires. The memory of an expired or evicted entry returns once no open reader
  * over that file still holds the forms derived from it. The per-file statistics kept by a catalog are copies and hold
@@ -234,6 +234,18 @@ public final class FooterMetadataCache {
         LearnedPagesKey key = new LearnedPagesKey(sourceId, fileLength, rowGroup, column);
         ConcurrentMap<MetadataKey, CacheValue> entries = synchronousEntries().asMap();
         entries.putIfAbsent(key, new CacheValue.Learned(pages));
+    }
+
+    /** The number of learned entries held by the cache, over all files. */
+    static long learnedEntryCount() {
+        AsyncCache<MetadataKey, CacheValue> entries = cache().asyncCache();
+        long count = 0;
+        for (MetadataKey key : entries.asMap().keySet()) {
+            if (key instanceof LearnedPagesKey) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /**

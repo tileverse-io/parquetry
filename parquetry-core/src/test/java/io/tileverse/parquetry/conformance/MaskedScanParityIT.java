@@ -34,22 +34,30 @@ import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
+import io.tileverse.parquetry.data.ParquetCaches;
 import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.RowGroupSummary;
 import io.tileverse.parquetry.data.WriteOptions;
+import io.tileverse.parquetry.data.WriteOptions.ParquetVersion;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.filter.Bbox;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.filter.explain.ExplainPlan;
+import io.tileverse.parquetry.filter.explain.PruningDecision;
+import io.tileverse.parquetry.filter.explain.RowGroupPlan;
+import io.tileverse.parquetry.filter.explain.Tier;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.internal.filter.RecordAccessors;
 import io.tileverse.parquetry.internal.filter.RecordLevelEvaluator;
@@ -71,24 +79,42 @@ import io.tileverse.parquetry.testsupport.Wkb;
  * pins {@code count(predicate)} to the surviving row count and, over the written GeoParquet fixture, the folded bounds
  * to the box of the reference-surviving points.
  *
- * <p>Each case names its own arms. The batch-size arm is either one row per batch or the unbounded default; the
- * page-index arm is either the default (the COLUMN_INDEX tier narrows the read to the surviving pages, which puts the
- * scan under a row mask) or {@code useColumnIndexFilter=false}, which leaves the scan to walk every page of the row
- * group and hence to follow rows that outrun a page boundary.
+ * <p>Each case names its own arms. The batch-size arm is either one row per batch or the unbounded default. The
+ * page-index arm is one of three. The default arm lets the COLUMN_INDEX tier narrow the read to the surviving pages,
+ * and the scan runs under a row mask. The {@code useColumnIndexFilter=false} arm leaves the scan to walk each page of
+ * the row group and hence to follow rows that outrun a page boundary. The learned arm reads the case twice, and the
+ * checks run on the second read. A first read of a file without a page index learns pages from the chunks fetched
+ * whole, and the second read prunes with them.
+ *
+ * <p>The caches are cleared before each case. The first read of a case is then the first touch of its file.
  */
 class MaskedScanParityIT {
 
     private static final String GEO_FIXTURE = "written:geo-points";
     private static final int GEO_POINTS = 24;
+    private static final int GEO_ROWS_PER_GROUP = 8;
+    private static final int GEO_PAGE_VALUES = 2;
 
     @TempDir
     static Path sharedTempDir;
 
     private static Path geoFile;
+    private static Path geoFileWithoutIndex;
 
     @BeforeAll
     static void writeGeoFixture() throws Exception {
-        geoFile = writeGeoPoints(sharedTempDir);
+        WriteOptions withIndex = geoOptions().build();
+        geoFile = writeGeoPoints(sharedTempDir, "geo-points.parquet", withIndex);
+        WriteOptions withoutIndex = geoOptions()
+                .parquetVersion(ParquetVersion.V1_1)
+                .pageValueLimit(GEO_PAGE_VALUES)
+                .build();
+        geoFileWithoutIndex = writeGeoPoints(sharedTempDir, "geo-points-v1.parquet", withoutIndex);
+    }
+
+    @BeforeEach
+    void clearTheCaches() {
+        ParquetCaches.clearAll();
     }
 
     @ParameterizedTest(name = "{0}")
@@ -101,6 +127,11 @@ class MaskedScanParityIT {
             ReadOptions options = optionsOf(testCase);
 
             List<List<Object>> reference = referenceRows(reader, testCase.predicate(), compared);
+            if (testCase.indexArm() == IndexArm.LEARNED) {
+                assertThat(readRows(reader, testCase.predicate(), projection, options, compared))
+                        .as("first read")
+                        .isEqualTo(reference);
+            }
 
             assertThat(readRows(reader, testCase.predicate(), projection, options, compared))
                     .as("read")
@@ -119,10 +150,32 @@ class MaskedScanParityIT {
             ParquetFileReader reader = ParquetFileReader.open(source);
             ReadOptions options = optionsOf(testCase);
             List<Long> surviving = referenceGeoIds(reader, testCase.predicate());
+            if (testCase.indexArm() == IndexArm.LEARNED) {
+                assertThat(boxOf(reader.bounds(testCase.predicate(), options)))
+                        .as("first bounds")
+                        .isEqualTo(pointsBoxOf(surviving));
+            }
 
             Optional<BoundingBox> bounds = reader.bounds(testCase.predicate(), options);
 
             assertThat(boxOf(bounds)).as("folded bounds").isEqualTo(pointsBoxOf(surviving));
+        }
+    }
+
+    // Guards the learned arm against a copy keeping no page. The arm would then compare two whole reads.
+    @Test
+    void learnedArmPrunesGeoPages() {
+        Predicate lowerHalf = Pred.col("geometry").bboxIntersects(Bbox.of2d(0.0, 0.0, 10.0, 20.0));
+        try (ByteRangeSource source = ByteRangeSource.ofFile(geoFileWithoutIndex)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            List<ColumnPath> compared = comparedColumns(List.of("id"));
+            readRows(reader, lowerHalf, Projection.ALL, ReadOptions.DEFAULTS, compared);
+
+            ExplainPlan plan = reader.explain(lowerHalf, Projection.ALL, ReadOptions.DEFAULTS);
+
+            assertThat(columnIndexDecisions(plan))
+                    .as("COLUMN_INDEX decisions after a first read")
+                    .anyMatch(decision -> decision instanceof PruningDecision.NarrowedTo);
         }
     }
 
@@ -156,7 +209,7 @@ class MaskedScanParityIT {
             Predicate predicate,
             List<String> projectedColumns,
             OptionalInt batchSize,
-            boolean withIndex) {
+            IndexArm indexArm) {
 
         @Override
         public String toString() {
@@ -164,7 +217,23 @@ class MaskedScanParityIT {
         }
     }
 
-    /** Every scenario under both batch-size arms and both page-index arms. */
+    /** How a case uses the page index of its file. */
+    enum IndexArm {
+        /** The default read. The COLUMN_INDEX tier narrows the read to the surviving pages. */
+        ON("page index on"),
+        /** A read with the COLUMN_INDEX tier off. The scan walks each page of the row group. */
+        OFF("page index off (useColumnIndexFilter=false)"),
+        /** The second of two reads. The first one learned the pages of a file without a page index. */
+        LEARNED("learned pages (second read)");
+
+        private final String description;
+
+        IndexArm(String description) {
+            this.description = description;
+        }
+    }
+
+    /** Every scenario under both batch-size arms and the three page-index arms. */
     static List<Case> cases() {
         return expand(scenarios());
     }
@@ -176,18 +245,19 @@ class MaskedScanParityIT {
     private static List<Case> expand(List<Case> scenarios) {
         List<Case> cases = new ArrayList<>();
         for (Case scenario : scenarios) {
-            cases.add(armOf(scenario, OptionalInt.of(1), true));
-            cases.add(armOf(scenario, OptionalInt.of(1), false));
-            cases.add(armOf(scenario, OptionalInt.empty(), true));
-            cases.add(armOf(scenario, OptionalInt.empty(), false));
+            for (OptionalInt batchSize : List.of(OptionalInt.of(1), OptionalInt.empty())) {
+                for (IndexArm indexArm : IndexArm.values()) {
+                    cases.add(armOf(scenario, batchSize, indexArm));
+                }
+            }
         }
         return cases;
     }
 
-    private static Case armOf(Case scenario, OptionalInt batchSize, boolean withIndex) {
-        String label = scenario.label() + " | " + describeBatchSize(batchSize) + " | " + describeIndex(withIndex);
+    private static Case armOf(Case scenario, OptionalInt batchSize, IndexArm indexArm) {
+        String label = scenario.label() + " | " + describeBatchSize(batchSize) + " | " + indexArm.description;
         return new Case(
-                label, scenario.fixture(), scenario.predicate(), scenario.projectedColumns(), batchSize, withIndex);
+                label, scenario.fixture(), scenario.predicate(), scenario.projectedColumns(), batchSize, indexArm);
     }
 
     private static String describeBatchSize(OptionalInt batchSize) {
@@ -195,13 +265,6 @@ class MaskedScanParityIT {
             return "batchSize=" + batchSize.getAsInt();
         }
         return "batchSize=unbounded";
-    }
-
-    private static String describeIndex(boolean withIndex) {
-        if (withIndex) {
-            return "page index on";
-        }
-        return "page index off (useColumnIndexFilter=false)";
     }
 
     /**
@@ -390,20 +453,25 @@ class MaskedScanParityIT {
     }
 
     private static Case scenario(String label, String fixture, Predicate predicate, List<String> projectedColumns) {
-        return new Case(label, fixture, predicate, projectedColumns, OptionalInt.empty(), true);
+        return new Case(label, fixture, predicate, projectedColumns, OptionalInt.empty(), IndexArm.ON);
     }
 
     // --- reading a case ---
 
+    /** The file of a case. The learned arm reads the written geo points from their copy without a page index. */
     private static Path fileOf(Case testCase) {
-        if (GEO_FIXTURE.equals(testCase.fixture())) {
-            return geoFile;
+        if (!GEO_FIXTURE.equals(testCase.fixture())) {
+            return CorpusFixtures.parquetTestingData().resolve(testCase.fixture());
         }
-        return CorpusFixtures.parquetTestingData().resolve(testCase.fixture());
+        if (testCase.indexArm() == IndexArm.LEARNED) {
+            return geoFileWithoutIndex;
+        }
+        return geoFile;
     }
 
     private static ReadOptions optionsOf(Case testCase) {
-        ReadOptions.Builder builder = ReadOptions.builder().useColumnIndexFilter(testCase.withIndex());
+        boolean useColumnIndex = testCase.indexArm() != IndexArm.OFF;
+        ReadOptions.Builder builder = ReadOptions.builder().useColumnIndexFilter(useColumnIndex);
         if (testCase.batchSize().isPresent()) {
             builder.batchSize(testCase.batchSize().getAsInt());
         }
@@ -558,6 +626,18 @@ class MaskedScanParityIT {
         return values;
     }
 
+    private static List<PruningDecision> columnIndexDecisions(ExplainPlan plan) {
+        List<PruningDecision> decisions = new ArrayList<>();
+        for (RowGroupPlan rowGroup : plan.rowGroups()) {
+            for (PruningDecision decision : rowGroup.tiers()) {
+                if (decision.tier() == Tier.COLUMN_INDEX) {
+                    decisions.add(decision);
+                }
+            }
+        }
+        return decisions;
+    }
+
     // --- the written GeoParquet fixture ---
 
     /**
@@ -565,23 +645,29 @@ class MaskedScanParityIT {
      * attribute. The default geo write adds the {@code bbox} covering columns a spatial predicate lowers onto, and the
      * coordinates are whole numbers, which those float covering leaves hold exactly.
      */
-    private static Path writeGeoPoints(Path tmp) throws Exception {
+    private static Path writeGeoPoints(Path tmp, String fileName, WriteOptions options) throws Exception {
         ParquetSchema schema = geoSchema();
-        WriteOptions options = WriteOptions.builder()
-                .tempDir(tmp)
-                .crsEpsg("geometry", 4326)
-                .rowGroupSize(RowGroupSize.rows(8L))
-                .build();
-        Path file = tmp.resolve("geo-points.parquet");
+        Path file = tmp.resolve(fileName);
         try (OutputStream out = Files.newOutputStream(file);
                 ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
-            ParquetRecordBatchBuilder appender = writer.appender(8);
+            ParquetRecordBatchBuilder appender = writer.appender(GEO_ROWS_PER_GROUP);
             for (int point = 0; point < GEO_POINTS; point++) {
                 WriteFixtures.appendRow(appender, schema, geoRow(point));
             }
             appender.flush();
         }
         return file;
+    }
+
+    /**
+     * The options of the written geo points. The default options write a page index. The copy without a page index
+     * takes Parquet 1 page headers, and pages of {@link #GEO_PAGE_VALUES} rows give its first read pages to learn.
+     */
+    private static WriteOptions.Builder geoOptions() {
+        return WriteOptions.builder()
+                .tempDir(sharedTempDir)
+                .crsEpsg("geometry", 4326)
+                .rowGroupSize(RowGroupSize.rows(GEO_ROWS_PER_GROUP));
     }
 
     private static Map<ColumnPath, Object> geoRow(int point) {
