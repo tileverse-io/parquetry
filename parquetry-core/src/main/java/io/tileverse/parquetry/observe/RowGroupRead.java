@@ -28,12 +28,12 @@ import java.util.Optional;
  * <p>{@code rowsMatched} is the rows the group contributed to the read's result: the rows that survived the predicate
  * and any spatial decimation the read applied. A read that drops no row reports it equal to {@code rowsDecoded}.
  *
- * <p>{@code pagesDecoded} and {@code pagesPruned} both count data pages the decode walk reached: the ones it decoded,
- * and the ones it stepped over because their rows fall outside the surviving rows. When
- * {@link io.tileverse.parquetry.data.ReadOptions#usePageNarrowedFetch()} is on - the default - a page the column-index
- * tier eliminated is never fetched and never header-walked, and appears in neither count; {@code pagesPruned} then
- * reports only the pages inside a fetched run that the page selection rejects. The pages the fetch left behind are not
- * counted anywhere yet.
+ * <p>{@code pagesDecoded} and {@code pagesPruned} both count the data pages reached by the decode walk: the ones it
+ * decoded, and the ones it stepped over because their rows fall outside the surviving rows. When
+ * {@link io.tileverse.parquetry.data.ReadOptions#usePageNarrowedFetch()} is on - the default - a page eliminated by the
+ * column-index tier is never fetched and never header-walked, and appears in neither count. {@code pagesPruned} then
+ * counts the pages of a fetched run rejected by the page selection, and the pages discarded unread because the filter
+ * had already dropped each of their rows. The pages left behind by the fetch are not counted anywhere yet.
  */
 public record RowGroupRead(
         int rowGroupIndex,

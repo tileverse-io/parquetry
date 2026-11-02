@@ -26,6 +26,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,11 +44,13 @@ import io.tileverse.parquetry.filter.explain.RowGroupPlan;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.internal.filter.LearnedPages;
 import io.tileverse.parquetry.internal.read.LearnedPageIndexes;
+import io.tileverse.parquetry.internal.read.MaskedScan;
 import io.tileverse.parquetry.internal.read.PageIndexLearner;
 import io.tileverse.parquetry.internal.read.RowGroupChunks;
 import io.tileverse.parquetry.internal.read.RowGroupSurvivor;
 import io.tileverse.parquetry.internal.read.RowPositionColumn;
 import io.tileverse.parquetry.internal.read.RowPositionSynthesis;
+import io.tileverse.parquetry.internal.read.ScanStages.Stage;
 import io.tileverse.parquetry.internal.read.TestParquetFiles;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
@@ -72,6 +75,8 @@ class ReadPlanTest {
     private static final int ROWS_PER_GROUP = 1_000;
     private static final ColumnPath ID = ColumnPath.of("id");
     private static final ColumnPath TAGS = ColumnPath.of("tags");
+    private static final ColumnPath YEAR = ColumnPath.of("year");
+    private static final ColumnPath COUNTRY = ColumnPath.of("country");
     private static final Projection IDS = Projection.ofPhysical(List.of(ID));
 
     /** Learned pages holding no entry yet, as the reader gives them to the planner of a file allowed to learn. */
@@ -201,6 +206,39 @@ class ReadPlanTest {
                 .anyMatch(rowGroup ->
                         rowGroup.outcome() == RowGroupOutcome.PARTIAL || rowGroup.outcome() == RowGroupOutcome.FULL);
         assertThat(plan.learner()).isSameAs(PageIndexLearner.NONE);
+    }
+
+    @Test
+    void maskedScanSplitsThePredicate() {
+        Predicate yearAndCountry =
+                Pred.and(Pred.col(YEAR).gtEq(2021), Pred.col(COUNTRY).eq("FR"));
+        Predicate countryAlone = Pred.col(COUNTRY).eq("FR");
+        ReadPlan twoConditions = plan(file, yearAndCountry);
+        ReadPlan oneCondition = plan(file, countryAlone);
+
+        assertThat(ownLeavesOfStages(twoConditions)).containsExactly(Set.of(YEAR), Set.of(COUNTRY));
+        assertThat(ownLeavesOfStages(oneCondition)).containsExactly(Set.of(COUNTRY));
+    }
+
+    // The scan leaves out the filter column, and the stage still finds it in the schema of the file.
+    @Test
+    void stagesProjectTheFileSchema() {
+        ReadPlan plan =
+                plan(file, Pred.col(COUNTRY).eq("FR"), Projection.ofPhysical(List.of(YEAR)), ReadOptions.DEFAULTS);
+
+        Stage only = stagesOf(plan).getFirst();
+
+        assertThat(only.schema().leafColumns()).containsExactly(COUNTRY);
+    }
+
+    /** The leaves owned by the stages of the masked scan of {@code plan}, in evaluation order. */
+    private static List<Set<ColumnPath>> ownLeavesOfStages(ReadPlan plan) {
+        return stagesOf(plan).stream().map(Stage::ownLeaves).toList();
+    }
+
+    private static List<Stage> stagesOf(ReadPlan plan) {
+        MaskedScan scan = plan.maskedScan(plan.scanSchema()).orElseThrow();
+        return scan.stages().stages();
     }
 
     /**

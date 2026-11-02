@@ -36,6 +36,7 @@ import io.tileverse.parquetry.internal.read.RowMask;
 import io.tileverse.parquetry.internal.read.RowMasks;
 import io.tileverse.parquetry.internal.read.RowPositionColumn;
 import io.tileverse.parquetry.internal.read.RowPositionSynthesis;
+import io.tileverse.parquetry.internal.read.ScanStages;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
@@ -170,7 +171,8 @@ final class ReadPlan {
     /**
      * Packages the per-read inputs of the masked scan decode path, or empty when the read has no per-row predicate to
      * apply. The scan needs a normalized predicate other than a trivially true one, and at least one column to evaluate
-     * it over. A predicate naming only synthesized columns borrows the first leaf of the scan to drive the walk.
+     * it over. A predicate naming only synthesized columns borrows the first leaf of the scan to drive the walk. The
+     * stages project the file schema because it holds each filter leaf, whatever the projection of the plan.
      */
     Optional<MaskedScan> maskedScan(ParquetSchema outputSchema) {
         if (recordFilter() == null) {
@@ -181,7 +183,8 @@ final class ReadPlan {
             return Optional.empty();
         }
         Set<ColumnPath> filterLeaves = filterLeavesFor(normalized, scanSchema());
-        return Optional.of(new MaskedScan(normalized, filterLeaves, outputSchema));
+        ScanStages stages = ScanStages.of(normalized, filterLeaves, fileSchema);
+        return Optional.of(new MaskedScan(stages, outputSchema));
     }
 
     /**

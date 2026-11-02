@@ -137,6 +137,7 @@ public final class PageCursor {
             MemorySegment pagePayload = sliceAndAdvance(compressedSize);
             if (selection == null || selection.isSurviving(ordinal)) {
                 requireNonNegativeCounts(header, ordinal);
+                requireOneValuePerRow(header, maxLevels, ordinal);
                 pendingPage = new PendingDataPage(
                         header, pagePayload, ordinal, firstRowIndexOf(ordinal), statedRowCount(header, maxLevels));
                 return pendingPage;
@@ -225,6 +226,23 @@ public final class PageCursor {
         if (count < 0) {
             throw new MalformedFileException(
                     "Column " + columnPath.dot() + " data page " + ordinal + " declares " + count + " " + countedItems);
+        }
+    }
+
+    /**
+     * Fails a V2 header of a flat column counting other rows than values. A flat column holds one value per row, nulls
+     * included. A reader stepping over a page counts its rows from the header alone, and a wrong count would leave it
+     * on the wrong value of each later page.
+     */
+    private void requireOneValuePerRow(PageHeader header, LevelMaxima maxLevels, int ordinal) {
+        Optional<DataPageHeaderV2> v2 = header.dataPageHeaderV2();
+        if (maxLevels.maxRepetitionLevel() > 0 || v2.isEmpty()) {
+            return;
+        }
+        DataPageHeaderV2 counts = v2.orElseThrow();
+        if (counts.numRows() != counts.numValues()) {
+            throw new MalformedFileException("Column " + columnPath.dot() + " V2 data page " + ordinal + " counts "
+                    + counts.numRows() + " rows and " + counts.numValues() + " values");
         }
     }
 

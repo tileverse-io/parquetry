@@ -257,7 +257,7 @@ class MaskedWindowColumnReadTest {
                     .isThrownBy(() -> reader.readMaskedWindow(tooManyRows, survivors, buffers))
                     .withMessageContainingAll(String.valueOf(tooManyRows), String.valueOf(servableRows));
             assertThatIllegalArgumentException()
-                    .isThrownBy(() -> reader.skipMaskedWindow(tooManyRows))
+                    .isThrownBy(() -> reader.skipWindow(tooManyRows))
                     .withMessageContainingAll(String.valueOf(tooManyRows), String.valueOf(servableRows));
             return null;
         });
@@ -274,7 +274,7 @@ class MaskedWindowColumnReadTest {
                     .isThrownBy(() -> reader.readMaskedWindow(1, survivors, buffers))
                     .withMessageContaining("windowed value decode");
             assertThatIllegalStateException()
-                    .isThrownBy(() -> reader.skipMaskedWindow(1))
+                    .isThrownBy(() -> reader.skipWindow(1))
                     .withMessageContaining("windowed value decode");
             assertThatIllegalStateException()
                     .isThrownBy(() -> reader.readMaskedSpanningRow(true, buffers))
@@ -310,7 +310,7 @@ class MaskedWindowColumnReadTest {
 
     /** Steps the reader over every row its current page can serve, keeping none of them. */
     private static void skipWholePage(BatchColumnReader reader) {
-        reader.skipMaskedWindow(reader.logicalRowsRemainingInCurrentPage());
+        reader.skipWindow(reader.logicalRowsRemainingInCurrentPage());
     }
 
     /** Reads every row the reader's current page can serve, keeping all of them. */
@@ -385,7 +385,7 @@ class MaskedWindowColumnReadTest {
                 int windowRows = split.windowRows(rowsServableByPage);
                 BitSet survivors = survivorsOf(firstRow, windowRows, survives);
                 if (survivors.isEmpty()) {
-                    reader.skipMaskedWindow(windowRows);
+                    reader.skipWindow(windowRows);
                 } else {
                     drained.addWindow(reader.readMaskedWindow(windowRows, survivors, acquiredBuffers));
                 }

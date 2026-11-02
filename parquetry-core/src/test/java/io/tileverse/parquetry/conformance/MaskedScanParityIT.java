@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.function.Consumer;
+import java.util.function.IntFunction;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.BeforeAll;
@@ -48,6 +49,7 @@ import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.RowGroupSummary;
 import io.tileverse.parquetry.data.WriteOptions;
+import io.tileverse.parquetry.data.WriteOptions.CoveringMode;
 import io.tileverse.parquetry.data.WriteOptions.ParquetVersion;
 import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.filter.Bbox;
@@ -91,6 +93,7 @@ import io.tileverse.parquetry.testsupport.Wkb;
 class MaskedScanParityIT {
 
     private static final String GEO_FIXTURE = "written:geo-points";
+    private static final String OPTIONAL_GEO_FIXTURE = "written:optional-geo-points";
     private static final int GEO_POINTS = 24;
     private static final int GEO_ROWS_PER_GROUP = 8;
     private static final int GEO_PAGE_VALUES = 2;
@@ -100,16 +103,32 @@ class MaskedScanParityIT {
 
     private static Path geoFile;
     private static Path geoFileWithoutIndex;
+    private static Path optionalGeoFile;
+    private static Path optionalGeoFileWithoutIndex;
 
     @BeforeAll
     static void writeGeoFixture() throws Exception {
+        ParquetSchema schema = geoSchema(Repetition.REQUIRED);
+        IntFunction<Map<ColumnPath, Object>> rows = MaskedScanParityIT::geoRow;
         WriteOptions withIndex = geoOptions().build();
-        geoFile = writeGeoPoints(sharedTempDir, "geo-points.parquet", withIndex);
-        WriteOptions withoutIndex = geoOptions()
-                .parquetVersion(ParquetVersion.V1_1)
-                .pageValueLimit(GEO_PAGE_VALUES)
-                .build();
-        geoFileWithoutIndex = writeGeoPoints(sharedTempDir, "geo-points-v1.parquet", withoutIndex);
+        geoFile = writeGeoPoints(sharedTempDir, "geo-points.parquet", schema, rows, withIndex);
+        WriteOptions noIndex = withoutIndex(geoOptions());
+        geoFileWithoutIndex = writeGeoPoints(sharedTempDir, "geo-points-v1.parquet", schema, rows, noIndex);
+    }
+
+    /**
+     * The copy of the points with an optional geometry. It has no covering, because the rewrite of a covering turns a
+     * negated box into comparisons, and the box test would then never reach a null geometry alone.
+     */
+    @BeforeAll
+    static void writeOptionalGeoFixture() throws Exception {
+        ParquetSchema schema = geoSchema(Repetition.OPTIONAL);
+        IntFunction<Map<ColumnPath, Object>> rows = MaskedScanParityIT::optionalGeoRow;
+        WriteOptions withIndex = withoutCovering().build();
+        optionalGeoFile = writeGeoPoints(sharedTempDir, "optional-geo-points.parquet", schema, rows, withIndex);
+        WriteOptions noIndex = withoutIndex(withoutCovering());
+        optionalGeoFileWithoutIndex =
+                writeGeoPoints(sharedTempDir, "optional-geo-points-v1.parquet", schema, rows, noIndex);
     }
 
     @BeforeEach
@@ -239,7 +258,9 @@ class MaskedScanParityIT {
     }
 
     static List<Case> geoCases() {
-        return expand(geoScenarios());
+        List<Case> scenarios = new ArrayList<>(geoScenarios());
+        scenarios.addAll(optionalGeoScenarios());
+        return expand(scenarios);
     }
 
     private static List<Case> expand(List<Case> scenarios) {
@@ -279,6 +300,7 @@ class MaskedScanParityIT {
         scenarios.addAll(repeatedAndDataPageV2Scenarios());
         scenarios.addAll(deltaScenarios());
         scenarios.addAll(geoScenarios());
+        scenarios.addAll(optionalGeoScenarios());
         return scenarios;
     }
 
@@ -372,7 +394,12 @@ class MaskedScanParityIT {
                         "datapage_v2 no-match, mixed projection",
                         dataPageV2,
                         Pred.col("b").gt(100),
-                        List.of("b", "e")));
+                        List.of("b", "e")),
+                scenario(
+                        "datapage_v2 a nullable string as a later stage, flat projection",
+                        dataPageV2,
+                        Pred.and(Pred.col("b").gtEq(2), Pred.col("a").isNotNull()),
+                        List.of("a", "b")));
     }
 
     /**
@@ -422,13 +449,22 @@ class MaskedScanParityIT {
                         "delta_encoding_optional_column selective, delta output-only projection",
                         "delta_encoding_optional_column.parquet",
                         Pred.col("c_birth_year").gtEq(1960L),
-                        List.of("c_customer_id", "c_email_address")));
+                        List.of("c_customer_id", "c_email_address")),
+                scenario(
+                        "delta_encoding_optional_column a delta string as a later stage, delta output-only projection",
+                        "delta_encoding_optional_column.parquet",
+                        Pred.and(
+                                Pred.col("c_birth_year").gtEq(1960L),
+                                Pred.col("c_email_address").isNotNull()),
+                        List.of("c_customer_id")));
     }
 
     /** The written GeoParquet fixture, whose bbox covering columns lower a spatial leaf to numeric comparisons. */
     private static List<Case> geoScenarios() {
         Bbox lowerHalf = Bbox.of2d(0.0, 0.0, 10.0, 20.0);
         Bbox offMap = Bbox.of2d(1000.0, 1000.0, 2000.0, 2000.0);
+        Bbox betweenPoints = Bbox.of2d(3.2, 6.2, 3.8, 6.8);
+        Predicate inLowerHalf = Pred.col("geometry").bboxIntersects(lowerHalf);
         return List.of(
                 scenario(
                         "geo selective on an attribute, mixed projection",
@@ -449,7 +485,60 @@ class MaskedScanParityIT {
                         "geo selective on an attribute, covering-column projection",
                         GEO_FIXTURE,
                         Pred.col("id").gtEq(16L),
-                        List.of("bbox")));
+                        List.of("bbox")),
+                scenario(
+                        "geo three stages, mixed projection",
+                        GEO_FIXTURE,
+                        Pred.and(Pred.col("id").gtEq(8L), Pred.col("name").eq("name-1"), inLowerHalf),
+                        List.of("id", "geometry")),
+                scenario(
+                        "geo or of a name and a box, one stage",
+                        GEO_FIXTURE,
+                        Pred.or(Pred.col("name").eq("name-1"), inLowerHalf),
+                        List.of("id")),
+                scenario(
+                        "geo negated box as a later stage",
+                        GEO_FIXTURE,
+                        Pred.and(Pred.col("id").gtEq(8L), Pred.not(inLowerHalf)),
+                        List.of("id")),
+                scenario(
+                        "geo name beside a box off the map",
+                        GEO_FIXTURE,
+                        Pred.and(
+                                Pred.col("name").eq("name-2"),
+                                Pred.col("geometry").bboxIntersects(offMap)),
+                        List.of("id")),
+                scenario(
+                        "geo name beside a box holding no point",
+                        GEO_FIXTURE,
+                        Pred.and(
+                                Pred.col("name").eq("name-2"),
+                                Pred.col("geometry").bboxIntersects(betweenPoints)),
+                        List.of("id", "geometry")));
+    }
+
+    /**
+     * The written points with an optional geometry and no covering. A bbox test stays a per-row test over the geometry
+     * of the rows left by earlier conditions, null geometries included.
+     */
+    private static List<Case> optionalGeoScenarios() {
+        Predicate inLowerHalf = Pred.col("geometry").bboxIntersects(Bbox.of2d(0.0, 0.0, 10.0, 20.0));
+        return List.of(
+                scenario(
+                        "optional geo box as a later stage",
+                        OPTIONAL_GEO_FIXTURE,
+                        Pred.and(Pred.col("id").gtEq(4L), inLowerHalf),
+                        List.of("id", "geometry")),
+                scenario(
+                        "optional geo negated box as a later stage",
+                        OPTIONAL_GEO_FIXTURE,
+                        Pred.and(Pred.col("id").gtEq(4L), Pred.not(inLowerHalf)),
+                        List.of("id", "geometry")),
+                scenario(
+                        "optional geo null as a later stage",
+                        OPTIONAL_GEO_FIXTURE,
+                        Pred.and(Pred.col("id").gtEq(4L), Pred.col("geometry").isNull()),
+                        List.of("id", "geometry")));
     }
 
     private static Case scenario(String label, String fixture, Predicate predicate, List<String> projectedColumns) {
@@ -460,13 +549,12 @@ class MaskedScanParityIT {
 
     /** The file of a case. The learned arm reads the written geo points from their copy without a page index. */
     private static Path fileOf(Case testCase) {
-        if (!GEO_FIXTURE.equals(testCase.fixture())) {
-            return CorpusFixtures.parquetTestingData().resolve(testCase.fixture());
-        }
-        if (testCase.indexArm() == IndexArm.LEARNED) {
-            return geoFileWithoutIndex;
-        }
-        return geoFile;
+        boolean learned = testCase.indexArm() == IndexArm.LEARNED;
+        return switch (testCase.fixture()) {
+            case GEO_FIXTURE -> learned ? geoFileWithoutIndex : geoFile;
+            case OPTIONAL_GEO_FIXTURE -> learned ? optionalGeoFileWithoutIndex : optionalGeoFile;
+            default -> CorpusFixtures.parquetTestingData().resolve(testCase.fixture());
+        };
     }
 
     private static ReadOptions optionsOf(Case testCase) {
@@ -545,9 +633,15 @@ class MaskedScanParityIT {
         return rows;
     }
 
+    /** The ids of the matching points. A row with a null geometry matches and has no box to fold. */
     private static List<Long> referenceGeoIds(ParquetFileReader reader, Predicate predicate) {
+        ColumnPath geometry = ColumnPath.of("geometry");
         List<Long> ids = new ArrayList<>();
-        forEachMatchingRow(reader, predicate, row -> ids.add(row.getLong(ColumnPath.of("id"))));
+        forEachMatchingRow(reader, predicate, row -> {
+            if (row.get(geometry) != null) {
+                ids.add(row.getLong(ColumnPath.of("id")));
+            }
+        });
         return ids;
     }
 
@@ -641,18 +735,23 @@ class MaskedScanParityIT {
     // --- the written GeoParquet fixture ---
 
     /**
-     * Points at {@code (i, 2i)} for {@code i} in {@code [0, 24)}, eight rows per row group, with an {@code id}
-     * attribute. The default geo write adds the {@code bbox} covering columns a spatial predicate lowers onto, and the
-     * coordinates are whole numbers, which those float covering leaves hold exactly.
+     * Points at {@code (i, 2i)} for {@code i} in {@code [0, 24)}, eight rows per row group, with {@code id} and
+     * {@code name} attributes. The default geo write adds the {@code bbox} covering columns for a lowered spatial
+     * predicate. The coordinates are whole numbers, and the float covering leaves hold them exactly.
      */
-    private static Path writeGeoPoints(Path tmp, String fileName, WriteOptions options) throws Exception {
-        ParquetSchema schema = geoSchema();
+    private static Path writeGeoPoints(
+            Path tmp,
+            String fileName,
+            ParquetSchema schema,
+            IntFunction<Map<ColumnPath, Object>> rows,
+            WriteOptions options)
+            throws Exception {
         Path file = tmp.resolve(fileName);
         try (OutputStream out = Files.newOutputStream(file);
                 ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
             ParquetRecordBatchBuilder appender = writer.appender(GEO_ROWS_PER_GROUP);
             for (int point = 0; point < GEO_POINTS; point++) {
-                WriteFixtures.appendRow(appender, schema, geoRow(point));
+                WriteFixtures.appendRow(appender, schema, rows.apply(point));
             }
             appender.flush();
         }
@@ -660,8 +759,8 @@ class MaskedScanParityIT {
     }
 
     /**
-     * The options of the written geo points. The default options write a page index. The copy without a page index
-     * takes Parquet 1 page headers, and pages of {@link #GEO_PAGE_VALUES} rows give its first read pages to learn.
+     * The options of the written geo points. The default options write a page index and the {@code bbox} covering
+     * columns.
      */
     private static WriteOptions.Builder geoOptions() {
         return WriteOptions.builder()
@@ -670,10 +769,35 @@ class MaskedScanParityIT {
                 .rowGroupSize(RowGroupSize.rows(GEO_ROWS_PER_GROUP));
     }
 
+    private static WriteOptions.Builder withoutCovering() {
+        return geoOptions().bboxCovering(CoveringMode.NONE);
+    }
+
+    /**
+     * The options of a copy without a page index. It takes Parquet 1 page headers, and pages of
+     * {@link #GEO_PAGE_VALUES} rows give its first read pages to learn.
+     */
+    private static WriteOptions withoutIndex(WriteOptions.Builder options) {
+        return options.parquetVersion(ParquetVersion.V1_1)
+                .pageValueLimit(GEO_PAGE_VALUES)
+                .build();
+    }
+
+    /** A written point. {@code name} cycles through three values, which gives each row group each value. */
     private static Map<ColumnPath, Object> geoRow(int point) {
-        Map<ColumnPath, Object> row = new HashMap<>(2);
+        Map<ColumnPath, Object> row = new HashMap<>();
         row.put(ColumnPath.of("id"), (long) point);
+        row.put(ColumnPath.of("name"), "name-" + (point % 3));
         row.put(ColumnPath.of("geometry"), Wkb.fromWkt("POINT (" + xOf(point) + " " + yOf(point) + ")"));
+        return row;
+    }
+
+    /** A written point of the copy with an optional geometry. Each fourth point has a null geometry. */
+    private static Map<ColumnPath, Object> optionalGeoRow(int point) {
+        Map<ColumnPath, Object> row = geoRow(point);
+        if (point % 4 == 0) {
+            row.remove(ColumnPath.of("geometry"));
+        }
         return row;
     }
 
@@ -685,13 +809,15 @@ class MaskedScanParityIT {
         return 2.0 * point;
     }
 
-    private static ParquetSchema geoSchema() {
+    private static ParquetSchema geoSchema(Repetition geometryRepetition) {
         SchemaNode.Primitive id = new SchemaNode.Primitive(
                 "id", Repetition.REQUIRED, PrimitiveKind.INT64, OptionalInt.empty(), Optional.empty(), -1);
+        SchemaNode.Primitive name = new SchemaNode.Primitive(
+                "name", Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
         SchemaNode.Primitive geometry = new SchemaNode.Primitive(
-                "geometry", Repetition.REQUIRED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
+                "geometry", geometryRepetition, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
         SchemaNode.Group root =
-                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(id, geometry), Optional.empty(), -1);
+                new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(id, name, geometry), Optional.empty(), -1);
         return new ParquetSchema(root);
     }
 

@@ -32,13 +32,18 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.stream.Stream;
 
 import org.apache.parquet.format.DataPageHeader;
+import org.apache.parquet.format.DataPageHeaderV2;
 import org.apache.parquet.format.PageHeader;
 import org.apache.parquet.format.PageType;
 import org.apache.parquet.format.Util;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.columnar.BinaryVector;
 import io.tileverse.parquetry.columnar.ColumnVector;
@@ -954,6 +959,314 @@ class BatchColumnReaderTest {
         }
     }
 
+    // --- on-demand value decode: a page stays compressed until a window reads it ---
+
+    /** One column of each kind, with its rows on two pages. */
+    static Stream<Arguments> onDemandColumns() throws IOException {
+        return Stream.of(
+                Arguments.of(
+                        "INT32",
+                        twoPageInt32Chunk(new int[] {1, 2, 3, 4}, new int[] {5, 6, 7, 8, 9}),
+                        requiredInt32Leaf()),
+                Arguments.of(
+                        "INT64",
+                        twoPageInt64Chunk(new long[] {1, 2, 3, 4}, new long[] {5, 6, 7, 8, 9}),
+                        requiredLongLeaf()),
+                Arguments.of(
+                        "FLOAT",
+                        twoPageFloatChunk(new float[] {1, 2, 3, 4}, new float[] {5, 6, 7, 8, 9}),
+                        requiredFloatLeaf()),
+                Arguments.of(
+                        "DOUBLE",
+                        twoPageDoubleChunk(new double[] {1, 2, 3, 4}, new double[] {5, 6, 7, 8, 9}),
+                        requiredDoubleLeaf()),
+                Arguments.of("nullable INT32", nullableInt32Chunk(), optionalInt32Leaf()),
+                Arguments.of("PLAIN BYTE_ARRAY", plainByteArrayChunk(), optionalByteArrayLeaf()),
+                Arguments.of("dictionary BYTE_ARRAY", dictionaryByteArrayChunk(), optionalByteArrayLeaf()));
+    }
+
+    private static FetchedColumnChunk nullableInt32Chunk() throws IOException {
+        byte[] page1 = nullableInt32Page(new int[] {1, 0, 1, 0}, new int[] {10, 20});
+        byte[] page2 = nullableInt32Page(new int[] {0, 1, 1, 0, 1}, new int[] {30, 40, 50});
+        return twoPageChunk(page1, page2, /*totalValues*/ 9, /*maxDef*/ 1);
+    }
+
+    private static FetchedColumnChunk plainByteArrayChunk() throws IOException {
+        byte[][] page1 = {bytes("a"), null, bytes("ccc"), bytes("dd")};
+        byte[][] page2 = {null, bytes("eeeee"), bytes(""), null, bytes("g")};
+        return twoPageNullableByteArrayChunk(page1, page2);
+    }
+
+    private static FetchedColumnChunk dictionaryByteArrayChunk() throws IOException {
+        byte[][] dictValues = {bytes("alpha"), bytes("beta"), bytes("gamma")};
+        int[] page1DefLevels = {1, 0, 1, 1};
+        int[] page1Indices = {0, 1, 2};
+        int[] page2DefLevels = {1, 1, 0, 1, 0};
+        int[] page2Indices = {2, 1, 0};
+        return dictionaryEncodedByteArrayChunkTwoPages(
+                dictValues, page1DefLevels, page1Indices, page2DefLevels, page2Indices);
+    }
+
+    /** Each column under windows of at most 1, 2, 3 and all the rows of a page, opening on a read and on a skip. */
+    static Stream<Arguments> onDemandWalks() throws IOException {
+        return onDemandColumns().flatMap(BatchColumnReaderTest::walksOf);
+    }
+
+    private static Stream<Arguments> walksOf(Arguments column) {
+        Object[] kindChunkAndLeaf = column.get();
+        List<Arguments> walks = new ArrayList<>();
+        for (int longestWindow : new int[] {1, 2, 3, Integer.MAX_VALUE}) {
+            for (boolean opensOnARead : new boolean[] {true, false}) {
+                walks.add(Arguments.of(
+                        kindChunkAndLeaf[0], kindChunkAndLeaf[1], kindChunkAndLeaf[2], longestWindow, opensOnARead));
+            }
+        }
+        return walks.stream();
+    }
+
+    @ParameterizedTest(name = "{0}, windows of {3}, opening on a read {4}")
+    @MethodSource("onDemandWalks")
+    void onDemandMatchesEager(
+            String kind, FetchedColumnChunk chunk, SchemaNode.Primitive leaf, int longestWindow, boolean opensOnARead) {
+        List<Object> expected = eagerRows(chunk, leaf);
+        BatchColumnReader reader = onDemandReader(chunk, leaf);
+        BatchBuffers buffers = TestDecodeBuffers.batchBuffers();
+        boolean read = opensOnARead;
+        int firstRow = 0;
+        while (reader.hasMore()) {
+            int windowRows = Math.min(longestWindow, reader.logicalRowsRemainingInCurrentPage());
+            if (read) {
+                List<Object> rows = rowsOf(reader.readBatch(windowRows, buffers));
+                List<Object> expectedRows = expected.subList(firstRow, firstRow + windowRows);
+                assertThat(rows).as("%s rows from %d", kind, firstRow).isEqualTo(expectedRows);
+            } else {
+                reader.skipWindow(windowRows);
+            }
+            read = !read;
+            firstRow += windowRows;
+        }
+        assertThat(firstRow).isEqualTo(expected.size());
+    }
+
+    // One row in three reads. The steps between them cross held pages and loaded pages.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("onDemandColumns")
+    void spanningRowsMatchEager(String kind, FetchedColumnChunk chunk, SchemaNode.Primitive leaf) {
+        List<Object> expected = eagerRows(chunk, leaf);
+        BatchColumnReader reader = onDemandReader(chunk, leaf);
+        BatchBuffers buffers = TestDecodeBuffers.batchBuffers();
+        for (int row = 0; row < expected.size(); row++) {
+            if (row % 3 == 1) {
+                BatchColumnReader.SpanningRow spanningRow = reader.readSpanningRow(buffers);
+                List<Object> rows = rowsOf(spanningRow.vector());
+                assertThat(rows).as("%s row %d", kind, row).isEqualTo(expected.subList(row, row + 1));
+            } else {
+                reader.skipSpanningRow();
+            }
+        }
+        assertThat(reader.hasMore()).isFalse();
+    }
+
+    @Test
+    void deadPageStaysCompressed() throws IOException {
+        FetchedColumnChunk chunk = plainInt32Chunk(new int[] {1, 2}, new int[] {3, 4}, new int[] {5, 6});
+        BatchColumnReader reader = onDemandReader(chunk, requiredInt32Leaf());
+
+        reader.skipWindow(reader.logicalRowsRemainingInCurrentPage());
+
+        assertThat(reader.decodedDataPageCount()).isZero();
+        assertThat(reader.skippedDataPageCount()).isEqualTo(1);
+    }
+
+    @Test
+    void rowStepsDiscardAHeldPage() throws IOException {
+        FetchedColumnChunk chunk = plainInt32Chunk(new int[] {1, 2}, new int[] {3, 4});
+        BatchColumnReader reader = onDemandReader(chunk, requiredInt32Leaf());
+
+        reader.skipSpanningRow();
+        reader.skipSpanningRow();
+
+        assertThat(reader.decodedDataPageCount()).isZero();
+        assertThat(reader.skippedDataPageCount()).isEqualTo(1);
+        ColumnVector rows = reader.readBatch(2, TestDecodeBuffers.batchBuffers());
+        assertThat(rowsOf(rows)).containsExactly(3, 4);
+    }
+
+    @Test
+    void readResumesPastSkippedRows() throws IOException {
+        FetchedColumnChunk chunk = singlePageInt32Chunk(new int[] {0, 1, 2, 3, 4, 5, 6}, /*maxDef*/ 0);
+        BatchColumnReader reader = onDemandReader(chunk, requiredInt32Leaf());
+
+        reader.skipWindow(3);
+        ColumnVector rows = reader.readBatch(2, TestDecodeBuffers.batchBuffers());
+
+        assertThat(rowsOf(rows)).containsExactly(3, 4);
+        assertThat(reader.logicalRowsRemainingInCurrentPage()).isEqualTo(2);
+    }
+
+    // The eager fast path of a flat column keeps no definition levels, and a loaded page takes it.
+    @Test
+    void nullsSurviveAHeldPage() throws IOException {
+        byte[] page = nullableInt32Page(new int[] {1, 0, 1, 0, 0, 1}, new int[] {10, 20, 30});
+        FetchedColumnChunk chunk = heapChunk(PATH, page, /*numValues*/ 6, /*maxRep*/ 0, /*maxDef*/ 1);
+        BatchColumnReader reader = onDemandReader(chunk, optionalInt32Leaf());
+
+        reader.skipWindow(2);
+        ColumnVector rows = reader.readBatch(3, TestDecodeBuffers.batchBuffers());
+
+        assertThat(rowsOf(rows)).containsExactly(20, null, null);
+        assertThat(reader.currentPageDefLevels()).isNull();
+    }
+
+    @Test
+    void zeroRowPageIsSteppedOver() throws IOException {
+        FetchedColumnChunk chunk = plainInt32Chunk(new int[] {1, 2}, new int[] {}, new int[] {}, new int[] {3, 4, 5});
+        BatchColumnReader reader = onDemandReader(chunk, requiredInt32Leaf());
+        reader.skipWindow(reader.logicalRowsRemainingInCurrentPage());
+        assertThat(reader.logicalRowsRemainingInCurrentPage()).isZero();
+
+        reader.skipSpanningRow();
+
+        assertThat(reader.decodedDataPageCount()).isZero();
+        assertThat(reader.skippedDataPageCount()).isEqualTo(3);
+        ColumnVector rows = reader.readBatch(2, TestDecodeBuffers.batchBuffers());
+        assertThat(rowsOf(rows)).containsExactly(4, 5);
+    }
+
+    static Stream<Arguments> wrongV2RowCounts() {
+        // each vector is the lane stepping over the page, and the rows stated by a page of three values
+        return Stream.of(
+                Arguments.of(ValueDecode.EAGER_ON_DEMAND, 2),
+                Arguments.of(ValueDecode.EAGER_ON_DEMAND, 4),
+                Arguments.of(ValueDecode.WINDOWED_MASK, 2),
+                Arguments.of(ValueDecode.WINDOWED_MASK, 4));
+    }
+
+    // A step over the page decodes nothing, and a wrong count would shift the values of each later page.
+    @ParameterizedTest
+    @MethodSource("wrongV2RowCounts")
+    void wrongV2RowCountFailsAStep(ValueDecode valueDecode, int statedRows) throws IOException {
+        byte[] pages = concat(encodeV2Page(2, new int[] {1, 2}), encodeV2Page(statedRows, new int[] {3, 4, 5}));
+        FetchedColumnChunk chunk = heapChunk(PATH, pages, /*numValues*/ 5, /*maxRep*/ 0, /*maxDef*/ 0);
+        BatchColumnReader reader =
+                new BatchColumnReader(TestDecodeBuffers.ample(), chunk, requiredInt32Leaf(), null, null, valueDecode);
+        reader.skipWindow(reader.logicalRowsRemainingInCurrentPage());
+
+        assertThatThrownBy(reader::logicalRowsRemainingInCurrentPage)
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("Column val V2 data page 1 counts " + statedRows + " rows and 3 values");
+        assertThat(reader.decodedDataPageCount()).isZero();
+    }
+
+    @Test
+    void rowStepPeeksWithNoPageHeld() throws IOException {
+        FetchedColumnChunk chunk = plainInt32Chunk(new int[] {}, new int[] {1, 2});
+        BatchColumnReader reader = onDemandReader(chunk, requiredInt32Leaf());
+
+        reader.skipSpanningRow();
+
+        assertThat(reader.skippedDataPageCount()).isEqualTo(1);
+        ColumnVector rows = reader.readBatch(1, TestDecodeBuffers.batchBuffers());
+        assertThat(rowsOf(rows)).containsExactly(2);
+    }
+
+    @Test
+    void zeroRowPageIsReadThrough() throws IOException {
+        FetchedColumnChunk chunk = plainInt32Chunk(new int[] {}, new int[] {1, 2});
+        BatchColumnReader reader = onDemandReader(chunk, requiredInt32Leaf());
+        assertThat(reader.logicalRowsRemainingInCurrentPage()).isZero();
+
+        BatchColumnReader.SpanningRow row = reader.readSpanningRow(TestDecodeBuffers.batchBuffers());
+        ColumnVector rows = row.vector();
+
+        assertThat(rowsOf(rows)).containsExactly(1);
+        assertThat(reader.logicalRowsRemainingInCurrentPage()).isEqualTo(1);
+    }
+
+    // A level accessor loads the page held compressed, whatever its row count.
+    @Test
+    void loadedZeroRowPageTakesNoStep() throws IOException {
+        FetchedColumnChunk chunk = plainInt32Chunk(new int[] {}, new int[] {1, 2});
+        BatchColumnReader reader = onDemandReader(chunk, requiredInt32Leaf());
+        reader.logicalRowsRemainingInCurrentPage();
+        reader.currentPageDefLevels();
+
+        reader.skipSpanningRow();
+
+        ColumnVector rows = reader.readBatch(1, TestDecodeBuffers.batchBuffers());
+        assertThat(rowsOf(rows)).containsExactly(2);
+    }
+
+    @Test
+    void rowStepPastTheLastPageFails() throws IOException {
+        FetchedColumnChunk chunk = plainInt32Chunk(new int[] {1}, new int[] {});
+        BatchColumnReader reader = onDemandReader(chunk, requiredInt32Leaf());
+        reader.skipSpanningRow();
+
+        assertThatThrownBy(reader::skipSpanningRow)
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("Column val exhausted page stream after 1 values");
+    }
+
+    @Test
+    void eagerRejectsSkipWindow() throws IOException {
+        FetchedColumnChunk chunk = singlePageInt32Chunk(new int[] {1, 2}, /*maxDef*/ 0);
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, requiredInt32Leaf());
+
+        assertThatThrownBy(() -> reader.skipWindow(1)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void onlyOnDemandStepsOverARow() throws IOException {
+        FetchedColumnChunk chunk = singlePageInt32Chunk(new int[] {1, 2}, /*maxDef*/ 0);
+        BatchColumnReader eager = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, requiredInt32Leaf());
+        BatchColumnReader windowed = new BatchColumnReader(
+                TestDecodeBuffers.ample(), chunk, requiredInt32Leaf(), null, null, ValueDecode.WINDOWED_MASK);
+
+        assertThatThrownBy(eager::skipSpanningRow).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(windowed::skipSpanningRow).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void onDemandRejectsARepeatedLeaf() throws IOException {
+        byte[] page = repeatedInt32Page(new int[] {0, 1}, new int[] {1, 2});
+        FetchedColumnChunk chunk = heapChunk(PATH, page, /*numValues*/ 2, /*maxRep*/ 1, /*maxDef*/ 1);
+        SchemaNode.Primitive leaf = repeatedInt32Leaf();
+
+        assertThatThrownBy(() -> onDemandReader(chunk, leaf))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("column val is repeated");
+    }
+
+    private static BatchColumnReader onDemandReader(FetchedColumnChunk chunk, SchemaNode.Primitive leaf) {
+        return new BatchColumnReader(TestDecodeBuffers.ample(), chunk, leaf, null, null, ValueDecode.EAGER_ON_DEMAND);
+    }
+
+    /** The rows of {@code chunk} as an eager reader reads them, the oracle of the on-demand walks. */
+    private static List<Object> eagerRows(FetchedColumnChunk chunk, SchemaNode.Primitive leaf) {
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, leaf);
+        BatchBuffers buffers = TestDecodeBuffers.batchBuffers();
+        List<Object> rows = new ArrayList<>();
+        while (reader.hasMore()) {
+            ColumnVector batch = reader.readBatch(Integer.MAX_VALUE, buffers);
+            rows.addAll(rowsOf(batch));
+        }
+        return rows;
+    }
+
+    /** The rows of {@code vector} with null at the null rows, and each binary value as text to compare by content. */
+    private static List<Object> rowsOf(ColumnVector vector) {
+        List<Object> rows = new ArrayList<>(vector.size());
+        for (int row = 0; row < vector.size(); row++) {
+            Object value = vector.get(row);
+            if (value instanceof MemorySegment binary) {
+                value = new String(binary.toArray(JAVA_BYTE), StandardCharsets.UTF_8);
+            }
+            rows.add(value);
+        }
+        return rows;
+    }
+
     // --- malformed pages ---
 
     @Test
@@ -1122,6 +1435,18 @@ class BatchColumnReaderTest {
         return heapChunk(PATH, chunkBuffer, totalValues, /*maxRep*/ 0, /*maxDef*/ 0);
     }
 
+    /** Builds a {@link FetchedColumnChunk} with one PLAIN INT32 page per array (required column, no def/rep levels). */
+    private static FetchedColumnChunk plainInt32Chunk(int[]... pages) throws IOException {
+        ByteArrayOutputStream chunkBuffer = new ByteArrayOutputStream();
+        long totalValues = 0;
+        for (int[] page : pages) {
+            byte[] payload = encodeInt32sLittleEndian(page);
+            chunkBuffer.write(encodeV1Page(page.length, payload, org.apache.parquet.format.Encoding.PLAIN));
+            totalValues += page.length;
+        }
+        return heapChunk(PATH, chunkBuffer.toByteArray(), totalValues, /*maxRep*/ 0, /*maxDef*/ 0);
+    }
+
     /** Builds a {@link FetchedColumnChunk} with two PLAIN INT32 pages concatenated in one chunk buffer. */
     private static FetchedColumnChunk twoPageInt32Chunk(int[] page1, int[] page2) throws IOException {
         byte[] payload1 = encodeInt32sLittleEndian(page1);
@@ -1219,6 +1544,20 @@ class BatchColumnReaderTest {
         DataPageHeader dataHeader = new DataPageHeader(
                 numValues, encoding, org.apache.parquet.format.Encoding.RLE, org.apache.parquet.format.Encoding.RLE);
         header.setData_page_header(dataHeader);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Util.writePageHeader(header, out);
+        out.write(payload);
+        return out.toByteArray();
+    }
+
+    /** A PLAIN V2 page of a required flat INT32 column, with no level sections, stating {@code numRows} rows. */
+    private static byte[] encodeV2Page(int numRows, int[] values) throws IOException {
+        byte[] payload = encodeInt32sLittleEndian(values);
+        PageHeader header = new PageHeader(PageType.DATA_PAGE_V2, payload.length, payload.length);
+        DataPageHeaderV2 dataHeader =
+                new DataPageHeaderV2(values.length, 0, numRows, org.apache.parquet.format.Encoding.PLAIN, 0, 0);
+        header.setData_page_header_v2(dataHeader);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         Util.writePageHeader(header, out);

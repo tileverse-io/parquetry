@@ -353,22 +353,33 @@ Decoding every surviving row's output columns and then dropping the non-matches
 is wasteful under a selective predicate. A filtered read therefore decodes each
 row group in **one pass that applies the predicate as it goes**: the filter
 columns decode, the predicate runs over them, and an output column materializes
-a value only where the predicate kept the row. One driver per row group, one
-walk over the bytes.
+a value only where the predicate kept the row. One reader per row group, one
+walk over the bytes. `ParallelDecodeCoordinator` chooses the reader of each row
+group. A row group needing the predicate takes `MaskedScanRowGroupReader`, and
+any other row group takes `BatchRowGroupReader`.
 
 ```mermaid
 flowchart TD
     outcome{"row group outcome"}
-    outcome -->|"MATCHED<br/>(statistics proved every row matches)"| classic["ClassicRowGroupDriver<br/>full decode, no predicate"]
+    outcome -->|"MATCHED<br/>(statistics proved every row matches)"| classic["BatchRowGroupReader<br/>full decode, no predicate"]
     outcome -->|"FULL / PARTIAL"| win
 
-    subgraph scan["MaskedScanRowGroupDriver -> MaskedScanRowGroupReader"]
-        win["next window: the rows every reader<br/>can serve from the page it stands on,<br/>capped by the batch size"]
-        filt["decode the FILTER columns<br/>over the whole window"]
-        eval["evaluate the predicate over the window<br/>(VectorizedPredicateEvaluator)<br/>-> the window's surviving rows"]
+    subgraph scan["MaskedScanRowGroupReader"]
+        win["next window: the rows served by the<br/>current page of each reader, capped by<br/>the batch size"]
+        filt["decode the FIRST stage's columns<br/>over the whole window"]
+        eval["evaluate the first stage over the window<br/>(VectorizedPredicateEvaluator)"]
+        rowsLeft{"rows left?"}
+        later["next LATER stage: decode its own columns<br/>over the whole window, evaluate the rows left"]
+        step["no row left: the remaining stages and the<br/>output columns step over the window"]
         out["OUTPUT-only columns: decode the value<br/>slots the survivors cover, step the page<br/>decoder over the rest"]
         gather["SHARED columns: gather the survivors<br/>out of the window already decoded"]
-        win --> filt --> eval --> out --> gather
+        win --> filt --> eval --> rowsLeft
+        rowsLeft -->|"yes, a stage remains"| later
+        later --> rowsLeft
+        rowsLeft -->|"none"| step
+        step --> win
+        rowsLeft -->|"yes, no stage remains"| out
+        out --> gather
     end
 
     gather --> batches["batch of surviving rows,<br/>dense and in row order"]
@@ -376,10 +387,23 @@ flowchart TD
     narrow --> batches
 ```
 
-- **A window is page-bounded, not row-group-bounded.** It is the run of rows every
-  scanned column can serve from the page it currently stands on, capped by the
-  read's batch size. A window whose rows all fail the predicate emits nothing and
-  materializes no output value at all.
+- **A window is page-bounded, not row-group-bounded.** It is the run of rows served
+  by the current page of each scanned column, capped by the read's batch size. A
+  window whose rows all fail the predicate emits nothing and materializes no output
+  value at all.
+- **A filter column waits for the conditions before it.** The conditions of an
+  `And` split into up to three stages (`ScanStages`). Conditions on fixed-width
+  columns run first, conditions on `BYTE_ARRAY` columns next, and per-row geometry
+  tests last. The file schema sets this order, and it holds for the whole read. A
+  condition on a repeated column or a row position joins the first stage, and a
+  predicate other than an `And` is one stage. A later stage reads its own columns
+  only for a window with rows left, and it evaluates those rows alone. With no row
+  left its columns step over the window, counting rows against the page header
+  (`ValueDecode.EAGER_ON_DEMAND`). A page of a later stage therefore decompresses
+  only for a window with rows left. A page with all its rows stepped over is
+  discarded unread, and `par explain --analyze --format json` counts it in
+  `pagesPruned`. Under a row mask a page loads at window sizing, because no header
+  states the rows of the mask.
 - **Output columns pay for survivors only.** An output-only leaf reads the value
   slots its surviving rows cover and steps its page decoder past the rest
   (`ValueDecode.WINDOWED_MASK`, survivor slots computed by `MaskedValues`).
@@ -388,12 +412,12 @@ flowchart TD
   column, and its surviving rows are gathered out of the window already in hand
   rather than through a second reader over the same pages.
 - **`MATCHED` row groups never reach the scan.** Statistics already proved every
-  row matches; there is nothing to evaluate. They take `ClassicRowGroupDriver`
+  row matches; there is nothing to evaluate. They take `BatchRowGroupReader`
   over the scan schema, and the batch pipeline narrows the result to the caller's
   projection - which is what keeps a predicate-only column out of the emitted
   shape.
 - **Unfiltered reads are untouched.** No predicate means no scan:
-  `ClassicRowGroupDriver` decodes the projection and nothing narrows.
+  `BatchRowGroupReader` decodes the projection and nothing narrows.
 - **Offset indexes are not required.** The scan walks pages as it meets them.
   Where the `COLUMN_INDEX` tier did produce a `RowMask`, the scan's readers take
   it and walk only the surviving rows; the two compose. Building that mask still
@@ -449,8 +473,6 @@ classDiagram
     class ParallelDecodeCoordinator
     class RowGroupPrefetcher
     class RowGroupFetcher
-    class ClassicRowGroupDriver
-    class MaskedScanRowGroupDriver
     class BatchRowGroupReader
     class MaskedScanRowGroupReader
     class BatchColumnReader
@@ -472,14 +494,12 @@ classDiagram
     ReadPlanner --> ParallelDecodeCoordinator : decodeUnplanned for unfiltered bounds
     ParallelDecodeCoordinator --> RowGroupPrefetcher : pulls fetched bytes
     RowGroupPrefetcher --> RowGroupFetcher : batch range reads
-    ParallelDecodeCoordinator --> ClassicRowGroupDriver : unfiltered or MATCHED
-    ParallelDecodeCoordinator --> MaskedScanRowGroupDriver : filtered row group
-    ClassicRowGroupDriver --> BatchRowGroupReader : full decode
-    MaskedScanRowGroupDriver --> MaskedScanRowGroupReader : one masked walk
+    ParallelDecodeCoordinator --> BatchRowGroupReader : unfiltered or MATCHED, full decode
+    ParallelDecodeCoordinator --> MaskedScanRowGroupReader : filtered row group, one masked walk
     BatchRowGroupReader --> BatchColumnReader : one per leaf
     MaskedScanRowGroupReader --> BatchColumnReader : one per scanned leaf
     MaskedScanRowGroupReader --> MaskedValues : survivor value slots
-    BatchColumnReader --> ValueDecode : eager or windowed-mask
+    BatchColumnReader --> ValueDecode : eager, eager-on-demand or windowed-mask
     ParquetFileReader --> BatchPipeline : rows / batches
     BatchPipeline --> Materializer : record shape
 ```
@@ -503,7 +523,7 @@ classDiagram
 | Fetch | `internal/read/RowGroupFetcher.java`, `internal/read/RowGroupPrefetcher.java` |
 | Parallel decode + budgets | `internal/read/ParallelDecodeCoordinator.java`, `internal/read/StreamingBatchSource.java`, `runtime/DecodeBudget.java`, `internal/read/BatchRowGroupReader.java` |
 | Column / page decode | `internal/read/BatchColumnReader.java`, `internal/read/page/PageCursor.java`, `internal/read/page/PageDecoder.java` |
-| Masked scan (filtered decode) | `internal/read/MaskedScanRowGroupReader.java`, `internal/read/MaskedScanRowGroupDriver.java`, `internal/read/MaskedValues.java`, `internal/read/ValueDecode.java` |
+| Masked scan (filtered decode) | `internal/read/MaskedScanRowGroupReader.java`, `internal/read/MaskedValues.java`, `internal/read/ScanStages.java`, `internal/read/ValueDecode.java` |
 | Materialize | `internal/read/BatchPipeline.java`, `materializer/Materializer.java` |
 | Counting (no materialization) | `data/ParquetFileReader.java` (`count`), `internal/read/BatchPipeline.java` (`countMatching`), `columnar/VectorizedPredicateEvaluator.java` |
 

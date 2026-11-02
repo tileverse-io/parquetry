@@ -43,6 +43,7 @@ class PageCursorRowIndexTest {
 
     private static final ColumnPath V = ColumnPath.of("v");
     private static final LevelMaxima FLAT = new LevelMaxima(0, 0);
+    private static final LevelMaxima REPEATED = new LevelMaxima(1, 1);
 
     @Test
     void firstRowIndexAccumulatesAcrossPagesWithoutASelection() throws Exception {
@@ -95,6 +96,13 @@ class PageCursorRowIndexTest {
         assertThatThrownBy(() -> cursor.peekNextDataPage(FLAT))
                 .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining("declares " + count);
+    }
+
+    @Test
+    void repeatedV2PageHoldsManyValues() {
+        PageCursor cursor = new PageCursor(PageFixtures.v2PageDeclaring(5, 0, 2), V, null);
+
+        assertThat(cursor.peekNextDataPage(REPEATED).statedRowCount()).isEqualTo(2);
     }
 
     @Test

@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.columnar;
 
+import java.lang.foreign.MemorySegment;
 import java.util.BitSet;
 import java.util.List;
 import java.util.Map;
@@ -54,6 +55,19 @@ final class BatchFixture {
         Validity validity = validity("1".repeat(values.length));
         Map<ColumnPath, ColumnVector> columns = Map.of(col, DoubleVector.materialized(values, validity));
         return new DefaultParquetRecordBatch(singleColumnSchema(col, PrimitiveKind.DOUBLE), columns, values.length);
+    }
+
+    /** Builds a one-column batch whose single {@link BinaryVector} holds one byte per row, all of them non-null. */
+    static ParquetRecordBatch binaryColumn(ColumnPath col, byte[] values) {
+        int rows = values.length;
+        int[] offsets = new int[rows + 1];
+        for (int row = 0; row < rows; row++) {
+            offsets[row + 1] = row + 1;
+        }
+        MemorySegment backing = MemorySegment.ofArray(values).asReadOnly();
+        BinaryVector vector = BinaryVector.of(backing, IntSequence.of(offsets), Validity.allValid(rows));
+        Map<ColumnPath, ColumnVector> columns = Map.of(col, vector);
+        return new DefaultParquetRecordBatch(singleColumnSchema(col, PrimitiveKind.BYTE_ARRAY), columns, rows);
     }
 
     private static Validity validity(String validityBits) {

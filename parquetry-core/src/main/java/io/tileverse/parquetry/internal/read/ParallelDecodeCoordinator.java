@@ -269,8 +269,8 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
     }
 
     /**
-     * The masked scan reader for one row group: the predicate columns decode and evaluate per window, and the output
-     * columns decode only the rows that survived.
+     * The masked scan reader for one row group: the stages of the predicate decode and evaluate per window, and the
+     * output columns decode only the rows that survived.
      */
     private MaskedScanRowGroupReader maskedScanReader(RowGroupFetch fetch, Optional<RowMask> mask, int index) {
         MaskedScan scan = maskedScan.orElseThrow();
@@ -279,8 +279,7 @@ public final class ParallelDecodeCoordinator implements AutoCloseable {
                 fetch.columns(),
                 fileSchema,
                 scan.outputSchema(),
-                scan.filterLeaves(),
-                scan.predicate(),
+                scan.stages(),
                 batchSizeCap,
                 mask,
                 batchForm,

@@ -15,29 +15,17 @@
  */
 package io.tileverse.parquetry.internal.read;
 
-import java.util.Set;
-
-import io.tileverse.parquetry.filter.Predicate;
-import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 import lombok.NonNull;
 
 /**
- * Immutable per-read inputs that switch {@link ParallelDecodeCoordinator} onto the masked scan decode path. All three
- * apply to every row group of the read; the rows covered by each row group's masked walk come from the read's
+ * Immutable per-read inputs that switch {@link ParallelDecodeCoordinator} onto the masked scan decode path. They apply
+ * to each row group of the read; the rows covered by each row group's masked walk come from the read's
  * {@link RowGroupPlans}.
  *
- * @param predicate the normalized predicate evaluated per window
- * @param filterLeaves the physical leaf columns read by the predicate
+ * @param stages the conditions of the predicate in evaluation order
  * @param outputSchema the schema exposed by the emitted batches (the caller's projection)
  */
 public record MaskedScan(
-        @NonNull Predicate predicate,
-        @NonNull Set<ColumnPath> filterLeaves,
-        @NonNull ParquetSchema outputSchema) {
-
-    public MaskedScan {
-        filterLeaves = Set.copyOf(filterLeaves);
-    }
-}
+        @NonNull ScanStages stages, @NonNull ParquetSchema outputSchema) {}

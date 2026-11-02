@@ -84,6 +84,12 @@ import lombok.NonNull;
  * until the page's last window. A windowed reader built with a row mask serves the mask's surviving rows as its row
  * space - the same rows, in the same order, that the eager masked lane serves - and resolves each of them to the raw
  * page slot it occupies before the decoder walk.
+ *
+ * <p>{@code EAGER_ON_DEMAND} decodes a page as {@code EAGER} does, and holds the page compressed until a window reads
+ * it. The header of a held page states its row count, and that count sizes the windows over the page.
+ * {@link #skipWindow} and {@link #skipSpanningRow} step over rows against that count, and a page with all its rows
+ * stepped over is discarded without decompression. A reader with a row mask loads each page selected by the mask to
+ * size its windows, because no header states the mask's rows.
  */
 final class BatchColumnReader {
 
@@ -236,6 +242,7 @@ final class BatchColumnReader {
         this.codec = Compression.forWireCodec(chunk.codec());
         this.totalValues = chunk.numValues();
         this.dictionary = chunk.dictionary();
+        requireFlatColumnForOnDemand(chunk, valueDecode);
         if (survivingRows != null) {
             requirePageIndexForRowMask(chunk, pageIndex);
             requireFlatColumnForWindowedMask(chunk, valueDecode);
@@ -268,6 +275,18 @@ final class BatchColumnReader {
         if (valueDecode == ValueDecode.WINDOWED_MASK && chunk.maxRepetitionLevel() > 0) {
             throw new IllegalArgumentException("A row mask over the windowed value decode is only defined for flat "
                     + "columns; column " + chunk.path().dot() + " is repeated");
+        }
+    }
+
+    /**
+     * Fails an on-demand read of a repeated column. The steps over a held page count one value per row, and only a flat
+     * column holds one value per row. A later filter stage holds no repeated leaf, hence a reader finding one has a
+     * wrong split.
+     */
+    private static void requireFlatColumnForOnDemand(FetchedColumnChunk chunk, ValueDecode valueDecode) {
+        if (valueDecode == ValueDecode.EAGER_ON_DEMAND && chunk.maxRepetitionLevel() > 0) {
+            throw new IllegalArgumentException("The on-demand value decode is only defined for flat columns; column "
+                    + chunk.path().dot() + " is repeated");
         }
     }
 
@@ -426,8 +445,10 @@ final class BatchColumnReader {
     /**
      * Reads exactly one logical row, following its values across data-page boundaries when the row's rep=0 start sits
      * in one page and its remaining values in the following page(s). The driver calls this when some column's current
-     * page holds no complete row ({@link #logicalRowsRemainingInCurrentPage()} deferred its last-started row); every
-     * column then advances one row through this path to stay in lockstep.
+     * page serves no row, to keep this column in lockstep with the others. Either
+     * {@link #logicalRowsRemainingInCurrentPage()} deferred the last-started row of that page, or the page has no rows.
+     * A masked scan calls this on its filter columns. Its output columns take {@link #readMaskedSpanningRow}, and a
+     * later filter stage with no row left steps over the row through {@link #skipSpanningRow}.
      *
      * <p>A row confined to the current page comes back as a single {@link #readBatch} slice. A row that reaches the
      * page end continues part by part - decoding each following page - until a page opens with a rep=0 marker or the
@@ -566,14 +587,46 @@ final class BatchColumnReader {
      * Advances past {@code windowRows} logical rows of the current page without materializing any of their values. A
      * page still held compressed stays so: its rows are stepped over from its header alone.
      */
-    void skipMaskedWindow(int windowRows) {
-        requireWindowedValueDecode();
+    void skipWindow(int windowRows) {
+        requireDeferredValueDecode();
         requireWindowFitsCurrentPage(windowRows);
         if (pendingPage != null) {
             skipPendingPageRows(windowRows);
             return;
         }
         advancePastWindow(valuesForLogicalRows(windowRows), windowRows);
+    }
+
+    /**
+     * Steps over exactly one row without materializing it. The driver calls this on a one-row window with no row left
+     * to read, to keep this column in lockstep with the others. A page held compressed stays compressed. The step
+     * counts against its header, and zero-row pages on the way are discarded unread. A cursor that exhausts here fails
+     * loud through {@link #loadNextPage()}, because the driver only asks for a row while values remain.
+     */
+    void skipSpanningRow() {
+        requireOnDemandValueDecode();
+        if (!pageLoaded && canDeferPageLoad()) {
+            holdNextPageWithRows();
+        }
+        if (pendingPage != null) {
+            skipPendingPageRows(1);
+            return;
+        }
+        ensurePageLoaded();
+        skipEmptyPages();
+        advancePastWindow(1, 1);
+    }
+
+    /**
+     * Holds the next page with rows, discarding the zero-row pages before it. A step over a zero-row page would step
+     * over no row, and this column would fall one row behind the others.
+     */
+    private void holdNextPageWithRows() {
+        peekOrLoadNextPage();
+        while (pendingPage != null && pendingPage.statedRowCount() == 0) {
+            discardPendingPage();
+            peekOrLoadNextPage();
+        }
     }
 
     /**
@@ -586,10 +639,15 @@ final class BatchColumnReader {
         pendingPageRowsSkipped += windowRows;
         valuesConsumedTotal += windowRows;
         if (pendingPageRowsSkipped >= pendingPage.statedRowCount()) {
-            pageCursor.discardPending(pendingPage);
-            pendingPage = null;
-            pendingPageRowsSkipped = 0;
+            discardPendingPage();
         }
+    }
+
+    /** Discards the page held pending without reading it. The page walk counts it as skipped. */
+    private void discardPendingPage() {
+        pageCursor.discardPending(pendingPage);
+        pendingPage = null;
+        pendingPageRowsSkipped = 0;
     }
 
     /**
@@ -601,6 +659,29 @@ final class BatchColumnReader {
         if (valueDecode != ValueDecode.WINDOWED_MASK) {
             throw new IllegalStateException("Column " + columnPath.dot()
                     + " serves windows only under the windowed value decode; this reader decodes " + valueDecode);
+        }
+    }
+
+    /**
+     * Fails a step over a window on an eager reader. Such a reader decodes each page as it loads, and a caller stepping
+     * over its rows has given the column the wrong lane.
+     */
+    private void requireDeferredValueDecode() {
+        if (valueDecode == ValueDecode.EAGER) {
+            throw new IllegalStateException("Column " + columnPath.dot()
+                    + " steps over windows only under the windowed value decode or " + ValueDecode.EAGER_ON_DEMAND
+                    + "; this reader decodes " + valueDecode);
+        }
+    }
+
+    /**
+     * Fails a step over one row on a reader of another lane. The windowed lane steps over a row through
+     * {@link #readMaskedSpanningRow}, and an eager reader has no reason to step over one.
+     */
+    private void requireOnDemandValueDecode() {
+        if (valueDecode != ValueDecode.EAGER_ON_DEMAND) {
+            throw new IllegalStateException("Column " + columnPath.dot() + " steps over a row only under "
+                    + ValueDecode.EAGER_ON_DEMAND + "; this reader decodes " + valueDecode);
         }
     }
 
@@ -620,8 +701,8 @@ final class BatchColumnReader {
 
     /**
      * Reads exactly one logical row, following its values across data-page boundaries, and materializes them only when
-     * {@code keep} is set. The driver calls this when some column's current page holds no complete row; every column
-     * then advances one row through this path to stay in lockstep.
+     * {@code keep} is set. The driver calls this on an output column when some column's current page holds no complete
+     * row, to keep the output column in lockstep with the others.
      */
     MaskedWindow readMaskedSpanningRow(boolean keep, BatchBuffers batchBuffers) {
         requireWindowedValueDecode();
@@ -900,13 +981,14 @@ final class BatchColumnReader {
     }
 
     /**
-     * True when this reader may answer a window from a page header alone: a masked, non-repeated column serving its
-     * pages' own rows. Such a header states the page's row count, while a repeated V1 page's rows are knowable only
-     * from its decoded levels. A reader narrowed by a row mask serves the mask's surviving rows instead - a row space
-     * no page header states - and the pages holding none of those rows are already stepped over by the page selection.
+     * True when this reader may answer a window from a page header alone. That takes a non-repeated column serving its
+     * pages' own rows, under a lane that leaves a page unread until a window needs it. The header of such a page states
+     * its row count, while the rows of a repeated V1 page are known only from its decoded levels. A reader narrowed by
+     * a row mask serves the mask's surviving rows. No page header states those rows, and the page selection has already
+     * stepped over the pages holding none of them.
      */
     private boolean canDeferPageLoad() {
-        return valueDecode == ValueDecode.WINDOWED_MASK && maxLevels.maxRepetitionLevel() == 0 && survivingRows == null;
+        return valueDecode != ValueDecode.EAGER && maxLevels.maxRepetitionLevel() == 0 && survivingRows == null;
     }
 
     /**
@@ -1227,7 +1309,7 @@ final class BatchColumnReader {
         if (maxLevels.maxRepetitionLevel() != 0 || maxLevels.maxDefinitionLevel() != 1) {
             return false;
         }
-        if (survivingRows != null || valueDecode != ValueDecode.EAGER) {
+        if (survivingRows != null || valueDecode == ValueDecode.WINDOWED_MASK) {
             return false;
         }
         return pageSize > 0;

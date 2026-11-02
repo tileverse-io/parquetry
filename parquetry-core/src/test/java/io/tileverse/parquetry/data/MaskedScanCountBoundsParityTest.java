@@ -94,6 +94,15 @@ class MaskedScanCountBoundsParityTest {
                         Pred.or(Pred.col("year").eq(2020), Pred.col("value").gt(5_000.0))),
                 Arguments.of(
                         "a positional delete", deletePositions(Pred.col("year").gtEq(2021), 0L, 7L, FLAT_ROWS - 1L)),
+                Arguments.of(
+                        "a positional delete beside a later stage",
+                        deletePositions(
+                                Pred.and(
+                                        Pred.col("year").gtEq(2021),
+                                        Pred.col("country").eq("AR")),
+                                0L,
+                                7L,
+                                FLAT_ROWS - 1L)),
                 Arguments.of("a positional delete alone", deletePositions(Predicate.ALWAYS_TRUE, 1L, 2L, 3L)));
     }
 
@@ -122,7 +131,15 @@ class MaskedScanCountBoundsParityTest {
                 Arguments.of("every row matches", Pred.col("id").gtEq(0)),
                 Arguments.of("a bbox window", Pred.col("geometry").bboxIntersects(Bbox.of2d(-1.0, -1.0, 50.0, 50.0))),
                 Arguments.of(
-                        "a positional delete", deletePositions(Pred.col("id").gtEq(0), 0L, GEOMETRY_ROWS - 1L)));
+                        "a positional delete", deletePositions(Pred.col("id").gtEq(0), 0L, GEOMETRY_ROWS - 1L)),
+                Arguments.of(
+                        "a positional delete beside a bbox window",
+                        deletePositions(
+                                Pred.and(
+                                        Pred.col("id").gtEq(0),
+                                        Pred.col("geometry").bboxIntersects(Bbox.of2d(-1.0, -1.0, 50.0, 50.0))),
+                                0L,
+                                GEOMETRY_ROWS - 1L)));
     }
 
     @ParameterizedTest(name = "{0}")
