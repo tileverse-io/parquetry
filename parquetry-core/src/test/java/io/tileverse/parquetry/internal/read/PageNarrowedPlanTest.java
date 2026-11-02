@@ -244,7 +244,7 @@ class PageNarrowedPlanTest {
             DictionarySource prefixThatIsReallyADataPage = new DictionarySource.Prefix(firstDataPage);
             ChunkMeta meta = fixture.meta(A);
 
-            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA);
+            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA, SegmentPool.getDefault());
 
             assertThatThrownBy(() -> slicer.slice(prefixThatIsReallyADataPage, runs, meta, A))
                     .isInstanceOf(MalformedFileException.class)
@@ -259,20 +259,50 @@ class PageNarrowedPlanTest {
         try (Arena arena = Arena.ofConfined();
                 ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
-            DictionarySource lyingPage = new DictionarySource.Prefix(
-                    withInflatedUncompressedSize(fixture.readDictionaryPrefix(B, arena), arena));
-            List<DataPageRun> runs = List.of(new DataPageRun(fixture.readFirstDataPage(B, arena), 0));
+            MemorySegment lyingPage = withInflatedUncompressedSize(fixture.readDictionaryPrefix(B, arena), arena);
+            List<DataPageRun> wholeChunk = List.of(new DataPageRun(lyingPage, 0));
             ChunkMeta meta = fixture.meta(B);
-            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA);
-            DecodeBufferAllocator allocator = TestDecodeBuffers.ample(SegmentPool.create());
+            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA, SegmentPool.getDefault());
+            DecodeBufferAllocator allocator = TestDecodeBuffers.ample();
 
-            FetchedColumnChunk chunk = slicer.slice(lyingPage, runs, meta, B);
+            FetchedColumnChunk chunk = slicer.slice(new DictionarySource.FirstRun(), wholeChunk, meta, B);
             DictionaryPage page = chunk.dictionaryPage().orElseThrow();
 
             assertThatThrownBy(() -> page.decode(allocator))
                     .isInstanceOf(MalformedFileException.class)
                     .hasMessageContaining(B.dot())
                     .hasMessageContaining("declares");
+        }
+    }
+
+    // the slice survives a decode ahead failing on the wrong size, and the reader of the page raises the failure
+    @Test
+    void wrongSizeFailsItsReaderAlone() {
+        SegmentPool pool = SegmentPool.create();
+        try (Arena arena = Arena.ofConfined();
+                ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.open(source);
+            DictionarySource lyingPage = new DictionarySource.Prefix(
+                    withInflatedUncompressedSize(fixture.readDictionaryPrefix(B, arena), arena));
+            List<DataPageRun> runs = List.of(new DataPageRun(fixture.readFirstDataPage(B, arena), 0));
+            ChunkMeta meta = fixture.meta(B);
+            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA, pool);
+            DecodeBufferAllocator allocator = TestDecodeBuffers.ample(pool);
+
+            FetchedColumnChunk chunk = slicer.slice(lyingPage, runs, meta, B);
+            DictionaryPage page = chunk.dictionaryPage().orElseThrow();
+
+            assertThat(pool.stats().totalBorrows())
+                    .as("the scratch of the decode ahead")
+                    .isEqualTo(1L);
+            assertThat(pool.stats().outstandingBorrows()).isZero();
+            assertThatThrownBy(() -> page.decode(allocator))
+                    .isInstanceOf(MalformedFileException.class)
+                    .hasMessageContaining(B.dot())
+                    .hasMessageContaining("declares");
+            assertThat(pool.stats().outstandingBorrows()).isZero();
+        } finally {
+            pool.close();
         }
     }
 
@@ -286,7 +316,7 @@ class PageNarrowedPlanTest {
                     new DictionarySource.Prefix(withNegativeValueCount(fixture.readDictionaryPrefix(B, arena), arena));
             List<DataPageRun> runs = List.of(new DataPageRun(fixture.readFirstDataPage(B, arena), 0));
             ChunkMeta meta = fixture.meta(B);
-            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA);
+            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA, SegmentPool.getDefault());
 
             assertThatThrownBy(() -> slicer.slice(lyingPage, runs, meta, B))
                     .isInstanceOf(MalformedFileException.class)
@@ -302,7 +332,7 @@ class PageNarrowedPlanTest {
             Fixture fixture = Fixture.open(source);
             DictionarySource dictionaryPage = new DictionarySource.Prefix(fixture.readDictionaryPrefix(B, arena));
 
-            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA);
+            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA, SegmentPool.getDefault());
 
             assertThatIllegalStateException()
                     .isThrownBy(() -> slicer.slice(dictionaryPage, List.of(), fixture.meta(B), B))
@@ -318,12 +348,33 @@ class PageNarrowedPlanTest {
             Fixture fixture = Fixture.open(source);
             MemorySegment firstDataPage = fixture.readFirstDataPage(B, arena);
             List<DataPageRun> runs = List.of(new DataPageRun(firstDataPage, 0));
-            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA);
+            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA, SegmentPool.getDefault());
 
             FetchedColumnChunk chunk = slicer.slice(new DictionarySource.LeftOut(), runs, fixture.meta(B), B);
 
             assertThat(chunk.dictionaryPage()).isEmpty();
             assertThat(chunk.dataPageRuns().get(0).segment().byteSize()).isEqualTo(firstDataPage.byteSize());
+        }
+    }
+
+    // a column left out of a fetch has no use, and its next whole chunk stays lazy
+    @Test
+    void leftOutColumnStaysLazy() {
+        SegmentPool pool = SegmentPool.create();
+        try (Arena arena = Arena.ofConfined();
+                ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.open(source);
+            List<DataPageRun> firstPage = List.of(new DataPageRun(fixture.readFirstDataPage(B, arena), 0));
+            List<DataPageRun> wholeChunk = List.of(new DataPageRun(fixture.readDictionaryPrefix(B, arena), 0));
+            ChunkMeta meta = fixture.meta(B);
+            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA, pool);
+
+            slicer.slice(new DictionarySource.LeftOut(), firstPage, meta, B);
+            slicer.slice(new DictionarySource.FirstRun(), wholeChunk, meta, B);
+
+            assertThat(pool.stats().totalBorrows()).as("no decode ahead").isZero();
+        } finally {
+            pool.close();
         }
     }
 

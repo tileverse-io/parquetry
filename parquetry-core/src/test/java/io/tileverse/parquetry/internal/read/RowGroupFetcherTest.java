@@ -18,6 +18,7 @@ package io.tileverse.parquetry.internal.read;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.lang.foreign.MemorySegment;
@@ -31,12 +32,17 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.storage.BatchReadResult;
 import io.tileverse.storage.RangeRequest;
@@ -46,6 +52,7 @@ import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.data.WriteOptions.EncodingPolicy;
+import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.RowRanges;
@@ -53,6 +60,7 @@ import io.tileverse.parquetry.filter.RowRanges.Range;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.EncodingStats;
 import io.tileverse.parquetry.format.FileMetaData;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
@@ -60,6 +68,7 @@ import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
 import io.tileverse.parquetry.internal.read.PageIndexLearner.WholeChunk;
+import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
@@ -96,6 +105,12 @@ import io.tileverse.parquetry.testsupport.RecordingByteRangeSource;
  * of {@value #MIXED_PAGE_VALUES} values. Column {@code a} is PLAIN. Columns {@code b} and {@code c} have a dictionary
  * page, and their first {@value #DICTIONARY_PAGES} pages use it. Their later pages are PLAIN. An edited footer gives
  * the count of dictionary-encoded pages, because parquetry's writer records none.
+ *
+ * <p>To check the decode ahead, the tests fetch {@value #GROUPS} row groups of {@value #GROUP_ROWS} rows in turn with
+ * one fetcher, as a read does. Column {@code a} is PLAIN. Columns {@code b} and {@code c} repeat
+ * {@value #GROUP_DISTINCT_VALUES} values and have a dictionary page in each row group. Each chunk holds two pages, and
+ * a mask keeping the first page narrows its fetch. The pool of the fetcher counts the fetch buffers and the scratch of
+ * each decode ahead. A second pool counts the scratch of the decodes by readers.
  */
 class RowGroupFetcherTest {
 
@@ -113,6 +128,11 @@ class RowGroupFetcherTest {
     private static final int DICTIONARY_PAGES = 6;
     private static final int DICTIONARY_ROWS = DICTIONARY_PAGES * MIXED_PAGE_VALUES;
     private static final int DICTIONARY_BYTE_LIMIT = 40;
+
+    private static final int GROUPS = 2;
+    private static final int GROUP_ROWS = 40;
+    private static final int GROUP_PAGE_VALUES = GROUP_ROWS / 2;
+    private static final int GROUP_DISTINCT_VALUES = 4;
 
     @TempDir
     Path tempDir;
@@ -181,7 +201,7 @@ class RowGroupFetcherTest {
         return raw;
     }
 
-    // a fetch leaves the dictionary pages of a row group undecoded, and its buffer is the only borrow
+    // the first fetch of whole chunks leaves the dictionary pages undecoded, and its buffer is the only borrow
     @Test
     void fetchDecodesNoDictionary() {
         Path file = CorpusFixtures.parquetTestingData().resolve("alltypes_dictionary.parquet");
@@ -512,6 +532,253 @@ class RowGroupFetcherTest {
         }
     }
 
+    // The first fetch knows of no use. A reader then uses the dictionary of b, and the next fetch decodes b alone.
+    @Test
+    void usedColumnDecodesAhead() throws IOException {
+        SegmentPool pool = SegmentPool.create();
+        SegmentPool readerPool = SegmentPool.create();
+        DecodeBufferAllocator allocator = TestDecodeBuffers.ample(readerPool);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(writeRowGroups())) {
+            RowGroupFetcher fetcher = TestFetchers.over(source, mixedSchema(), mixedSchema(), pool);
+
+            try (RowGroupFetch first = fetchWhole(fetcher, source, 0)) {
+                assertThat(pool.stats().totalBorrows()).as("the fetch buffer").isEqualTo(1L);
+                dictionaryOf(first, B).decode(allocator);
+            }
+            try (RowGroupFetch second = fetchWhole(fetcher, source, 1)) {
+                assertThat(pool.stats().totalBorrows())
+                        .as("the fetch buffers and one scratch")
+                        .isEqualTo(3L);
+                assertThat(pool.stats().outstandingBorrows())
+                        .as("the fetch buffer")
+                        .isEqualTo(1L);
+                Dictionary<?> dictionary = dictionaryOf(second, B).decode(allocator);
+                assertThat(dictionary.size()).isEqualTo(GROUP_DISTINCT_VALUES);
+                assertThat(readerPool.stats().totalBorrows())
+                        .as("the decode by the first reader")
+                        .isEqualTo(1L);
+            }
+            assertThat(pool.stats().outstandingBorrows()).isZero();
+        } finally {
+            pool.close();
+            readerPool.close();
+        }
+    }
+
+    @Test
+    void unusedColumnStaysLazy() throws IOException {
+        SegmentPool readerPool = SegmentPool.create();
+        DecodeBufferAllocator allocator = TestDecodeBuffers.ample(readerPool);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(writeRowGroups())) {
+            RowGroupFetcher fetcher = TestFetchers.over(source, mixedSchema(), mixedSchema(), SegmentPool.getDefault());
+            try (RowGroupFetch first = fetchWhole(fetcher, source, 0)) {
+                dictionaryOf(first, B).decode(allocator);
+            }
+
+            try (RowGroupFetch second = fetchWhole(fetcher, source, 1)) {
+                dictionaryOf(second, C).decode(allocator);
+            }
+
+            assertThat(readerPool.stats().totalBorrows())
+                    .as("a decode by each reader")
+                    .isEqualTo(2L);
+        } finally {
+            readerPool.close();
+        }
+    }
+
+    // Two fetchers over one source stand for two reads.
+    @Test
+    void readsKeepTheirOwnColumns() throws IOException {
+        SegmentPool pool = SegmentPool.getDefault();
+        SegmentPool readerPool = SegmentPool.create();
+        DecodeBufferAllocator allocator = TestDecodeBuffers.ample(readerPool);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(writeRowGroups())) {
+            RowGroupFetcher firstRead = TestFetchers.over(source, mixedSchema(), mixedSchema(), pool);
+            RowGroupFetcher secondRead = TestFetchers.over(source, mixedSchema(), mixedSchema(), pool);
+            try (RowGroupFetch first = fetchWhole(firstRead, source, 0)) {
+                dictionaryOf(first, B).decode(allocator);
+            }
+
+            try (RowGroupFetch second = fetchWhole(secondRead, source, 1)) {
+                dictionaryOf(second, B).decode(allocator);
+            }
+
+            assertThat(readerPool.stats().totalBorrows())
+                    .as("a decode by each reader")
+                    .isEqualTo(2L);
+        } finally {
+            readerPool.close();
+        }
+    }
+
+    // The fetch survives the corrupt page and gives its scratch back, and the reader of the page raises the failure.
+    @Test
+    void failedAheadFailsTheReader() throws IOException {
+        SegmentPool pool = SegmentPool.create();
+        DecodeBufferAllocator allocator = TestDecodeBuffers.ample();
+        Path corrupt = withCorruptDictionary(writeRowGroups(), B, 1);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(corrupt)) {
+            RowGroupFetcher fetcher = TestFetchers.over(source, mixedSchema(), mixedSchema(), pool);
+            try (RowGroupFetch first = fetchWhole(fetcher, source, 0)) {
+                dictionaryOf(first, B).decode(allocator);
+            }
+
+            try (RowGroupFetch second = fetchWhole(fetcher, source, 1)) {
+                DictionaryPage page = dictionaryOf(second, B);
+                assertThat(pool.stats().totalBorrows())
+                        .as("the fetch buffers and one scratch")
+                        .isEqualTo(3L);
+                assertThat(pool.stats().outstandingBorrows())
+                        .as("the fetch buffer")
+                        .isEqualTo(1L);
+                assertThatThrownBy(() -> page.decode(allocator))
+                        .isInstanceOf(MalformedFileException.class)
+                        .hasMessageContaining("Column b dictionary page cannot be decompressed");
+            }
+
+            assertThat(pool.stats().outstandingBorrows()).isZero();
+        } finally {
+            pool.close();
+        }
+    }
+
+    // A footer can give a column a negative width, and the decoder of the page rejects it with a plain runtime failure.
+    @Test
+    void anyFailureStaysOutOfTheFetch() {
+        SegmentPool pool = SegmentPool.create();
+        DecodeBufferAllocator allocator = TestDecodeBuffers.ample(pool);
+        MemorySegment payload = MemorySegment.ofArray(new byte[Long.BYTES]).asReadOnly();
+        DictionaryPage page = new DictionaryPage(
+                payload,
+                Long.BYTES,
+                1,
+                Compression.uncompressed(),
+                PrimitiveKind.FIXED_LEN_BYTE_ARRAY,
+                OptionalInt.of(-1),
+                A,
+                ConcurrentHashMap.newKeySet());
+        try {
+            DictionaryPage afterTheFetch = page.decodeAhead(pool);
+
+            assertThat(afterTheFetch).isSameAs(page);
+            assertThat(pool.stats().outstandingBorrows()).isZero();
+            assertThatThrownBy(() -> afterTheFetch.decode(allocator))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("length must be non-negative");
+        } finally {
+            pool.close();
+        }
+    }
+
+    static Stream<Arguments> fetchedPrefixes() {
+        // each vector is the count of dictionary-encoded pages in the footer, and the pages kept by the mask
+        return Stream.of(Arguments.of(DICTIONARY_PAGES, 0, 2), Arguments.of(2, 4, 5));
+    }
+
+    // The first vector reads the prefixes with the pages, and the second reads them on demand.
+    @ParameterizedTest
+    @MethodSource("fetchedPrefixes")
+    void fetchedPrefixDecodesAhead(int count, int firstPage, int endPage) throws IOException {
+        SegmentPool pool = SegmentPool.create();
+        SegmentPool readerPool = SegmentPool.create();
+        DecodeBufferAllocator allocator = TestDecodeBuffers.ample(readerPool);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(writeMixedFile())) {
+            RowGroupSurvivor survivor = mixedSurvivor(source, count);
+            RowGroupFetcher fetcher = TestFetchers.over(source, mixedSchema(), mixedSchema(), pool);
+            FetchPlan plan = fetcher.planFor(survivor, Optional.of(pagesOf(survivor, firstPage, endPage)));
+
+            try (RowGroupFetch fetch = fetcher.fetch(survivor, plan, BudgetReservation.NONE)) {
+                assertThat(pool.stats().totalBorrows())
+                        .as("the fetch buffer and two scratches")
+                        .isEqualTo(3L);
+                assertThat(pool.stats().outstandingBorrows())
+                        .as("the fetch buffer")
+                        .isEqualTo(1L);
+                dictionaryOf(fetch, B).decode(allocator);
+                assertThat(readerPool.stats().totalBorrows())
+                        .as("no decode by a reader")
+                        .isZero();
+            }
+            assertThat(pool.stats().outstandingBorrows()).isZero();
+        } finally {
+            pool.close();
+            readerPool.close();
+        }
+    }
+
+    // A fetched prefix counts as a use of its column, and the whole chunks of the next row group decode ahead.
+    @Test
+    void fetchedPrefixMarksItsColumn() throws IOException {
+        SegmentPool pool = SegmentPool.create();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(writeRowGroups())) {
+            RowGroupFetcher fetcher = TestFetchers.over(source, mixedSchema(), mixedSchema(), pool);
+            try (RowGroupFetch _ = fetchFirstPage(fetcher, source, 0)) {
+                assertThat(pool.stats().totalBorrows())
+                        .as("the fetch buffer and two scratches")
+                        .isEqualTo(3L);
+            }
+
+            try (RowGroupFetch _ = fetchWhole(fetcher, source, 1)) {
+                assertThat(pool.stats().totalBorrows())
+                        .as("the fetch buffers and four scratches")
+                        .isEqualTo(6L);
+            }
+
+            assertThat(pool.stats().outstandingBorrows()).isZero();
+        } finally {
+            pool.close();
+        }
+    }
+
+    // A mask keeping each page of a column fetches its whole chunk, and no prefix stands apart.
+    @Test
+    void maskKeepingEachPageStaysLazy() throws IOException {
+        SegmentPool pool = SegmentPool.create();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(writeMixedFile())) {
+            RowGroupSurvivor survivor = mixedSurvivor(source, DICTIONARY_PAGES);
+            RowGroupFetcher fetcher = TestFetchers.over(source, mixedSchema(), mixedSchema(), pool);
+            FetchPlan plan = fetcher.planFor(survivor, Optional.of(pagesOf(survivor, 0, MIXED_PAGES)));
+
+            try (RowGroupFetch fetch = fetcher.fetch(survivor, plan, BudgetReservation.NONE)) {
+                assertThat(columnOf(fetch, B).dictionaryPage()).isPresent();
+                assertThat(pool.stats().totalBorrows()).as("the fetch buffer").isEqualTo(1L);
+            }
+
+            assertThat(pool.stats().outstandingBorrows()).isZero();
+        } finally {
+            pool.close();
+        }
+    }
+
+    // The fetch survives the corrupt prefix and gives its scratch back, and the reader of the page raises the failure.
+    @Test
+    void corruptPrefixFailsTheReader() throws IOException {
+        SegmentPool pool = SegmentPool.create();
+        DecodeBufferAllocator allocator = TestDecodeBuffers.ample();
+        Path corrupt = withCorruptDictionary(writeRowGroups(), B, 0);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(corrupt)) {
+            RowGroupFetcher fetcher = TestFetchers.over(source, mixedSchema(), mixedSchema(), pool);
+
+            try (RowGroupFetch fetch = fetchFirstPage(fetcher, source, 0)) {
+                DictionaryPage page = dictionaryOf(fetch, B);
+                assertThat(pool.stats().totalBorrows())
+                        .as("the fetch buffer and two scratches")
+                        .isEqualTo(3L);
+                assertThat(pool.stats().outstandingBorrows())
+                        .as("the fetch buffer")
+                        .isEqualTo(1L);
+                assertThatThrownBy(() -> page.decode(allocator))
+                        .isInstanceOf(MalformedFileException.class)
+                        .hasMessageContaining("Column b dictionary page cannot be decompressed");
+            }
+
+            assertThat(pool.stats().outstandingBorrows()).isZero();
+        } finally {
+            pool.close();
+        }
+    }
+
     /** One row group of {@value #PAGED_ROWS} rows over two long columns, in pages of {@value #PAGE_VALUES} values. */
     private Path writePagedColumns() throws IOException {
         WriteOptions options = WriteOptions.builder()
@@ -532,9 +799,14 @@ class RowGroupFetcherTest {
     }
 
     private static RowGroupSurvivor pagedSurvivor(ByteRangeSource source) {
+        return survivorOf(source, 0);
+    }
+
+    private static RowGroupSurvivor survivorOf(ByteRangeSource source, int rowGroup) {
         FileMetaData footer = ParquetFormat.readFooter(source);
         ParquetSchema schema = SchemaBuilder.build(footer.schema());
-        return RowGroupSurvivor.full(TestRowGroupChunks.of(footer, 0, schema, TestRowGroupChunks.reading(source)));
+        return RowGroupSurvivor.full(
+                TestRowGroupChunks.of(footer, rowGroup, schema, TestRowGroupChunks.reading(source)));
     }
 
     /** A mask keeping the rows of the first page of both columns. */
@@ -584,13 +856,51 @@ class RowGroupFetcherTest {
 
     /** A mask keeping the rows of the pages from {@code firstPage} to {@code endPage}, exclusive, of each column. */
     private static RowMask pagesOf(RowGroupSurvivor survivor, int firstPage, int endPage) {
+        long firstRow = (long) firstPage * MIXED_PAGE_VALUES;
+        long lastRow = (long) endPage * MIXED_PAGE_VALUES - 1;
+        return rowsOf(survivor, firstRow, lastRow);
+    }
+
+    /** A mask keeping the rows from {@code firstRow} to {@code lastRow}, inclusive, of each column. */
+    private static RowMask rowsOf(RowGroupSurvivor survivor, long firstRow, long lastRow) {
         Map<ColumnPath, PageIndex> pages = new HashMap<>();
         for (ColumnPath column : List.of(A, B, C)) {
             pages.put(column, survivor.chunks().pageLocations(column).orElseThrow());
         }
-        long firstRow = (long) firstPage * MIXED_PAGE_VALUES;
-        long lastRow = (long) endPage * MIXED_PAGE_VALUES - 1;
         return new RowMask(new RowRanges(List.of(new Range(firstRow, lastRow))), pages);
+    }
+
+    private Path writeRowGroups() throws IOException {
+        WriteOptions options = WriteOptions.builder()
+                .tempDir(tempDir)
+                .rowGroupSize(RowGroupSize.rows(GROUP_ROWS))
+                .pageValueLimit(GROUP_PAGE_VALUES)
+                .encodingPolicy(A.dot(), EncodingPolicy.FORCE_PLAIN)
+                .build();
+        int rowCount = GROUPS * GROUP_ROWS;
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>(rowCount);
+        for (long row = 0; row < rowCount; row++) {
+            long repeated = row % GROUP_DISTINCT_VALUES;
+            rows.add(Map.of(A, row, B, repeated, C, repeated));
+        }
+        return WriteFixtures.writeRows(tempDir.resolve("row-groups.parquet"), mixedSchema(), options, rows);
+    }
+
+    private static RowGroupFetch fetchWhole(RowGroupFetcher fetcher, ByteRangeSource source, int rowGroup) {
+        RowGroupSurvivor survivor = survivorOf(source, rowGroup);
+        FetchPlan plan = fetcher.planFor(survivor, Optional.empty());
+        return fetcher.fetch(survivor, plan, BudgetReservation.NONE);
+    }
+
+    private static RowGroupFetch fetchFirstPage(RowGroupFetcher fetcher, ByteRangeSource source, int rowGroup) {
+        RowGroupSurvivor survivor = survivorOf(source, rowGroup);
+        RowMask firstPage = rowsOf(survivor, 0, GROUP_PAGE_VALUES - 1L);
+        FetchPlan plan = fetcher.planFor(survivor, Optional.of(firstPage));
+        return fetcher.fetch(survivor, plan, BudgetReservation.NONE);
+    }
+
+    private static DictionaryPage dictionaryOf(RowGroupFetch fetch, ColumnPath path) {
+        return columnOf(fetch, path).dictionaryPage().orElseThrow();
     }
 
     private static FetchedColumnChunk columnOf(RowGroupFetch fetch, ColumnPath path) {
@@ -626,6 +936,20 @@ class RowGroupFetcherTest {
             Arrays.fill(bytes, start, start + Long.BYTES, (byte) 0xFF);
         }
         return Files.write(tempDir.resolve("unreadable-header.parquet"), bytes);
+    }
+
+    /** A copy of {@code file} with the head of a dictionary page payload overwritten, in {@code rowGroup}. */
+    private Path withCorruptDictionary(Path file, ColumnPath column, int rowGroup) throws IOException {
+        byte[] bytes = Files.readAllBytes(file);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ChunkMeta meta = survivorOf(source, rowGroup).chunks().chunk(column).orElseThrow();
+            int pageStart = Math.toIntExact(meta.chunkStart());
+            ByteArrayInputStream page = new ByteArrayInputStream(bytes, pageStart, bytes.length - pageStart);
+            ParquetFormat.readPageHeader(page);
+            int payload = bytes.length - page.available();
+            Arrays.fill(bytes, payload, payload + Long.BYTES, (byte) 0xFF);
+        }
+        return Files.write(tempDir.resolve("corrupt-dictionary.parquet"), bytes);
     }
 
     /** A unit of a plan built by hand, reading page {@code page} of {@code column}. */

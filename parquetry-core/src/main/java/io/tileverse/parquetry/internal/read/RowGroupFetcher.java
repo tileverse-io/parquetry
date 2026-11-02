@@ -56,7 +56,7 @@ import lombok.NonNull;
  * <p>A narrowed fetch leaves the dictionary page of a column out when each fetched page is known not to use it; see
  * {@link DictionaryFetch}. A prefix read on demand keeps its room in the buffer, and the fetch checks the headers of
  * the fetched pages of its column. A dictionary-encoded page takes one more read into that room. The fetch never asks
- * for a second buffer.
+ * for a second fetch buffer.
  */
 public final class RowGroupFetcher {
 
@@ -95,7 +95,7 @@ public final class RowGroupFetcher {
         this.mandatoryAllocator = mandatoryAllocator;
         this.accumulator = accumulator;
         this.learner = learner;
-        this.slicer = new ColumnChunkSlicer(fileSchema);
+        this.slicer = new ColumnChunkSlicer(fileSchema, pool);
     }
 
     /**
@@ -357,7 +357,7 @@ public final class RowGroupFetcher {
      * Reads the on-demand prefixes used by a fetched page, and returns the columns left without dictionary bytes: those
      * named by {@code plan} and those with a prefix left unread. The room of an unread prefix holds earlier bytes of
      * the pool, and this result is what keeps the slicer away from them. The prefixes share one more read of the same
-     * buffer, because a fetch holding a buffer never asks for another.
+     * buffer, because a fetch holding a fetch buffer never asks for another.
      */
     private Set<ColumnPath> settleOnDemandPrefixes(
             FetchPlan plan,

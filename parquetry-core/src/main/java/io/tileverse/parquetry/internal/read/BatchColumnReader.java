@@ -91,9 +91,10 @@ import lombok.NonNull;
  * stepped over is discarded without decompression. A reader with a row mask loads each page selected by the mask to
  * size its windows, because no header states the mask's rows.
  *
- * <p>The chunk's dictionary page stays compressed until a loaded page needs its values. The reader decodes it for that
- * page and keeps the {@link Dictionary} for the pages after it. A page in another encoding reads no dictionary, and
- * neither does a page holding only nulls. A page discarded unread decodes nothing.
+ * <p>The chunk's dictionary page stays compressed until a loaded page needs its values, unless the fetch decoded it
+ * ahead. The reader takes the {@link Dictionary} from the page for that loaded page, decoding it if needed, and keeps
+ * it for the pages after it. A page in another encoding reads no dictionary, and neither does a page holding only
+ * nulls. A page discarded unread decodes nothing.
  */
 final class BatchColumnReader {
 
@@ -1923,8 +1924,8 @@ final class BatchColumnReader {
     }
 
     /**
-     * The chunk's dictionary, or null for a chunk without a dictionary page. The first call decodes the page, and the
-     * later ones return that result. One reader consumes a chunk, hence the memo needs no synchronization.
+     * The chunk's dictionary, or null for a chunk without a dictionary page. The first call takes it from the page, and
+     * the later ones return that result. One reader consumes a chunk, hence the memo needs no synchronization.
      */
     private Dictionary<?> dictionary() {
         if (decodedDictionary == null && dictionaryPage.isPresent()) {

@@ -31,8 +31,10 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.BiFunction;
 import java.util.function.IntFunction;
+import java.util.function.IntPredicate;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
@@ -47,9 +49,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.data.WriteOptions.ParquetVersion;
+import io.tileverse.parquetry.data.WriteOptions.RowGroupSize;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
@@ -67,6 +71,7 @@ import io.tileverse.parquetry.internal.filter.LearnedPages;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
+import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -74,9 +79,10 @@ import io.tileverse.parquetry.testsupport.CountingByteRangeSource;
 import io.tileverse.parquetry.testsupport.FooterRewrite;
 
 /**
- * A dictionary is decoded when a page uses it, and a narrowed fetch reads it when a fetched page uses it. A corrupt
- * dictionary page fails the reads reaching a page using it, and the reads staying away from such pages return their
- * rows.
+ * A dictionary is decoded when a page uses it, and a narrowed fetch reads it when a fetched page uses it. A dictionary
+ * fetched as its own prefix decodes ahead, and a read decodes the later dictionaries of a column ahead once it has used
+ * one. A corrupt dictionary page fails the reads reaching a page using it, and the reads staying away from such pages
+ * return their rows.
  *
  * <p>Each file holds the same {@value #ROWS} rows in pages of {@value #PAGE_VALUES} rows, under a small dictionary
  * budget. The label and score columns repeat four values over the first {@value #DICTIONARY_ROWS} rows, and each row
@@ -89,6 +95,8 @@ import io.tileverse.parquetry.testsupport.FooterRewrite;
  *       encodings of its pages from their headers.
  *   <li>The declared file comes from parquet-java, without the score column. It has a page index and encoding
  *       statistics, and its footer gives the count of dictionary-encoded pages.
+ *   <li>The row groups file comes from parquetry's writer. It repeats those rows in {@value #ROW_GROUPS} row groups,
+ *       with a new id in each row. A read of two or more of its row groups can decode a dictionary ahead.
  * </ul>
  *
  * <p>A corrupt copy overwrites the head of a dictionary page's ZSTD frame, and the codec rejects the page. Corrupting
@@ -106,6 +114,8 @@ class DictionaryWhenNeededIT {
     private static final int DICTIONARY_PAGES = DICTIONARY_ROWS / PAGE_VALUES;
     private static final int PAGES = ROWS / PAGE_VALUES;
     private static final int DICTIONARY_BYTE_LIMIT = 40;
+    private static final int ROW_GROUPS = 8;
+    private static final int ALL_GROUPS_ROWS = ROW_GROUPS * ROWS;
 
     /** The smallest dictionary budget accepted by parquet-java. */
     private static final int PARQUET_JAVA_DICTIONARY_BYTE_LIMIT = 64;
@@ -125,18 +135,24 @@ class DictionaryWhenNeededIT {
     private static final ReadOptions NO_PAGE_INDEX =
             ReadOptions.builder().useColumnIndexFilter(false).build();
 
+    /** Fetches each row group after a reader finished the row group before it. */
+    private static final ParquetRuntime SERIAL =
+            ParquetRuntime.defaultRuntime().withPrefetchDepth(0).withMaxDecodeAhead(0);
+
     @TempDir
     static Path tempDir;
 
     private static Path file;
     private static Path headersFile;
     private static Path declaredFile;
+    private static Path rowGroupsFile;
 
     @BeforeAll
     static void writeTheFiles() throws IOException {
         file = writeWithParquetry("mixed.parquet", ParquetVersion.V2_0);
         headersFile = writeWithParquetry("headers.parquet", ParquetVersion.V1_1);
         declaredFile = writeWithParquetJava("declared.parquet");
+        rowGroupsFile = writeRowGroups("row-groups.parquet");
     }
 
     @BeforeEach
@@ -156,6 +172,28 @@ class DictionaryWhenNeededIT {
                 .dictionaryByteLimit(DICTIONARY_BYTE_LIMIT)
                 .build();
         return WriteFixtures.writeRows(tempDir.resolve(fileName), schema, options, rowsToWrite());
+    }
+
+    private static Path writeRowGroups(String fileName) throws IOException {
+        ParquetSchema schema = WriteFixtures.schemaOf(
+                WriteFixtures.requiredLeaf(ID.name(), PrimitiveKind.INT64),
+                WriteFixtures.requiredLeaf(LABEL.name(), PrimitiveKind.BYTE_ARRAY),
+                WriteFixtures.requiredLeaf(SCORE.name(), PrimitiveKind.DOUBLE));
+        WriteOptions options = WriteOptions.builder()
+                .tempDir(tempDir)
+                .rowGroupSize(RowGroupSize.rows(ROWS))
+                .pageValueLimit(PAGE_VALUES)
+                .dictionaryByteLimit(DICTIONARY_BYTE_LIMIT)
+                .build();
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>(ALL_GROUPS_ROWS);
+        for (int group = 0; group < ROW_GROUPS; group++) {
+            for (Map<ColumnPath, Object> row : rowsToWrite()) {
+                Map<ColumnPath, Object> values = new HashMap<>(row);
+                values.put(ID, (long) rows.size());
+                rows.add(values);
+            }
+        }
+        return WriteFixtures.writeRows(tempDir.resolve(fileName), schema, options, rows);
     }
 
     private static Path writeWithParquetJava(String fileName) throws IOException {
@@ -200,6 +238,7 @@ class DictionaryWhenNeededIT {
         return row < DICTIONARY_ROWS ? row % 4 : 1_000.0 + row;
     }
 
+    // The page index narrows the reads by default, and their fetches decode the corrupt prefix ahead.
     @Test
     void corruptDictionaryFailsItsRows() throws IOException {
         Path corrupt = copyWithCorruptDictionary(LABEL);
@@ -384,6 +423,51 @@ class DictionaryWhenNeededIT {
         assertThat(fetched.bytes() - leftOut.bytes()).isEqualTo(dictionaryBytes(declaredFile, LABEL));
     }
 
+    static Stream<Arguments> readsOfTheRowGroups() {
+        // each vector is a predicate and the rows held by it
+        IntPredicate oneRepeatedLabel = row -> row % ROWS < DICTIONARY_ROWS && row % 4 == 1;
+        return Stream.of(
+                Arguments.of(col(ID).gtEq(0L), (IntPredicate) _ -> true),
+                Arguments.of(col(LABEL).eq(labelOf(1)), oneRepeatedLabel),
+                Arguments.of(
+                        Pred.and(col(ID).gtEq(50L), col(LABEL).eq(labelOf(1))),
+                        oneRepeatedLabel.and(row -> row >= 50)));
+    }
+
+    // The serial read reaches the fetch of each later row group after a reader used the dictionaries of the columns.
+    @ParameterizedTest
+    @MethodSource("readsOfTheRowGroups")
+    void decodeAheadKeepsEachRow(Predicate predicate, IntPredicate holds) {
+        List<String> written = IntStream.range(0, ALL_GROUPS_ROWS)
+                .filter(holds)
+                .mapToObj(row -> textOf(row, labelOf(row % ROWS), scoreOf(row % ROWS)))
+                .toList();
+
+        List<String> serial = rowsOfTheGroups(predicate, SERIAL);
+        List<String> parallel = rowsOfTheGroups(predicate, ParquetRuntime.defaultRuntime());
+
+        assertThat(serial).isEqualTo(written);
+        assertThat(parallel).isEqualTo(serial);
+    }
+
+    // The first row group uses the dictionary of the label, and the fetch of the second decodes its corrupt page ahead.
+    @Test
+    void corruptPageDecodedAhead() throws IOException {
+        Path corrupt = copyWithCorruptDictionary(rowGroupsFile, 1, LABEL);
+        Predicate secondGroupPlainPages = Pred.and(col(ID).gtEq((long) ROWS + DICTIONARY_ROWS), col(ID).lt(2L * ROWS));
+        Predicate secondGroupFirstPage = Pred.and(col(ID).gtEq((long) ROWS), col(ID).lt((long) ROWS + PAGE_VALUES));
+        Predicate neverReaching = Pred.or(ON_A_DICTIONARY_PAGE, secondGroupPlainPages);
+        Predicate reaching = Pred.or(ON_A_DICTIONARY_PAGE, secondGroupFirstPage);
+        List<String> rowsLeft =
+                Stream.concat(firstLabels().stream(), plainLabels().stream()).toList();
+
+        assertThat(serialLabels(corrupt, neverReaching, ReadOptions.DEFAULTS)).isEqualTo(rowsLeft);
+        assertThat(serialLabels(corrupt, neverReaching, NO_PAGE_INDEX)).isEqualTo(rowsLeft);
+        assertThatThrownBy(() -> serialLabels(corrupt, reaching, ReadOptions.DEFAULTS))
+                .isInstanceOf(ParquetFormatException.class)
+                .hasMessageContaining("dictionary page");
+    }
+
     /**
      * A copy of the declared file with the PLAIN pages of the label column ahead of its dictionary-encoded pages. No
      * writer checked so far orders them this way, and the format allows it. The id column stays as written, and the
@@ -489,6 +573,28 @@ class DictionaryWhenNeededIT {
                 new EncodingStats(PageType.DATA_PAGE, Encoding.PLAIN, PAGES - dictionaryPages));
     }
 
+    private static List<String> rowsOfTheGroups(Predicate predicate, ParquetRuntime runtime) {
+        Projection projection = Projection.ofPhysical(List.of(ID, LABEL, SCORE));
+        try (ByteRangeSource source = ByteRangeSource.ofFile(rowGroupsFile)) {
+            ParquetFileReader reader = ParquetFileReader.open(source, runtime, Optional.empty());
+            try (Stream<ParquetRecord> rows = reader.read(predicate, projection, ReadOptions.DEFAULTS)) {
+                return rows.map(row -> textOf(row.getLong(ID), row.getString(LABEL), row.getDouble(SCORE)))
+                        .toList();
+            }
+        }
+    }
+
+    private static String textOf(long id, String label, double score) {
+        return id + " " + label + " " + score;
+    }
+
+    private static List<String> serialLabels(Path parquet, Predicate predicate, ReadOptions options) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(parquet)) {
+            ParquetFileReader reader = ParquetFileReader.open(source, SERIAL, Optional.empty());
+            return read(reader, predicate, options, LABEL, ParquetRecord::getString);
+        }
+    }
+
     private static <T> List<T> cells(int firstRow, int endRow, IntFunction<T> cellOf) {
         return IntStream.range(firstRow, endRow).mapToObj(cellOf).toList();
     }
@@ -527,33 +633,39 @@ class DictionaryWhenNeededIT {
 
     /** A copy of the file with the first bytes of the dictionary page payload of {@code column} overwritten. */
     private static Path copyWithCorruptDictionary(ColumnPath column) throws IOException {
-        byte[] bytes = Files.readAllBytes(file);
-        int payload = dictionaryPayloadOffset(bytes, column);
+        return copyWithCorruptDictionary(file, 0, column);
+    }
+
+    /**
+     * A copy of {@code parquet} with the first bytes of the dictionary page payload of {@code column} in row group
+     * {@code rowGroup} overwritten.
+     */
+    private static Path copyWithCorruptDictionary(Path parquet, int rowGroup, ColumnPath column) throws IOException {
+        byte[] bytes = Files.readAllBytes(parquet);
+        int payload = dictionaryPayloadOffset(bytes, chunkOf(parquet, rowGroup, column));
         Arrays.fill(bytes, payload, payload + Long.BYTES, (byte) 0xFF);
         Path copy = Files.createTempFile(tempDir, "corrupt-", ".parquet");
         return Files.write(copy, bytes);
     }
 
-    /** The offset of the first byte after the header of the dictionary page of {@code column}. */
-    private static int dictionaryPayloadOffset(byte[] bytes, ColumnPath column) {
-        int pageOffset = Math.toIntExact(dictionaryPageOffset(column));
+    /** The offset of the first byte after the header of the dictionary page of {@code chunk}. */
+    private static int dictionaryPayloadOffset(byte[] bytes, ColumnChunk chunk) {
+        long dictionaryPage =
+                chunk.metaData().orElseThrow().dictionaryPageOffset().orElseThrow();
+        int pageOffset = Math.toIntExact(dictionaryPage);
         ByteArrayInputStream page = new ByteArrayInputStream(bytes, pageOffset, bytes.length - pageOffset);
         ParquetFormat.readPageHeader(page);
         return bytes.length - page.available();
     }
 
-    private static long dictionaryPageOffset(ColumnPath column) {
-        return chunkOf(file, column)
-                .metaData()
-                .orElseThrow()
-                .dictionaryPageOffset()
-                .orElseThrow();
+    private static ColumnChunk chunkOf(Path parquet, ColumnPath column) {
+        return chunkOf(parquet, 0, column);
     }
 
-    private static ColumnChunk chunkOf(Path parquet, ColumnPath column) {
+    private static ColumnChunk chunkOf(Path parquet, int rowGroup, ColumnPath column) {
         try (ByteRangeSource source = ByteRangeSource.ofFile(parquet)) {
             FileMetaData footer = ParquetFormat.readFooter(source);
-            List<ColumnChunk> chunks = footer.rowGroups().get(0).columns();
+            List<ColumnChunk> chunks = footer.rowGroups().get(rowGroup).columns();
             for (ColumnChunk chunk : chunks) {
                 ColumnMetaData meta = chunk.metaData().orElseThrow();
                 if (ColumnPath.of(meta.pathInSchema()).equals(column)) {

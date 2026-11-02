@@ -334,15 +334,17 @@ What each piece guarantees:
   short-lived confined `Arena`, decoded into heap arrays, and the arena is closed
   before the next page. With a `RowMask`, `PageCursor` skips non-surviving pages
   outright, and surviving pages are compacted to the surviving rows.
-- **A dictionary decodes on the first page using it, on the thread decoding that
-  page.** The fetch reads and checks the header of a fetched dictionary page, and
-  the page stays compressed in the fetch buffer. `BatchColumnReader` decodes it
-  for the first page needing its values and keeps the result for the chunk. A page
-  in another encoding reads no dictionary, and neither does a page holding only
-  nulls. A flat column read without a row mask keeps its dictionary undecoded in
-  two cases: no surviving row reaches a dictionary-encoded page of a column mixing
-  encodings, or an output-only column or a leaf of a later stage (section 6) has
-  no surviving row in a row group or a run of pages. A leaf of the first stage
+- **In a chunk fetched whole, a dictionary decodes on the first page using it, on
+  the thread decoding that page, until the read has used a dictionary of its
+  column.** The fetch reads and checks the header of a fetched dictionary page,
+  and the page stays compressed in the fetch buffer. `BatchColumnReader` decodes
+  it for the first page needing its values and keeps the result for the chunk. A
+  page in another encoding reads no dictionary, and neither does a page holding
+  only nulls. Before that first use, a flat column read without a row mask keeps
+  its dictionary undecoded in two cases: no surviving row reaches a
+  dictionary-encoded page of a column mixing encodings, or an output-only column
+  or a leaf of a later stage (section 6) has no surviving row in a row group or a
+  run of pages. A leaf of the first stage
   decodes its pages in order and needs its dictionary. An output column with only
   dictionary-encoded pages needs it too, in a row group with a surviving row. A
   repeated column and a reader under a row mask load their pages to size their
@@ -354,6 +356,21 @@ What each piece guarantees:
   read reaches a page using it. An unreadable dictionary page header fails the
   fetch, as does a header declaring a negative size or value count, or a payload
   past the fetched bytes.
+- **A read decodes a dictionary ahead, on the fetch thread, once it has used a
+  dictionary of that column.** A row group fetched before that first use stays
+  lazy. A read has few decode workers, at most three ahead of the consumer by
+  default, and the fetch threads add parallelism on a long read. A
+  dictionary-encoded column of a long scan uses its dictionary in each row
+  group. Decoding it during the fetch costs no more CPU, and the reader finds it
+  ready. A short read of whole chunks has no earlier row group to learn from. Its
+  dictionaries stay lazy, and a file without a page index keeps the saving. A
+  dictionary fetched as its own prefix on a narrowed chunk counts as a use of its
+  column and decodes ahead at once. Page pruning picked the fetched pages, and a
+  use is likely. The thread that read the bytes decompresses them faster than
+  another core. A dictionary decoded ahead and left unused costs that decode and
+  nothing more. The decode ahead borrows its scratch from the pool, and a borrow
+  never waits. It never fails the fetch. When it fails, the page stays undecoded,
+  and a read reaching a page using it raises the failure.
 - **A narrowed fetch reads a dictionary page when a fetched page uses it.** The
   dictionary page sits in the prefix of its chunk, the bytes before the first
   data page. A fetch narrowed by a row mask leaves the prefix out when each
@@ -569,7 +586,7 @@ classDiagram
 | Metadata cache (footers + learned pages) | `data/FooterMetadataCache.java`, `data/ParquetCaches.java` |
 | Survivors + page-skip mask | `internal/read/RowGroupSurvivor.java`, `internal/read/RowMask.java`, `internal/read/page/PageSelection.java` |
 | Fetch | `internal/read/RowGroupFetcher.java`, `internal/read/RowGroupPrefetcher.java` |
-| Dictionary page of a narrowed fetch | `internal/read/DictionaryFetch.java`, `internal/read/DictionarySource.java`, `internal/read/ColumnChunkSlicer.java` |
+| Dictionary page of a fetch | `internal/read/DictionaryFetch.java`, `internal/read/DictionarySource.java`, `internal/read/ColumnChunkSlicer.java`, `internal/read/DictionaryPage.java` |
 | Parallel decode + budgets | `internal/read/ParallelDecodeCoordinator.java`, `internal/read/StreamingBatchSource.java`, `runtime/DecodeBudget.java`, `internal/read/BatchRowGroupReader.java` |
 | Column / page decode | `internal/read/BatchColumnReader.java`, `internal/read/page/PageCursor.java`, `internal/read/page/PageDecoder.java` |
 | Masked scan (filtered decode) | `internal/read/MaskedScanRowGroupReader.java`, `internal/read/MaskedValues.java`, `internal/read/ScanStages.java`, `internal/read/ValueDecode.java` |

@@ -34,6 +34,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 import org.apache.parquet.format.DataPageHeader;
@@ -1685,7 +1686,14 @@ class BatchColumnReaderTest {
     static DictionaryPage dictionaryPageOf(PrimitiveKind kind, byte[] plainEntries, int valueCount) {
         MemorySegment payload = MemorySegment.ofArray(plainEntries).asReadOnly();
         return new DictionaryPage(
-                payload, plainEntries.length, valueCount, Compression.uncompressed(), kind, OptionalInt.empty(), PATH);
+                payload,
+                plainEntries.length,
+                valueCount,
+                Compression.uncompressed(),
+                kind,
+                OptionalInt.empty(),
+                PATH,
+                ConcurrentHashMap.newKeySet());
     }
 
     /**

@@ -20,6 +20,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import io.tileverse.parquetry.data.Compression;
 import io.tileverse.parquetry.format.DictionaryPageHeader;
@@ -32,6 +34,7 @@ import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.internal.read.page.MemorySegmentInputStream;
+import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.LevelMaxima;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -44,14 +47,29 @@ import lombok.NonNull;
  * Slices one column chunk's fetched bytes out of the fetch buffer, producing a {@link FetchedColumnChunk} view whose
  * runs cover just the data-page region. The slicer reads and checks the header of a fetched dictionary page and
  * describes the page as a {@link DictionaryPage}. The page stays compressed in the fetch buffer until a column reader
- * needs its values.
+ * needs its values, unless the slicer decodes it ahead.
+ *
+ * <p>A slicer lives for one read. It decodes the dictionary of a column ahead, on the fetch thread, once the read has
+ * used a dictionary of that column. A dictionary-encoded column of a long scan uses its dictionary in each row group.
+ * Decoding it during the fetch costs no more CPU, and the fetch threads work beside the few decode workers of the read.
+ * A short read of whole chunks has no earlier row group to learn from, and its dictionaries stay lazy. A file without a
+ * page index keeps that saving.
+ *
+ * <p>A dictionary fetched as its own prefix on a narrowed chunk counts as a use of its column, and it decodes ahead at
+ * once. Page pruning picked the fetched pages, and a use is likely. The thread that read the bytes decompresses them
+ * faster than another core.
  */
 final class ColumnChunkSlicer {
 
     private final ParquetSchema fileSchema;
+    private final SegmentPool pool;
+    // The columns with a dictionary used by the read. Decode threads add to the set while fetch threads read it.
+    private final Set<ColumnPath> columnsUsingDictionary = ConcurrentHashMap.newKeySet();
 
-    ColumnChunkSlicer(@NonNull ParquetSchema fileSchema) {
+    /** @param pool lends the scratch of a decode ahead */
+    ColumnChunkSlicer(@NonNull ParquetSchema fileSchema, @NonNull SegmentPool pool) {
         this.fileSchema = fileSchema;
+        this.pool = pool;
     }
 
     /**
@@ -72,11 +90,17 @@ final class ColumnChunkSlicer {
                     + "; every fetched chunk holds at least one run of pages");
         }
         return switch (source) {
-            case DictionarySource.Prefix(MemorySegment bytes) ->
-                chunkOf(path, meta, runs, dictionaryPageOfPrefix(bytes, meta, path));
+            case DictionarySource.Prefix(MemorySegment bytes) -> chunkOfPrefix(bytes, runs, meta, path);
             case DictionarySource.FirstRun _ -> chunkSniffingFirstRun(runs, meta, path);
             case DictionarySource.LeftOut _ -> chunkOf(path, meta, runs, Optional.empty());
         };
+    }
+
+    /** The chunk of a column fetched with its dictionary page as its own prefix, a use of the column's dictionary. */
+    private FetchedColumnChunk chunkOfPrefix(
+            MemorySegment prefix, List<DataPageRun> runs, ChunkMeta meta, ColumnPath path) {
+        columnsUsingDictionary.add(path);
+        return chunkOf(path, meta, runs, dictionaryPageOfPrefix(prefix, meta, path));
     }
 
     private FetchedColumnChunk chunkSniffingFirstRun(List<DataPageRun> runs, ChunkMeta meta, ColumnPath path) {
@@ -217,7 +241,10 @@ final class ColumnChunkSlicer {
         }
     }
 
-    /** The undecoded page, with the column's {@link PrimitiveKind} and optional {@code typeLength} for its decode. */
+    /**
+     * The page, with the column's {@link PrimitiveKind} and optional {@code typeLength} for its decode. It comes
+     * decoded ahead when the read has used a dictionary of the column, and a fetched prefix counts as such a use.
+     */
     private DictionaryPage dictionaryPageOf(
             ChunkMeta meta,
             ColumnPath path,
@@ -227,8 +254,19 @@ final class ColumnChunkSlicer {
         Compression codec = Compression.forWireCodec(meta.codec());
         PrimitiveKind kind = primitiveKindOf(meta.type());
         OptionalInt typeLength = typeLengthFor(kind, path);
-        return new DictionaryPage(
-                compressedPayload, uncompressedSize, dictHeader.numValues(), codec, kind, typeLength, path);
+        DictionaryPage page = new DictionaryPage(
+                compressedPayload,
+                uncompressedSize,
+                dictHeader.numValues(),
+                codec,
+                kind,
+                typeLength,
+                path,
+                columnsUsingDictionary);
+        if (columnsUsingDictionary.contains(path)) {
+            return page.decodeAhead(pool);
+        }
+        return page;
     }
 
     /** The name of a column in a failure message. */
