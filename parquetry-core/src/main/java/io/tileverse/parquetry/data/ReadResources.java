@@ -26,6 +26,7 @@ import io.tileverse.parquetry.internal.read.DecodeBufferAllocator;
 import io.tileverse.parquetry.internal.read.FetchBufferAllocator;
 import io.tileverse.parquetry.internal.read.FetchSpillStore;
 import io.tileverse.parquetry.internal.read.MaskedScan;
+import io.tileverse.parquetry.internal.read.PageIndexLearner;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator.DecodeObservation;
 import io.tileverse.parquetry.internal.read.RowGroupFetcher;
@@ -65,6 +66,8 @@ final class ReadResources {
      * Wraps the fetch prefetcher in a {@link ParallelDecodeCoordinator} that decodes row groups in parallel on the
      * shared decode pool while preserving file order. Closing the returned coordinator drains in-flight decodes and
      * cascades to {@link RowGroupPrefetcher#close()}; the per-read fetch executor still shuts down with the read.
+     *
+     * @param learner the learner of the read, receiving the row groups fetched whole when it may learn them
      */
     @SuppressWarnings("java:S107") // decode-coordinator wiring needs every input; splitting it would obscure, not help
     ParallelDecodeCoordinator newDecodeCoordinator(
@@ -78,10 +81,11 @@ final class ReadResources {
             DecodeObservation observation,
             List<RowPositionSynthesis> rowPositions,
             Optional<RowGroupGate> rowGroupGate,
-            Optional<RowGroupPlanner> planner) {
+            Optional<RowGroupPlanner> planner,
+            PageIndexLearner learner) {
         RowGroupPlans plans = newPlans(survivors, projectedSchema, decodeMasks, options, planner);
         RowGroupPrefetcher prefetcher =
-                newPrefetcher(survivors, plans, projectedSchema, accumulator, observation.wantsTimings());
+                newPrefetcher(survivors, plans, projectedSchema, accumulator, observation.wantsTimings(), learner);
         List<Boolean> recordEvalRequired = recordEvalFlagsFor(survivors);
         DecodeBufferAllocator decodeBufferAllocator = newDecodeBufferAllocator();
         return new ParallelDecodeCoordinator(
@@ -140,19 +144,21 @@ final class ReadResources {
     /**
      * Builds the fetcher and the prefetch pipeline for one read. The prefetcher owns a fresh per-read virtual-thread
      * executor; closing the returned stream cascades to {@link RowGroupPrefetcher#close()}, which shuts the executor
-     * down. No executor outlives the read.
+     * down. No executor outlives the read. The fetcher hands the row groups fetched whole to {@code learner}, when it
+     * may learn them.
      */
     private RowGroupPrefetcher newPrefetcher(
             List<RowGroupSurvivor> survivors,
             RowGroupPlans plans,
             ParquetSchema projectedSchema,
             FetchAccumulator accumulator,
-            boolean wantsTimings) {
+            boolean wantsTimings,
+            PageIndexLearner learner) {
         FetchSpillStore spillStore = new FetchSpillStore(runtime.spillDir(), runtime.diskBudget());
         FetchBufferAllocator mandatoryAllocator = new FetchBufferAllocator(
                 runtime.segmentPool(), runtime.fetchBudget(), spillStore, runtime.mandatoryBufferWait());
         RowGroupFetcher fetcher = new RowGroupFetcher(
-                source, fileSchema, projectedSchema, runtime.segmentPool(), mandatoryAllocator, accumulator);
+                source, fileSchema, projectedSchema, runtime.segmentPool(), mandatoryAllocator, accumulator, learner);
         ExecutorService executor = Executors.newThreadPerTaskExecutor(
                 Thread.ofVirtual().name("parquetry-fetch-", 0).factory());
         try {

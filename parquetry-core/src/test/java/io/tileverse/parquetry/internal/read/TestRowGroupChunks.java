@@ -85,15 +85,23 @@ final class TestRowGroupChunks {
 
     static RowGroupChunks of(
             FileMetaData footer, int rowGroupIndex, ParquetSchema fileSchema, IndexSectionLoader loader) {
-        LeafIndex leaves = LeafIndex.of(fileSchema);
-        return RowGroupChunks.of(CompactFooter.encode(footer, leaves), rowGroupIndex, leaves, fileSchema, loader);
+        return of(footer, rowGroupIndex, fileSchema, loader, LearnedPageIndexes.NONE);
     }
 
     /** Builds the view over a row group assembled by hand, with no file around it. */
     static RowGroupChunks of(RowGroup rowGroup, ParquetSchema fileSchema, IndexSectionLoader loader) {
+        return of(rowGroup, fileSchema, loader, LearnedPageIndexes.NONE);
+    }
+
+    /**
+     * Builds the view over a row group assembled by hand, with no file around it. A chunk without an offset index takes
+     * its pages from {@code learned}.
+     */
+    static RowGroupChunks of(
+            RowGroup rowGroup, ParquetSchema fileSchema, IndexSectionLoader loader, LearnedPageIndexes learned) {
         FileMetaData footer =
                 FileMetaData.builder().rowGroups(List.of(rowGroup)).build();
-        return of(footer, 0, fileSchema, loader);
+        return of(footer, 0, fileSchema, loader, learned);
     }
 
     static List<RowGroupChunks> allOf(FileMetaData footer, ParquetSchema fileSchema, IndexSectionLoader loader) {
@@ -101,8 +109,23 @@ final class TestRowGroupChunks {
         CompactFooter compact = CompactFooter.encode(footer, leaves);
         List<RowGroupChunks> views = new ArrayList<>(compact.rowGroupCount());
         for (int rowGroupIndex = 0; rowGroupIndex < compact.rowGroupCount(); rowGroupIndex++) {
-            views.add(RowGroupChunks.of(compact, rowGroupIndex, leaves, fileSchema, loader));
+            views.add(RowGroupChunks.of(compact, rowGroupIndex, leaves, fileSchema, loader, LearnedPageIndexes.NONE));
         }
         return views;
+    }
+
+    /**
+     * Builds the view over row group {@code rowGroupIndex} of {@code footer}. A chunk without an offset index takes its
+     * pages from {@code learned}.
+     */
+    static RowGroupChunks of(
+            FileMetaData footer,
+            int rowGroupIndex,
+            ParquetSchema fileSchema,
+            IndexSectionLoader loader,
+            LearnedPageIndexes learned) {
+        LeafIndex leaves = LeafIndex.of(fileSchema);
+        CompactFooter compact = CompactFooter.encode(footer, leaves);
+        return RowGroupChunks.of(compact, rowGroupIndex, leaves, fileSchema, loader, learned);
     }
 }

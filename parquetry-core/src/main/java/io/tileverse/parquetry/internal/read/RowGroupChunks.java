@@ -31,6 +31,7 @@ import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.internal.filter.ColumnSummary;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnBloom;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.ColumnStats;
+import io.tileverse.parquetry.internal.filter.LearnedPages;
 import io.tileverse.parquetry.internal.filter.NaNCells;
 import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.filter.StatsEvaluator;
@@ -51,7 +52,9 @@ import lombok.NonNull;
  * resolves a column path to that row group's chunk and serves the per-column metadata needed by the read path
  * (primitive kind, flatness, the inline statistics), and it memoizes the lazily-loaded index sections - a column's
  * {@link OffsetIndex}, {@link ColumnIndex}, and bloom filter are each read at most once per call no matter how many
- * pipeline stages ask. The two page index sections reach callers as a validated {@link PageIndex} alone.
+ * pipeline stages ask. The two page index sections reach callers as a validated {@link PageIndex} alone. A chunk
+ * without an offset index in the footer takes its pages from the {@link LearnedPageIndexes} of the file, once a read
+ * has learned them.
  *
  * <p>Construction is cheap and side-effect free. Index sections load on first access through the injected
  * {@link IndexSectionLoader}. When a phase knows its whole set of sections up front, it calls
@@ -64,6 +67,10 @@ import lombok.NonNull;
  * loaded during filter evaluation and mask building, both of which run on the consumer thread before decode workers
  * start; neither the view nor the loader holds state touched by decode workers. A future change that loads sections
  * from a worker thread would need to guard the memo below and that map.
+ *
+ * <p>{@link #chunk}, {@link #ordinalOf}, {@link #primitiveKind}, {@link #logicalType}, {@link #isFlat},
+ * {@link #numRows} and {@link #rowGroupIndex} read only the schema, its leaf index and the footer. They memoize
+ * nothing, and a fetch thread may call them.
  */
 public final class RowGroupChunks {
 
@@ -75,6 +82,7 @@ public final class RowGroupChunks {
     private final LeafIndex leaves;
     private final ParquetSchema fileSchema;
     private final IndexSectionLoader loader;
+    private final LearnedPageIndexes learned;
 
     private final Map<ColumnPath, Optional<PageIndex>> pageLocationsMemo = new HashMap<>();
     private final Map<ColumnPath, Optional<PageIndex>> pageIndexMemo = new HashMap<>();
@@ -86,22 +94,29 @@ public final class RowGroupChunks {
             int rowGroupIndex,
             LeafIndex leaves,
             ParquetSchema fileSchema,
-            IndexSectionLoader loader) {
+            IndexSectionLoader loader,
+            LearnedPageIndexes learned) {
         this.footer = footer;
         this.rowGroupIndex = rowGroupIndex;
         this.leaves = leaves;
         this.fileSchema = fileSchema;
         this.loader = loader;
+        this.learned = learned;
     }
 
-    /** Builds the view over row group {@code rowGroupIndex}; nothing is read from the blob until a lookup asks. */
+    /**
+     * Builds the view over row group {@code rowGroupIndex}; nothing is read from the blob until a lookup asks.
+     *
+     * @param learned the page indexes learned for the file, consulted for a chunk without an offset index
+     */
     public static RowGroupChunks of(
             @NonNull CompactFooter footer,
             int rowGroupIndex,
             @NonNull LeafIndex leaves,
             @NonNull ParquetSchema fileSchema,
-            @NonNull IndexSectionLoader loader) {
-        return new RowGroupChunks(footer, rowGroupIndex, leaves, fileSchema, loader);
+            @NonNull IndexSectionLoader loader,
+            @NonNull LearnedPageIndexes learned) {
+        return new RowGroupChunks(footer, rowGroupIndex, leaves, fileSchema, loader, learned);
     }
 
     /** The row group's position in file order. */
@@ -115,11 +130,16 @@ public final class RowGroupChunks {
 
     /** The column chunk for {@code path}, or empty when the row group has no such column. */
     public Optional<ChunkMeta> chunk(ColumnPath path) {
-        int leaf = leaves.ordinalOf(path);
+        int leaf = ordinalOf(path);
         if (leaf == LeafIndex.UNKNOWN) {
             return Optional.empty();
         }
         return footer.chunkIfPresent(rowGroupIndex, leaf);
+    }
+
+    /** The leaf ordinal of {@code path} in the file schema, or {@link LeafIndex#UNKNOWN} for a path of no leaf. */
+    public int ordinalOf(ColumnPath path) {
+        return leaves.ordinalOf(path);
     }
 
     /** The primitive kind of {@code path}, or empty for non-primitive or unknown paths. */
@@ -130,7 +150,7 @@ public final class RowGroupChunks {
     }
 
     /** The logical type annotation of {@code path}, or empty when absent or when the path is not a primitive. */
-    private Optional<LogicalType> logicalType(ColumnPath path) {
+    public Optional<LogicalType> logicalType(ColumnPath path) {
         return fileSchema
                 .find(path)
                 .flatMap(node -> node instanceof SchemaNode.Primitive p ? p.logicalType() : Optional.empty());
@@ -303,20 +323,24 @@ public final class RowGroupChunks {
     }
 
     /**
-     * The page index of {@code path} with the statistics of its column index, memoized. Without a column index that
-     * agrees with its pages, the page index comes without statistics. It is empty when the column has no offset index
-     * passing {@link PageIndex#declared}. Loading it reads the offset index, and the column index when the pages pass
-     * validation. A later {@link #pageLocations} of the same column does not read again.
+     * The page index of {@code path} with its statistics, memoized. Declared pages take the statistics of the column
+     * index of the chunk, and come without statistics when it does not agree with them. Learned pages come with the
+     * statistics of their page headers. The result is empty when the column has no pages; see {@link #pageLocations}.
+     * Loading declared pages reads the offset index, and the column index when the pages pass validation. Loading
+     * learned pages reads no offset index, and the column index only when the footer declares one. A later
+     * {@link #pageLocations} of the same column does not read again.
      */
     public Optional<PageIndex> pageIndex(ColumnPath path) {
         return pageIndexMemo.computeIfAbsent(path, this::loadPageIndex);
     }
 
     /**
-     * The pages of {@code path}, memoized, or empty when the column has no offset index passing
-     * {@link PageIndex#declared}. A row mask needs the pages of each scanned column, and the statistics of none. The
-     * pages have statistics when {@link #pageIndex} loaded the column first, and none otherwise: callers must not rely
-     * on either.
+     * The pages of {@code path}, memoized. They come from the offset index of the chunk, validated by
+     * {@link PageIndex#declared}. A chunk without an offset index takes the pages learned for it, validated by
+     * {@link PageIndex#learned}. A chunk takes them too when its offset index fails to read. The result is empty when
+     * the pages fail validation, and when the chunk has neither source. A row mask needs the pages of each scanned
+     * column, and the statistics of none. The pages may come with statistics or without, and callers must not rely on
+     * either.
      */
     public Optional<PageIndex> pageLocations(ColumnPath path) {
         if (pageIndexMemo.containsKey(path)) {
@@ -373,7 +397,7 @@ public final class RowGroupChunks {
         ChunkMeta chunk = found.orElseThrow();
         Optional<OffsetIndex> offsetIndex = readOffsetIndex(chunk);
         if (offsetIndex.isEmpty()) {
-            return Optional.empty();
+            return learnedPages(path, chunk);
         }
         return PageIndex.declared(
                 offsetIndex.orElseThrow(), chunk.chunkStart(), chunk.totalCompressedSize(), numRows());
@@ -389,6 +413,21 @@ public final class RowGroupChunks {
         } catch (RuntimeException _) {
             return Optional.empty();
         }
+    }
+
+    /**
+     * The pages learned for the chunk of {@code path} by an earlier read, with the statistics of their page headers.
+     * The result is empty when no read learned them, when the column has no primitive kind, and when the pages fail
+     * validation.
+     */
+    private Optional<PageIndex> learnedPages(ColumnPath path, ChunkMeta chunk) {
+        Optional<PrimitiveKind> kind = primitiveKind(path);
+        if (kind.isEmpty()) {
+            return Optional.empty();
+        }
+        Optional<LearnedPages> entry = learned.get(rowGroupIndex, ordinalOf(path));
+        Optional<LogicalType> logicalType = logicalType(path);
+        return entry.flatMap(pages -> PageIndex.learned(pages, chunk, numRows(), kind.orElseThrow(), logicalType));
     }
 
     private Optional<ColumnBloom> loadBloom(ColumnPath path) {

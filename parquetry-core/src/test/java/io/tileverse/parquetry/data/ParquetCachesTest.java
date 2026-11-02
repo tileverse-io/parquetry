@@ -21,11 +21,15 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.internal.filter.LearnedPages;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 import io.tileverse.cache.Cache;
@@ -35,13 +39,18 @@ import io.tileverse.cache.CaffeineCache;
 /**
  * Pins how far the process-wide reset reaches. Opening a file fills the footer metadata cache, and the reset must drain
  * that one together with every other cache of the shared manager, the storage layer's range cache among them. A
- * local-file read opens no range cache, and a cache registered by the test takes its place.
+ * local-file read opens no range cache, and a cache registered by the test takes its place. The learned page indexes
+ * held by the metadata cache go with its footers.
  */
 class ParquetCachesTest {
 
     private static final String FIXTURE = "parquetry/geo/buildings-gp110-bbox-covering.parquet";
 
     private static final String ANOTHER_CACHE_NAME = "parquetry-cache-reset-test";
+
+    private static final String LEARNED_FILE = "mem://reset-learned.parquet";
+
+    private static final long LEARNED_FILE_LENGTH = 4096L;
 
     @TempDir
     Path tempDir;
@@ -67,6 +76,19 @@ class ParquetCachesTest {
         assertThat(populatedCacheNames()).isEmpty();
     }
 
+    @Test
+    void clearAllDropsLearnedPages() {
+        FooterMetadataCache.learnedPagesIfAbsent(LEARNED_FILE, LEARNED_FILE_LENGTH, 0, 0, onePageEntry());
+        assertThat(FooterMetadataCache.learnedPages(LEARNED_FILE, LEARNED_FILE_LENGTH, 0, 0))
+                .as("the learned entry before the reset")
+                .isPresent();
+
+        ParquetCaches.clearAll();
+
+        assertThat(FooterMetadataCache.learnedPages(LEARNED_FILE, LEARNED_FILE_LENGTH, 0, 0))
+                .isEmpty();
+    }
+
     /** Reads the footer of a corpus file through a source that names itself, which is what the cache keys on. */
     private void openAReaderOverALocalFile() {
         Path file = TestCorpus.extractFile(FIXTURE, tempDir);
@@ -74,6 +96,13 @@ class ParquetCachesTest {
             ParquetFileReader reader = ParquetFileReader.open(source);
             assertThat(reader.schema()).isNotNull();
         }
+    }
+
+    /** A learned entry of one page without statistics. */
+    private static LearnedPages onePageEntry() {
+        LearnedPages.Builder builder = LearnedPages.builder(PrimitiveKind.INT64, Optional.empty(), 1);
+        builder.add(0, 100, 0, 10, Encoding.PLAIN, Optional.empty());
+        return builder.build();
     }
 
     /** The cache registered with the shared manager under {@code name}, created empty when there is none yet. */

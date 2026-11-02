@@ -40,6 +40,7 @@ import io.tileverse.parquetry.internal.filter.spatial.SpatialCoveringRewrite;
 import io.tileverse.parquetry.internal.read.BatchForm;
 import io.tileverse.parquetry.internal.read.BatchPipeline;
 import io.tileverse.parquetry.internal.read.DecryptionKeyRetriever;
+import io.tileverse.parquetry.internal.read.LearnedPageIndexes;
 import io.tileverse.parquetry.internal.read.MaskedScan;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator;
 import io.tileverse.parquetry.internal.read.RowGroupChunks;
@@ -101,7 +102,9 @@ public final class ParquetFileReader {
         this.spatialReadGates = new SpatialReadGates(
                 footer.primaryGeometry(), footer.spatialBounds(), footer.fileSchema(), footer.geoMetadata());
         ReadResources readResources = new ReadResources(source, footer.fileSchema(), runtime);
-        this.readPlanner = new ReadPlanner(source, footer, readResources, spatialReadGates);
+        boolean encrypted = decryptionKeyRetriever.isPresent();
+        LearnedPageIndexes learnedPageIndexes = CachedPageIndexes.of(source, footer, encrypted);
+        this.readPlanner = new ReadPlanner(source, footer, readResources, spatialReadGates, learnedPageIndexes);
         this.decryptionKeyRetriever = decryptionKeyRetriever;
     }
 

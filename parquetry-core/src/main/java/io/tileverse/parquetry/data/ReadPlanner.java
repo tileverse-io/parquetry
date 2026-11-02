@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.data;
 
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.LinkedHashSet;
@@ -27,22 +28,28 @@ import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.PruningDecision;
+import io.tileverse.parquetry.filter.explain.RowGroupOutcome;
 import io.tileverse.parquetry.filter.explain.RowGroupPlan;
 import io.tileverse.parquetry.filter.explain.Tier;
 import io.tileverse.parquetry.internal.filter.FilterPipeline;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.BloomFilterLookup;
 import io.tileverse.parquetry.internal.filter.FilterPipeline.PageIndexLookup;
 import io.tileverse.parquetry.internal.filter.PageIndex;
+import io.tileverse.parquetry.internal.filter.PageLearning;
 import io.tileverse.parquetry.internal.filter.StatsEvaluator;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
 import io.tileverse.parquetry.internal.read.BatchForm;
+import io.tileverse.parquetry.internal.read.HeaderPageIndexLearner;
 import io.tileverse.parquetry.internal.read.IndexSectionLoader;
+import io.tileverse.parquetry.internal.read.LearnedPageIndexes;
+import io.tileverse.parquetry.internal.read.PageIndexLearner;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator.DecodeObservation;
 import io.tileverse.parquetry.internal.read.RowGroupChunks;
 import io.tileverse.parquetry.internal.read.RowGroupGate;
 import io.tileverse.parquetry.internal.read.RowGroupSurvivor;
 import io.tileverse.parquetry.internal.read.RowMask;
+import io.tileverse.parquetry.internal.read.RowMasks;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.observe.FetchAccumulator;
 import io.tileverse.parquetry.observe.FetchPurpose;
@@ -56,6 +63,9 @@ import io.tileverse.parquetry.schema.ParquetSchema;
  * over them, and returns the {@link ReadPlan} used by the decode. A reader holds one planner, and each query gets a
  * plan of its own. The unfiltered bounds read some row groups without a plan, and the planner assembles that decode
  * too.
+ *
+ * <p>The chunk views of a query take the pages learned for the file by earlier reads. The plan of a query gets a
+ * {@link PageIndexLearner} when the query may learn more of them.
  */
 final class ReadPlanner {
 
@@ -65,54 +75,70 @@ final class ReadPlanner {
     private final FooterMetadata footer;
     private final ReadResources readResources;
     private final SpatialReadGates spatialReadGates;
+    private final LearnedPageIndexes learnedPageIndexes;
 
+    /** @param learnedPageIndexes the pages learned for the file, shared with the other readers of the file */
     ReadPlanner(
             ByteRangeSource source,
             FooterMetadata footer,
             ReadResources readResources,
-            SpatialReadGates spatialReadGates) {
+            SpatialReadGates spatialReadGates,
+            LearnedPageIndexes learnedPageIndexes) {
         this.source = source;
         this.footer = footer;
         this.readResources = readResources;
         this.spatialReadGates = spatialReadGates;
+        this.learnedPageIndexes = learnedPageIndexes;
     }
 
     /**
      * Plans one query. The chunk views record their index-section reads into the fetch accumulator of
      * {@code observation}, and the filter pipeline runs with its options. The time of the pipeline is reported to
      * {@code observation} only when its observers asked for timings. When the predicate has a positional delete, the
-     * filter pipeline and the plan share one computation of the file row offsets.
+     * filter pipeline and the plan share one computation of the file row offsets. The decodes of the plan learn the
+     * pages of a row group when the query can drop some of them.
      */
     ReadPlan plan(Predicate predicate, Projection scanProjection, QueryObservation observation) {
-        List<RowGroupChunks> chunks = rowGroupChunks(observation.fetchAccumulator());
+        LearnedPageIndexes learned = learnedPagesFor(observation.options());
+        List<RowGroupChunks> chunks = rowGroupChunks(observation.fetchAccumulator(), learned);
         Optional<long[]> fileOffsets = fileOffsetsForRowPositions(predicate, chunks);
         ExplainPlan explainPlan = evaluateTimed(predicate, scanProjection, chunks, fileOffsets, observation);
+        PageIndexLearner learner = learnerFor(explainPlan, chunks, learned);
         return new ReadPlan(
-                footer.fileSchema(), readResources, spatialReadGates, chunks, explainPlan, fileOffsets, observation);
+                footer.fileSchema(),
+                readResources,
+                spatialReadGates,
+                chunks,
+                explainPlan,
+                fileOffsets,
+                observation,
+                learner);
     }
 
     /**
      * Runs the filter pipeline for an explain of {@code predicate} over {@code scanProjection} and returns its plan. It
      * reads no clock and tallies no fetch. The observer of {@code options} receives the planned events and never the
-     * finish of the query.
+     * finish of the query. The chunk views take the learned pages of the file, as a read does, and the plan shows the
+     * decisions of the next read.
      */
     ExplainPlan explain(Predicate predicate, Projection scanProjection, ReadOptions options) {
-        List<RowGroupChunks> chunks = chunks();
+        List<RowGroupChunks> chunks = rowGroupChunks(FetchAccumulator.NONE, learnedPagesFor(options));
         Optional<long[]> fileOffsets = fileOffsetsForRowPositions(predicate, chunks);
         return evaluate(predicate, scanProjection, options, chunks, fileOffsets);
     }
 
     /**
      * Builds one {@link RowGroupChunks} per footer row group, in file order. No {@link FetchAccumulator} tallies their
-     * index-section reads. Only the views built by {@link #plan} record into the fetch accumulator of their query.
+     * index-section reads. Only the views built by {@link #plan} record into the fetch accumulator of their query. The
+     * views take no learned pages. Their callers read the statistics of the footer, or whole row groups.
      */
     List<RowGroupChunks> chunks() {
-        return rowGroupChunks(FetchAccumulator.NONE);
+        return rowGroupChunks(FetchAccumulator.NONE, LearnedPageIndexes.NONE);
     }
 
     /**
      * The coordinator of a decode of {@code survivors}, read in full without a filter pipeline. The unfiltered bounds
-     * use it for their row groups without a box. No event fires and no fetch is recorded.
+     * use it for their row groups without a box. No event fires, no fetch is recorded, and no page is learned.
      *
      * <p>The unfiltered bounds skip the filter pipeline on purpose, as {@link ParquetFileReader#count} does for an
      * {@link Predicate.Always} literal. Planning {@link Predicate#ALWAYS_TRUE} would fire the planned events to an
@@ -134,7 +160,8 @@ final class ReadPlanner {
                 DecodeObservation.NONE,
                 List.of(),
                 rowGroupGate,
-                Optional.empty());
+                Optional.empty(),
+                PageIndexLearner.NONE);
     }
 
     /** The leaf columns referenced by {@code predicate}, minus the synthesized row-position columns. */
@@ -161,16 +188,27 @@ final class ReadPlanner {
     }
 
     /**
-     * Builds one {@link RowGroupChunks} per footer row group, in file order, with index-section reads recording into
-     * {@code accumulator}.
+     * The pages learned for the file, or {@link LearnedPageIndexes#NONE} for a read with the column-index filter off.
+     * Such a read neither uses learned pages nor learns any.
      */
-    private List<RowGroupChunks> rowGroupChunks(FetchAccumulator accumulator) {
+    private LearnedPageIndexes learnedPagesFor(ReadOptions options) {
+        if (!options.useColumnIndexFilter()) {
+            return LearnedPageIndexes.NONE;
+        }
+        return learnedPageIndexes;
+    }
+
+    /**
+     * Builds one {@link RowGroupChunks} per footer row group, in file order, with index-section reads recording into
+     * {@code accumulator}. A chunk without an offset index in the footer takes its pages from {@code learned}.
+     */
+    private List<RowGroupChunks> rowGroupChunks(FetchAccumulator accumulator, LearnedPageIndexes learned) {
         IndexSectionLoader loader = indexSectionLoader(accumulator);
         int rowGroupCount = footer.compactFooter().rowGroupCount();
         List<RowGroupChunks> chunks = new ArrayList<>(rowGroupCount);
         for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
             chunks.add(RowGroupChunks.of(
-                    footer.compactFooter(), rowGroupIndex, footer.leafIndex(), footer.fileSchema(), loader));
+                    footer.compactFooter(), rowGroupIndex, footer.leafIndex(), footer.fileSchema(), loader, learned));
         }
         return chunks;
     }
@@ -400,5 +438,81 @@ final class ReadPlanner {
             disabled.add(Tier.RECORD_LEVEL);
         }
         return disabled;
+    }
+
+    /**
+     * The learner of a query, or {@link PageIndexLearner#NONE} when the query can learn nothing. A query learns only
+     * when the learned pages of the file can be kept, when its scanned columns are flat, and when a part of its
+     * predicate is evaluable by the page tier. A scan of a repeated column never gets a row mask, and learned pages
+     * would not narrow its fetch.
+     */
+    private PageIndexLearner learnerFor(
+            ExplainPlan explainPlan, List<RowGroupChunks> chunks, LearnedPageIndexes learned) {
+        if (learned == LearnedPageIndexes.NONE) {
+            return PageIndexLearner.NONE;
+        }
+        List<ColumnPath> scanLeaves = explainPlan.projectedSchema().leafColumns();
+        if (!RowMasks.allFlat(footer.fileSchema(), scanLeaves)) {
+            return PageIndexLearner.NONE;
+        }
+        Optional<Predicate> prunablePart = PageLearning.prunablePart(explainPlan.normalizedPredicate());
+        if (prunablePart.isEmpty()) {
+            return PageIndexLearner.NONE;
+        }
+        Predicate part = prunablePart.orElseThrow();
+        BitSet learnable = learnableRowGroups(part, explainPlan.rowGroups(), chunks, scanLeaves);
+        if (learnable.isEmpty()) {
+            return PageIndexLearner.NONE;
+        }
+        return new HeaderPageIndexLearner(part, learnable, learned);
+    }
+
+    /**
+     * The row groups allowed to the learner of a query. A row group is allowed when the query tests its rows, when its
+     * statistics do not show each row passing {@code prunablePart}, and when no scanned column declares an offset
+     * index. The last rule applies to the row group as a whole, for simplicity. In a partly indexed file, a scan
+     * touching an undeclared column learns nothing and prunes no page; a scan of declared columns alone prunes pages.
+     */
+    private static BitSet learnableRowGroups(
+            Predicate prunablePart,
+            List<RowGroupPlan> rowGroups,
+            List<RowGroupChunks> chunks,
+            List<ColumnPath> scanLeaves) {
+        BitSet learnable = new BitSet(chunks.size());
+        for (RowGroupPlan rowGroup : rowGroups) {
+            RowGroupChunks rowGroupChunks = chunks.get(rowGroup.index());
+            if (mayLearn(rowGroup.outcome(), rowGroupChunks, prunablePart, scanLeaves)) {
+                learnable.set(rowGroup.index());
+            }
+        }
+        return learnable;
+    }
+
+    private static boolean mayLearn(
+            RowGroupOutcome outcome, RowGroupChunks chunks, Predicate prunablePart, List<ColumnPath> scanLeaves) {
+        return rowsAreTested(outcome)
+                && !declaresAnOffsetIndex(chunks, scanLeaves)
+                && !PageLearning.allRowsPass(prunablePart, chunks::summary, chunks.numRows());
+    }
+
+    /**
+     * Whether the query tests the rows of a row group of {@code outcome}. A MATCHED row group passes without a test,
+     * and an ELIMINATED one is not read.
+     */
+    private static boolean rowsAreTested(RowGroupOutcome outcome) {
+        return switch (outcome) {
+            case FULL, PARTIAL -> true;
+            case MATCHED, ELIMINATED -> false;
+        };
+    }
+
+    private static boolean declaresAnOffsetIndex(RowGroupChunks chunks, List<ColumnPath> scanLeaves) {
+        for (ColumnPath leaf : scanLeaves) {
+            Optional<ChunkMeta> chunk = chunks.chunk(leaf);
+            if (chunk.isPresent() && chunk.orElseThrow().offsetIndexOffset().isPresent()) {
+                return true;
+            }
+        }
+        return false;
     }
 }

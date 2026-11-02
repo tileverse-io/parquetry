@@ -64,6 +64,29 @@ rule: a batch over that budget spills to disk, or waits for room when spilling
 is off. The counters behind this are `FetchBudget.waitStats()` and
 `DiskBudget.stats()`.
 
+### The metadata cache
+
+Beside the budgets of the reads, the process keeps file metadata in one cache
+on the heap. `FooterMetadataCache` holds parsed footers and the page indexes
+learned from page headers ([The read path](read-path.md#without-a-page-index)).
+The cache knows a file by the name of its source and by its length. An open
+over an unnamed source, and an open given a decryption key, never reach it. A
+file rewritten under the same name at the same length is served its old entries
+until they expire or `ParquetCaches.clearAll()` drops them.
+
+Both kinds share one budget, 10% of `Runtime.maxMemory()` by default, set as a
+whole percentage with the system property
+`io.tileverse.parquetry.metadatacache.maxheappercent`. The cache sizes itself
+from the property once, at its first use. Set the property before the process
+opens its first file. A share of 0 keeps neither kind, and reads then learn no
+pages. An entry unused for ten minutes expires. A learned page index weighs
+about 18 bytes a page, plus the bounds of its pages and a fixed 288 bytes.
+`ParquetCaches.clearAll()` drops both kinds, together with the byte ranges
+cached by the storage layer. `FooterMetadataCache.clear()` drops the two kinds
+alone. The hit and miss counts of the cache, named `parquetry-footer-metadata`,
+cover both kinds alike. On files without a page index, the lookups of learned
+pages dominate the hit rate.
+
 ---
 
 ## 2. Where the native memory comes from
@@ -130,6 +153,8 @@ the buffers on malloc, at a higher read rate.
 - The heap scratch retained by parquetry's tileverse `ByteBufferPool` provider
   (the merge scratch of batched reads, a PMTiles reader's buffers) is also inside
   `-Xmx`: at most 32 MiB between borrows, released after 30 s idle.
+- [The metadata cache](#the-metadata-cache) is inside `-Xmx` too. Its footers
+  and learned page indexes take up to 10% of it by default.
 
 A read that cannot fit one row group's working set inside `-Xmx` still fails
 with an `OutOfMemoryError`: the budgets bound speculative work and native
@@ -160,6 +185,7 @@ Settings beside parquetry's own that matter in a container:
 | The pool and its memory | `io/SegmentPool.java`, `io/DefaultSegmentPool.java`, `io/MappedMemory.java` |
 | Decode-ahead + promotion | `internal/read/ParallelDecodeCoordinator.java`, `internal/read/StreamingBatchSource.java` |
 | Prefetch | `internal/read/RowGroupPrefetcher.java` |
+| Metadata cache | `data/FooterMetadataCache.java`, `data/ParquetCaches.java` |
 
 ---
 

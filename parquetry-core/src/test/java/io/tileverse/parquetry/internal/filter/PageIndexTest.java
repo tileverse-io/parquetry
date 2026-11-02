@@ -16,27 +16,40 @@
 package io.tileverse.parquetry.internal.filter;
 
 import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
+import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 
 import java.lang.foreign.MemorySegment;
+import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.format.BoundaryOrder;
 import io.tileverse.parquetry.format.ColumnIndex;
+import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
+import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
 class PageIndexTest {
 
     /** Three pages of 100 rows, placed back to back in the bytes [0, 300) of their chunk. */
     private static final OffsetIndex THREE_PAGES = TestPageIndexes.offsetIndex(0, 100, 200);
+
+    /**
+     * Three INT64 pages of 100 rows learned from their headers, placed back to back in the first 300 bytes of their
+     * chunk. The first page holds only nulls. The second holds 5 nulls and values from 10 to 99, the third values from
+     * 100 to 199.
+     */
+    private static final LearnedPages THREE_LEARNED_PAGES = threeLearnedPages();
 
     @Test
     void pagesInOrderAreDeclared() {
@@ -137,6 +150,117 @@ class PageIndexTest {
         assertThatIllegalStateException().isThrownBy(() -> pages.statistics(0));
     }
 
+    @Test
+    void learnedPagesPlaceLikeDeclared() {
+        List<PageLocation> twinPages = List.of(
+                new PageLocation(4_000, 100, 0), new PageLocation(4_100, 100, 100), new PageLocation(4_200, 100, 200));
+        OffsetIndex declaredTwin = new OffsetIndex(twinPages, Optional.empty());
+        PageIndex declared = PageIndex.declared(declaredTwin, 4_000, 300, 300).orElseThrow();
+
+        PageIndex fromHeaders = learned(THREE_LEARNED_PAGES, 4_000, 300, 300).orElseThrow();
+
+        assertThat(fromHeaders.locations()).isEqualTo(declared.locations());
+    }
+
+    @Test
+    void learnedStatisticsReadBounds() {
+        PageIndex pages = learned(THREE_LEARNED_PAGES, 0, 300, 300).orElseThrow();
+
+        ColumnSummary second = pages.statistics(1);
+
+        assertThat(second.min()).contains(new Value.LongVal(10));
+        assertThat(second.max()).contains(new Value.LongVal(99));
+        assertThat(second.nullCount()).hasValue(5);
+    }
+
+    @Test
+    void learnedNullPageCountsEachRow() {
+        PageIndex pages = learned(THREE_LEARNED_PAGES, 0, 300, 300).orElseThrow();
+
+        ColumnSummary first = pages.statistics(0);
+
+        assertThat(first.onlyNulls()).isTrue();
+        assertThat(first.nullCount()).hasValue(100);
+        assertThat(first.min()).isEmpty();
+    }
+
+    @Test
+    void learnedWithoutBoundsKeepsCounts() {
+        LearnedPages.Builder builder = int64Builder(2);
+        builder.add(0, 100, 0, 100, Encoding.PLAIN, nullCountOnly(3));
+        builder.add(100, 100, 100, 100, Encoding.PLAIN, nullCountOnly(7));
+        LearnedPages withoutBounds = builder.build();
+
+        PageIndex pages = learned(withoutBounds, 0, 200, 200).orElseThrow();
+
+        assertThat(withoutBounds.hasBounds()).isFalse();
+        assertThat(pages.statistics(0).bounded()).isFalse();
+        assertThat(pages.statistics(1).bounded()).isFalse();
+        assertThat(pages.statistics(0).nullCount()).hasValue(3);
+        assertThat(pages.statistics(1).nullCount()).hasValue(7);
+    }
+
+    @Test
+    void learnedBoundsNeedAnOrder() {
+        Optional<PageIndex> unordered =
+                PageIndex.learned(THREE_LEARNED_PAGES, 0, 300, 300, PrimitiveKind.INT64, Optional.empty(), false);
+        PageIndex pages = unordered.orElseThrow();
+
+        assertThat(pages.boundsOrdered()).isFalse();
+        assertThat(pages.statistics(1).bounded()).isFalse();
+        assertThat(pages.statistics(1).nullCount()).hasValue(5);
+    }
+
+    @Test
+    void learnedBoundsUseLogicalType() {
+        Optional<LogicalType> decimal = Optional.of(new LogicalType.Decimal(2, 18));
+        LearnedPages.Builder builder = LearnedPages.builder(PrimitiveKind.INT64, decimal, 1);
+        builder.add(0, 100, 0, 100, Encoding.PLAIN, int64Statistics(0, 1050, 9999));
+        LearnedPages prices = builder.build();
+
+        Optional<PageIndex> decimals = PageIndex.learned(prices, 0, 100, 100, PrimitiveKind.INT64, decimal, true);
+        PageIndex pages = decimals.orElseThrow();
+
+        assertThat(pages.statistics(0).min()).contains(new Value.DecimalVal(new BigDecimal("10.50")));
+        assertThat(pages.statistics(0).max()).contains(new Value.DecimalVal(new BigDecimal("99.99")));
+    }
+
+    // A fetch narrowed on such a page would read the bytes of another column.
+    @Test
+    void misplacedLearnedPagesAreEmpty() {
+        assertThat(learned(THREE_LEARNED_PAGES, 0, 299, 300))
+                .as("a last page ending past the chunk")
+                .isEmpty();
+    }
+
+    // Page 0 counts 50 nulls in 100 rows. The first rows of the pages come from the same headers and cannot be trusted.
+    @Test
+    void nullMarkBelowCountDropsEntry() {
+        LearnedPages.Builder builder = int64Builder(2);
+        builder.add(0, 100, 0, 50, Encoding.PLAIN, nullCountOnly(50));
+        builder.add(100, 100, 100, 100, Encoding.PLAIN, int64Statistics(0, 10, 99));
+        LearnedPages shortOfNulls = builder.build();
+
+        Optional<PageIndex> contradicting = learned(shortOfNulls, 0, 200, 200);
+        Optional<PageIndex> agreeing = learned(THREE_LEARNED_PAGES, 0, 300, 300);
+
+        assertThat(contradicting).isEmpty();
+        assertThat(agreeing).as("a page of nulls counting one null per row").isPresent();
+    }
+
+    // The header counts as many nulls as rows, but its bounds prove a value. A null test must not skip the page.
+    @Test
+    void unmarkedPageIsNotOnlyNulls() {
+        LearnedPages.Builder builder = int64Builder(1);
+        builder.add(0, 100, 0, 100, Encoding.PLAIN, int64Statistics(100, 5, 5));
+        LearnedPages contradicting = builder.build();
+
+        PageIndex pages = learned(contradicting, 0, 100, 100).orElseThrow();
+
+        assertThat(pages.nullStatistics(0).onlyNulls()).isFalse();
+        assertThat(pages.statistics(0).bounded()).isTrue();
+    }
+
     private static PageIndex withStatistics(PageIndex pages, ColumnIndex columnIndex) {
         return pages.withStatistics(columnIndex, PrimitiveKind.INT32, Optional.empty(), true);
     }
@@ -160,6 +284,45 @@ class PageIndexTest {
     private static MemorySegment encodeInt(int value) {
         MemorySegment segment = MemorySegment.ofArray(new byte[4]);
         segment.set(INT32, 0, value);
+        return segment.asReadOnly();
+    }
+
+    /** The page index learned from {@code pages} for an INT64 column with ordered bounds. */
+    private static Optional<PageIndex> learned(LearnedPages pages, long chunkStart, long chunkLength, long rowCount) {
+        return PageIndex.learned(pages, chunkStart, chunkLength, rowCount, PrimitiveKind.INT64, Optional.empty(), true);
+    }
+
+    private static LearnedPages threeLearnedPages() {
+        LearnedPages.Builder builder = int64Builder(3);
+        builder.add(0, 100, 0, 100, Encoding.PLAIN, nullCountOnly(100));
+        builder.add(100, 100, 100, 100, Encoding.PLAIN, int64Statistics(5, 10, 99));
+        builder.add(200, 100, 200, 100, Encoding.PLAIN, int64Statistics(0, 100, 199));
+        return builder.build();
+    }
+
+    private static LearnedPages.Builder int64Builder(int expectedPages) {
+        return LearnedPages.builder(PrimitiveKind.INT64, Optional.empty(), expectedPages);
+    }
+
+    /** The statistics of a page header recording a null count and no bound. */
+    private static Optional<Statistics> nullCountOnly(long nullCount) {
+        Statistics statistics =
+                Statistics.builder().nullCount(OptionalLong.of(nullCount)).build();
+        return Optional.of(statistics);
+    }
+
+    private static Optional<Statistics> int64Statistics(long nullCount, long min, long max) {
+        Statistics statistics = Statistics.builder()
+                .nullCount(OptionalLong.of(nullCount))
+                .minValue(encodeLong(min))
+                .maxValue(encodeLong(max))
+                .build();
+        return Optional.of(statistics);
+    }
+
+    private static MemorySegment encodeLong(long value) {
+        MemorySegment segment = MemorySegment.ofArray(new byte[Long.BYTES]);
+        segment.set(INT64, 0, value);
         return segment.asReadOnly();
     }
 }

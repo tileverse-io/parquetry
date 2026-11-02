@@ -29,6 +29,7 @@ import io.tileverse.storage.RangeRequest;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
+import io.tileverse.parquetry.internal.read.PageIndexLearner.WholeChunk;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.internal.read.page.PageRun;
 import io.tileverse.parquetry.internal.read.page.PageSelection;
@@ -46,7 +47,9 @@ import lombok.NonNull;
 /**
  * Plans and fetches one row group's projected column chunks as the exact byte ranges of its plan. The fetch asks for no
  * byte outside them, joins two of them only where they abut, reads them into one pooled buffer, and hands out zero-copy
- * {@link FetchedColumnChunk} views into it.
+ * {@link FetchedColumnChunk} views into it. A fetch planned without a mask reads whole chunks. It hands them to the
+ * {@link PageIndexLearner} of the read when the learner may learn their row group, before it returns and while the
+ * buffer still holds them.
  */
 public final class RowGroupFetcher {
 
@@ -67,20 +70,24 @@ public final class RowGroupFetcher {
     private final SegmentPool pool;
     private final FetchBufferAllocator mandatoryAllocator;
     private final FetchAccumulator accumulator;
+    private final PageIndexLearner learner;
     private final ColumnChunkSlicer slicer;
 
+    /** @param learner the learner of the read, receiving the row groups fetched whole when it may learn them */
     public RowGroupFetcher(
             @NonNull ByteRangeSource source,
             @NonNull ParquetSchema fileSchema,
             @NonNull ParquetSchema projectedSchema,
             @NonNull SegmentPool pool,
             @NonNull FetchBufferAllocator mandatoryAllocator,
-            @NonNull FetchAccumulator accumulator) {
+            @NonNull FetchAccumulator accumulator,
+            @NonNull PageIndexLearner learner) {
         this.source = source;
         this.projectedSchema = projectedSchema;
         this.pool = pool;
         this.mandatoryAllocator = mandatoryAllocator;
         this.accumulator = accumulator;
+        this.learner = learner;
         this.slicer = new ColumnChunkSlicer(fileSchema, pool);
     }
 
@@ -105,17 +112,17 @@ public final class RowGroupFetcher {
                 units.add(wholeChunkUnit(path, meta));
             }
         }
-        return orderedPlan(units);
+        return orderedPlan(units, mask.isEmpty());
     }
 
     /**
      * The units ordered by file offset. That order lets the fetch lay them out back to back in one buffer and keep each
      * column's runs in page order.
      */
-    private static FetchPlan orderedPlan(List<FetchUnit> units) {
+    private static FetchPlan orderedPlan(List<FetchUnit> units, boolean unmasked) {
         List<FetchUnit> ordered = new ArrayList<>(units);
         ordered.sort(Comparator.comparingLong(FetchUnit::fileOffset));
-        return new FetchPlan(ordered);
+        return new FetchPlan(ordered, unmasked);
     }
 
     private FetchUnit wholeChunkUnit(ColumnPath path, ChunkMeta meta) {
@@ -184,6 +191,7 @@ public final class RowGroupFetcher {
             readPlacedUnits(placed, buffer.segment());
             List<FetchedColumnChunk> columns = sliceColumns(byColumn(placed), survivor.chunks());
             long fetchNanos = wantsTimings ? System.nanoTime() - startNanos : 0L;
+            learnFrom(survivor, plan, placed);
             return new RowGroupFetch(List.of(buffer), columns, reservation, fetchNanos);
         } catch (RuntimeException e) {
             closeQuietly(buffer);
@@ -344,6 +352,27 @@ public final class RowGroupFetcher {
             }
         }
         return runs;
+    }
+
+    /**
+     * Hands the chunks of {@code survivor} to the learner, when the plan was built without a mask and the learner may
+     * learn the row group. Each unit of such a plan is one chunk, read from its first byte. The fetch reports its time
+     * without this pass.
+     */
+    private void learnFrom(RowGroupSurvivor survivor, FetchPlan plan, List<PlacedUnit> placed) {
+        if (!plan.unmasked() || !learner.learns(survivor.index())) {
+            return;
+        }
+        learner.learn(survivor, wholeChunksOf(placed, survivor.chunks()));
+    }
+
+    private static List<WholeChunk> wholeChunksOf(List<PlacedUnit> placed, RowGroupChunks chunks) {
+        List<WholeChunk> wholeChunks = new ArrayList<>(placed.size());
+        for (PlacedUnit placedUnit : placed) {
+            ColumnPath path = placedUnit.unit().path();
+            wholeChunks.add(new WholeChunk(path, requireMeta(chunks, path), placedUnit.bytes()));
+        }
+        return wholeChunks;
     }
 
     private static void closeQuietly(Pooled buffer) {

@@ -158,9 +158,10 @@ class PageNarrowedPlanTest {
 
             FetchPlan narrowed = fixture.plan(Optional.of(fixture.maskOver(RowRanges.all(ROW_COUNT))));
 
-            assertThat(narrowed)
+            assertThat(narrowed.units())
                     .as("with every page surviving the whole chunk IS the narrowed plan, trailing bytes included")
-                    .isEqualTo(fixture.plan(Optional.empty()));
+                    .isEqualTo(fixture.plan(Optional.empty()).units());
+            assertThat(narrowed.unmasked()).as("a plan built with a mask").isFalse();
         }
     }
 
@@ -430,7 +431,7 @@ class PageNarrowedPlanTest {
                     kept.add(unit);
                 }
             }
-            return new FetchPlan(kept);
+            return new FetchPlan(kept, true);
         }
 
         /**

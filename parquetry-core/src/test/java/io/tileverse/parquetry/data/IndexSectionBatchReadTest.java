@@ -48,6 +48,7 @@ import io.tileverse.parquetry.internal.footer.CompactFooter;
 import io.tileverse.parquetry.internal.footer.LeafIndex;
 import io.tileverse.parquetry.internal.read.IndexSectionLoader;
 import io.tileverse.parquetry.internal.read.IndexSectionRange;
+import io.tileverse.parquetry.internal.read.LearnedPageIndexes;
 import io.tileverse.parquetry.internal.read.RowGroupChunks;
 import io.tileverse.parquetry.internal.read.RowMasks;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
@@ -312,7 +313,8 @@ class IndexSectionBatchReadTest {
                 0,
                 leaves,
                 schema,
-                decorate.apply(new FooterIndexSectionLoader(source, accumulator, 0L)));
+                decorate.apply(new FooterIndexSectionLoader(source, accumulator, 0L)),
+                LearnedPageIndexes.NONE);
         source.reset();
         return new Fixture(source, accumulator, chunks);
     }

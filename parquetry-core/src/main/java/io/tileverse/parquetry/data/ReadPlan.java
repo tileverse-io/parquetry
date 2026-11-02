@@ -25,6 +25,7 @@ import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.filter.explain.ExplainPlan;
 import io.tileverse.parquetry.filter.explain.RowGroupPlan;
 import io.tileverse.parquetry.internal.read.MaskedScan;
+import io.tileverse.parquetry.internal.read.PageIndexLearner;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator;
 import io.tileverse.parquetry.internal.read.ParallelDecodeCoordinator.DecodeObservation;
 import io.tileverse.parquetry.internal.read.RowGroupChunks;
@@ -39,10 +40,10 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 
 /**
- * The plan of one query over one file. It holds the chunk views of the row groups and the outcome of the filter
- * pipeline over them. It routes the row groups to the survivors decoded by the query, and derives the record filter,
- * the masked scan and the synthesized row positions used by their decode. It assembles that decode from the
- * {@link DecodeShape} given by the entry point of the query. A plan serves one query on one thread.
+ * The plan of one query over one file. It holds the chunk views of the row groups, the outcome of the filter pipeline
+ * over them, and the learner of the query. It routes the row groups to the survivors decoded by the query, and derives
+ * the record filter, the masked scan and the synthesized row positions used by their decode. It assembles that decode
+ * from the {@link DecodeShape} given by the entry point of the query. A plan serves one query on one thread.
  */
 final class ReadPlan {
 
@@ -52,12 +53,15 @@ final class ReadPlan {
     private final List<RowGroupChunks> chunks;
     private final ExplainPlan explainPlan;
     private final QueryObservation observation;
+    private final PageIndexLearner learner;
 
     // The file row offsets of the row groups. When the predicate has a positional delete, the planner computes them for
     // the filter pipeline and hands the same array over. Otherwise they are computed on first use. A plan serves one
     // query on one thread, hence the memo needs no synchronization.
     private long[] fileOffsets;
 
+    /** @param learner the learner of the query, handed to each decode of the plan */
+    @SuppressWarnings("java:S107") // a plan holds the inputs of its decodes; a parameter object would only rename them
     ReadPlan(
             ParquetSchema fileSchema,
             ReadResources readResources,
@@ -65,7 +69,8 @@ final class ReadPlan {
             List<RowGroupChunks> chunks,
             ExplainPlan explainPlan,
             Optional<long[]> fileOffsets,
-            QueryObservation observation) {
+            QueryObservation observation,
+            PageIndexLearner learner) {
         this.fileSchema = fileSchema;
         this.readResources = readResources;
         this.spatialReadGates = spatialReadGates;
@@ -73,6 +78,7 @@ final class ReadPlan {
         this.explainPlan = explainPlan;
         this.fileOffsets = fileOffsets.orElse(null);
         this.observation = observation;
+        this.learner = learner;
     }
 
     /** The outcome of the filter pipeline, one row-group plan per row group in file order. */
@@ -83,6 +89,11 @@ final class ReadPlan {
     /** The chunk views of the row groups, in file order, pruned ones included. */
     List<RowGroupChunks> chunks() {
         return chunks;
+    }
+
+    /** The learner of the query, or {@link PageIndexLearner#NONE} when the query learns nothing. */
+    PageIndexLearner learner() {
+        return learner;
     }
 
     /** The schema of the columns decoded by the query. */
@@ -208,7 +219,8 @@ final class ReadPlan {
                 decodeObservation,
                 rowPositions,
                 rowGroupGate,
-                planner);
+                planner,
+                learner);
     }
 
     /**

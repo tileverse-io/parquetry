@@ -72,7 +72,17 @@ public final class TestFetchers {
             FetchSpillStore spillStore,
             Duration mandatoryBufferWait) {
         FetchBufferAllocator allocator = new FetchBufferAllocator(pool, budget, spillStore, mandatoryBufferWait);
-        return new RowGroupFetcher(source, fileSchema, projectedSchema, pool, allocator, accumulator);
+        return new RowGroupFetcher(
+                source, fileSchema, projectedSchema, pool, allocator, accumulator, PageIndexLearner.NONE);
+    }
+
+    /** A fetcher over the whole of {@code schema}, handing the row groups fetched whole to {@code learner}. */
+    static RowGroupFetcher learning(
+            ByteRangeSource source, ParquetSchema schema, SegmentPool pool, PageIndexLearner learner) {
+        FetchSpillStore spillStore = new FetchSpillStore(spillDir(), DiskBudget.ofBytes(AMPLE_DISK_BUDGET));
+        FetchBudget budget = FetchBudget.ofBytes(AMPLE_FETCH_BUDGET);
+        FetchBufferAllocator allocator = new FetchBufferAllocator(pool, budget, spillStore, Duration.ZERO);
+        return new RowGroupFetcher(source, schema, schema, pool, allocator, FetchAccumulator.NONE, learner);
     }
 
     private static Path spillDir() {
