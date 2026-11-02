@@ -30,11 +30,10 @@ import io.tileverse.parquetry.format.PhysicalType;
  * One column chunk of a {@link CompactFooter}: where its pages, page indexes, and bloom filter live in the file, how
  * many values it holds, how those values are typed and compressed, and the statistics used by a filter to prune.
  *
- * <p>Every accessor reads the blob at a fixed offset from the chunk's record. An instance is therefore a window rather
- * than a copy: creating one allocates nothing beyond the window itself, and the reported values stay valid for as long
- * as the {@link CompactFooter} lives. Obtain one from {@link CompactFooter#chunk(int, int)} or
- * {@link CompactFooter#chunkIfPresent(int, int)}; both hand out a window only for a row group that holds a chunk for
- * the leaf.
+ * <p>Every accessor reads the blob. An instance is therefore a window onto it. Creating one allocates nothing beyond
+ * the window itself, and the reported values stay valid for as long as the {@link CompactFooter} lives. Obtain one from
+ * {@link CompactFooter#chunk(int, int)} or {@link CompactFooter#chunkIfPresent(int, int)}; both hand out a window only
+ * for a row group that holds a chunk for the leaf.
  */
 public final class ChunkMeta {
 
@@ -51,10 +50,24 @@ public final class ChunkMeta {
         return footer.longAt(base() + CompactFooter.CHUNK_DATA_PAGE_OFFSET);
     }
 
-    /** File offset of the chunk's dictionary page, empty when the chunk is not dictionary-encoded. */
+    /** File offset of the chunk's dictionary page, empty when the footer records no positive offset for it. */
     public OptionalLong dictionaryPageOffset() {
         long offset = footer.longAt(base() + CompactFooter.CHUNK_DICTIONARY_PAGE_OFFSET);
         return offset == CompactFooter.NO_DICTIONARY_PAGE ? OptionalLong.empty() : OptionalLong.of(offset);
+    }
+
+    /**
+     * The count of dictionary-encoded data pages of a chunk mixing encodings. A chunk mixes encodings when it has a
+     * dictionary page and its encoding statistics show at least one data page with another encoding. Zero means a
+     * dictionary page used by no data page. The result is empty for other chunks and for corrupt statistics that add up
+     * to a negative count, and a reader then cannot rule the dictionary out.
+     */
+    public OptionalInt dictionaryEncodedPages() {
+        if ((flags() & CompactFooter.FLAG_MIXED_ENCODINGS) == 0) {
+            return OptionalInt.empty();
+        }
+        long entry = footer.encodingEntryBase(chunkIndex);
+        return OptionalInt.of(footer.intAt(entry + CompactFooter.ENCODING_DICTIONARY_PAGES));
     }
 
     /**
@@ -173,7 +186,7 @@ public final class ChunkMeta {
      * lanes on every call rather than retained.
      */
     public Optional<BoundingBox> geoExtent() {
-        byte flags = flags();
+        int flags = flags();
         if ((flags & CompactFooter.FLAG_HAS_GEO_BBOX) == 0) {
             return Optional.empty();
         }
@@ -189,15 +202,15 @@ public final class ChunkMeta {
                 optionalExtent(flags, CompactFooter.FLAG_HAS_GEO_MMAX, entry + CompactFooter.GEO_MMAX)));
     }
 
-    private OptionalDouble optionalExtent(byte flags, int flag, long lane) {
+    private OptionalDouble optionalExtent(int flags, int flag, long lane) {
         if ((flags & flag) == 0) {
             return OptionalDouble.empty();
         }
         return OptionalDouble.of(footer.doubleAt(lane));
     }
 
-    private byte flags() {
-        return footer.byteAt(base() + CompactFooter.CHUNK_FLAGS);
+    private int flags() {
+        return Byte.toUnsignedInt(footer.byteAt(base() + CompactFooter.CHUNK_FLAGS));
     }
 
     private byte nanFlags() {

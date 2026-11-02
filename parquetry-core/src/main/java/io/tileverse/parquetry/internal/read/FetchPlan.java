@@ -16,6 +16,9 @@
 package io.tileverse.parquetry.internal.read;
 
 import java.util.List;
+import java.util.Set;
+
+import io.tileverse.parquetry.schema.ColumnPath;
 
 import lombok.NonNull;
 
@@ -28,14 +31,23 @@ import lombok.NonNull;
  * @param units the ranges to read, ordered by file offset
  * @param unmasked whether the plan was built without a mask. Such a plan reads each chunk whole, in one unit. A plan
  *     built with a mask is not unmasked, even when each of its units is a whole chunk.
+ * @param dictionariesLeftOut the narrowed columns with a dictionary used by no fetched page. The plan holds no unit for
+ *     such a dictionary.
  */
-public record FetchPlan(@NonNull List<FetchUnit> units, boolean unmasked) {
+public record FetchPlan(
+        @NonNull List<FetchUnit> units,
+        boolean unmasked,
+        @NonNull Set<ColumnPath> dictionariesLeftOut) {
 
     public FetchPlan {
         units = List.copyOf(units);
+        dictionariesLeftOut = Set.copyOf(dictionariesLeftOut);
     }
 
-    /** The bytes requested by the plan: the size of the single pooled buffer borrowed by one fetch. */
+    /**
+     * The bytes requested by the plan: the size of the single pooled buffer borrowed by one fetch. A unit read on
+     * demand counts too, because its room in that buffer is what lets the fetch read it without asking for memory.
+     */
     public long requestedBytes() {
         long total = 0;
         for (FetchUnit unit : units) {

@@ -45,7 +45,8 @@ import lombok.NonNull;
  * @param maxDefinitionLevel max definition level computed from the file schema at this leaf
  * @param dataPageRuns read-only views of the fetched stretches of the chunk's compressed data-page region, in file
  *     order
- * @param dictionaryPage the undecoded dictionary page if the column chunk has one; otherwise empty
+ * @param dictionaryPage the undecoded dictionary page if the fetch read one; otherwise empty. A fetch leaves out the
+ *     dictionary page of a chunk only when none of the fetched pages uses it.
  */
 record FetchedColumnChunk(
         @NonNull ColumnPath path,

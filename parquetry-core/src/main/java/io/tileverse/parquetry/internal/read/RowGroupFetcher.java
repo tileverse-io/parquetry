@@ -19,9 +19,11 @@ import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import io.tileverse.storage.BatchReadResult;
 import io.tileverse.storage.RangeRequest;
@@ -50,6 +52,11 @@ import lombok.NonNull;
  * {@link FetchedColumnChunk} views into it. A fetch planned without a mask reads whole chunks. It hands them to the
  * {@link PageIndexLearner} of the read when the learner may learn their row group, before it returns and while the
  * buffer still holds them.
+ *
+ * <p>A narrowed fetch leaves the dictionary page of a column out when each fetched page is known not to use it; see
+ * {@link DictionaryFetch}. A prefix read on demand keeps its room in the buffer, and the fetch checks the headers of
+ * the fetched pages of its column. A dictionary-encoded page takes one more read into that room. The fetch never asks
+ * for a second buffer.
  */
 public final class RowGroupFetcher {
 
@@ -104,39 +111,41 @@ public final class RowGroupFetcher {
     public FetchPlan planFor(RowGroupSurvivor survivor, Optional<RowMask> mask) {
         RowGroupChunks chunks = survivor.chunks();
         List<FetchUnit> units = new ArrayList<>();
+        Set<ColumnPath> dictionariesLeftOut = new HashSet<>();
         for (ColumnPath path : projectedSchema.leafColumns()) {
             ChunkMeta meta = requireFetchableChunk(chunks, path, source.size());
             if (mask.isPresent()) {
-                addUnitsFor(units, path, meta, mask.orElseThrow());
+                addUnitsFor(units, dictionariesLeftOut, path, meta, mask.orElseThrow());
             } else {
                 units.add(wholeChunkUnit(path, meta));
             }
         }
-        return orderedPlan(units, mask.isEmpty());
+        return orderedPlan(units, mask.isEmpty(), dictionariesLeftOut);
     }
 
     /**
      * The units ordered by file offset. That order lets the fetch lay them out back to back in one buffer and keep each
      * column's runs in page order.
      */
-    private static FetchPlan orderedPlan(List<FetchUnit> units, boolean unmasked) {
+    private static FetchPlan orderedPlan(List<FetchUnit> units, boolean unmasked, Set<ColumnPath> dictionariesLeftOut) {
         List<FetchUnit> ordered = new ArrayList<>(units);
         ordered.sort(Comparator.comparingLong(FetchUnit::fileOffset));
-        return new FetchPlan(ordered, unmasked);
+        return new FetchPlan(ordered, unmasked, dictionariesLeftOut);
     }
 
     private FetchUnit wholeChunkUnit(ColumnPath path, ChunkMeta meta) {
-        return new FetchUnit(path, meta.chunkStart(), meta.totalCompressedSize(), 0, false);
+        return new FetchUnit(path, meta.chunkStart(), meta.totalCompressedSize(), 0, false, false);
     }
 
     /**
-     * Emits the narrowed units for one column: the dictionary prefix {@code [chunkStart, firstDataPage)} when
-     * non-empty, then one unit per surviving-page run. Falls back to the whole chunk when the mask lacks the page index
-     * of this column, or when each page survives (the degenerate case where the whole chunk IS the narrowed plan,
-     * trailing bytes included). A page index places its pages inside the bytes of the chunk; see
-     * {@link PageIndex#declared}.
+     * Emits the narrowed units for one column: the dictionary prefix {@code [chunkStart, firstDataPage)} when non-empty
+     * and a surviving page may use it, then one unit per surviving-page run. A prefix left out names its column in
+     * {@code dictionariesLeftOut}. Falls back to the whole chunk when the mask lacks the page index of this column, or
+     * when each page survives (the degenerate case where the whole chunk IS the narrowed plan, trailing bytes
+     * included). A page index places its pages inside the bytes of the chunk; see {@link PageIndex#declared}.
      */
-    private void addUnitsFor(List<FetchUnit> units, ColumnPath path, ChunkMeta meta, RowMask mask) {
+    private void addUnitsFor(
+            List<FetchUnit> units, Set<ColumnPath> dictionariesLeftOut, ColumnPath path, ChunkMeta meta, RowMask mask) {
         PageIndex pages = mask.pageIndexes().get(path);
         if (pages == null || pages.pageCount() == 0) {
             units.add(wholeChunkUnit(path, meta));
@@ -155,17 +164,24 @@ public final class RowGroupFetcher {
         long firstDataPageOffset = pages.locations().get(0).offset();
         long prefixLength = firstDataPageOffset - start;
         if (prefixLength > 0) {
-            // The page index places the first data page inside the chunk, and the chunk length is an int.
-            units.add(new FetchUnit(path, start, Math.toIntExact(prefixLength), 0, true));
+            DictionaryFetch dictionary = DictionaryFetch.of(pages, selection, meta);
+            if (dictionary == DictionaryFetch.LEFT_OUT) {
+                dictionariesLeftOut.add(path);
+            } else {
+                // The page index places the first data page inside the chunk, and the chunk length is an int.
+                int length = Math.toIntExact(prefixLength);
+                units.add(new FetchUnit(path, start, length, 0, true, dictionary == DictionaryFetch.ON_DEMAND));
+            }
         }
         for (PageRun run : PageRun.runsFor(selection, pages.locations())) {
-            units.add(new FetchUnit(path, run.fileOffset(), run.length(), run.firstPageOrdinal(), false));
+            units.add(new FetchUnit(path, run.fileOffset(), run.length(), run.firstPageOrdinal(), false, false));
         }
     }
 
     /**
-     * Reads {@code plan}'s ranges into one pooled buffer and slices each projected column out of it. On any failure,
-     * returns the buffer and releases {@code reservation} before propagating.
+     * Reads {@code plan}'s ranges into one pooled buffer and slices each projected column out of it. An on-demand
+     * prefix is read only when a fetched page of its column uses the dictionary. On any failure, returns the buffer and
+     * releases {@code reservation} before propagating.
      *
      * <p>A speculative prefetch arrives with a real {@code reservation} that already reserved the plan's span against
      * the {@link FetchBudget}; its buffer comes straight from the {@link SegmentPool} to avoid reserving the same bytes
@@ -188,8 +204,11 @@ public final class RowGroupFetcher {
         Pooled buffer = acquireRangeBuffer(plan.requestedBytes(), speculative);
         try {
             List<PlacedUnit> placed = placeUnits(plan, buffer.segment());
-            readPlacedUnits(placed, buffer.segment());
-            List<FetchedColumnChunk> columns = sliceColumns(byColumn(placed), survivor.chunks());
+            readPlacedUnits(unitsReadAtOnce(placed), buffer.segment());
+            Map<ColumnPath, List<PlacedUnit>> placedByColumn = byColumn(placed);
+            Set<ColumnPath> dictionariesLeftOut =
+                    settleOnDemandPrefixes(plan, placed, placedByColumn, buffer.segment());
+            List<FetchedColumnChunk> columns = sliceColumns(placedByColumn, survivor.chunks(), dictionariesLeftOut);
             long fetchNanos = wantsTimings ? System.nanoTime() - startNanos : 0L;
             learnFrom(survivor, plan, placed);
             return new RowGroupFetch(List.of(buffer), columns, reservation, fetchNanos);
@@ -222,6 +241,20 @@ public final class RowGroupFetcher {
         return placed;
     }
 
+    /**
+     * The units of the first read. An on-demand prefix stays out, also from the merge of abutting ranges: it abuts the
+     * first run when page 0 survives, and joining them would read the prefix anyway.
+     */
+    private static List<PlacedUnit> unitsReadAtOnce(List<PlacedUnit> placed) {
+        List<PlacedUnit> readAtOnce = new ArrayList<>(placed.size());
+        for (PlacedUnit placedUnit : placed) {
+            if (!placedUnit.unit().onDemand()) {
+                readAtOnce.add(placedUnit);
+            }
+        }
+        return readAtOnce;
+    }
+
     /** One unit, where its bytes begin in the fetch buffer, and the view of the buffer holding them. */
     private record PlacedUnit(FetchUnit unit, long bufferOffset, MemorySegment bytes) {}
 
@@ -233,7 +266,7 @@ public final class RowGroupFetcher {
         }
     }
 
-    /** Issues the plan's reads as batch calls of at most {@link #MAX_REQUESTS_PER_CALL} ranges each. */
+    /** Issues the reads of {@code placed} as batch calls of at most {@link #MAX_REQUESTS_PER_CALL} ranges each. */
     private void readPlacedUnits(List<PlacedUnit> placed, MemorySegment buffer) {
         List<MergedRead> reads = mergeAbutting(placed, buffer);
         for (int from = 0; from < reads.size(); from += MAX_REQUESTS_PER_CALL) {
@@ -262,8 +295,9 @@ public final class RowGroupFetcher {
     }
 
     /**
-     * One read per maximal run of units whose file ranges touch byte for byte. Joining those costs no unrequested byte
-     * and keeps a whole-chunk row group at a single read; a hole between two runs always ends a read.
+     * One read per maximal run of units touching byte for byte, in the file and in the fetch buffer. Joining those
+     * costs no unrequested byte and keeps a whole-chunk row group at a single read; a hole between two runs always ends
+     * a read.
      */
     private static List<MergedRead> mergeAbutting(List<PlacedUnit> placed, MemorySegment buffer) {
         List<MergedRead> reads = new ArrayList<>(placed.size());
@@ -279,14 +313,27 @@ public final class RowGroupFetcher {
     }
 
     private static boolean continuesRun(List<PlacedUnit> placed, int runStart, int index) {
-        FetchUnit previous = placed.get(index - 1).unit();
-        FetchUnit next = placed.get(index).unit();
-        if (previous.fileOffset() + previous.length() != next.fileOffset()) {
+        PlacedUnit previous = placed.get(index - 1);
+        PlacedUnit next = placed.get(index);
+        if (!abuts(previous, next)) {
             return false;
         }
-        long runLength =
-                next.fileOffset() + next.length() - placed.get(runStart).unit().fileOffset();
+        long runStartOffset = placed.get(runStart).unit().fileOffset();
+        long runLength = next.unit().fileOffset() + next.unit().length() - runStartOffset;
         return runLength <= MAX_MERGED_READ_BYTES;
+    }
+
+    /**
+     * Whether {@code next} starts where {@code previous} ends, in the file and in the fetch buffer. One read fills one
+     * stretch of the buffer. A read may skip a unit placed between two of its units, and joining those two would
+     * overwrite the skipped unit and shift the bytes of the second. The two can abut in the file only under a footer
+     * with overlapping chunks.
+     */
+    private static boolean abuts(PlacedUnit previous, PlacedUnit next) {
+        int length = previous.unit().length();
+        boolean inTheFile = previous.unit().fileOffset() + length == next.unit().fileOffset();
+        boolean inTheBuffer = previous.bufferOffset() + length == next.bufferOffset();
+        return inTheFile && inTheBuffer;
     }
 
     private static MergedRead readOver(List<PlacedUnit> run, MemorySegment buffer) {
@@ -306,16 +353,54 @@ public final class RowGroupFetcher {
         return byPath;
     }
 
+    /**
+     * Reads the on-demand prefixes used by a fetched page, and returns the columns left without dictionary bytes: those
+     * named by {@code plan} and those with a prefix left unread. The room of an unread prefix holds earlier bytes of
+     * the pool, and this result is what keeps the slicer away from them. The prefixes share one more read of the same
+     * buffer, because a fetch holding a buffer never asks for another.
+     */
+    private Set<ColumnPath> settleOnDemandPrefixes(
+            FetchPlan plan,
+            List<PlacedUnit> placed,
+            Map<ColumnPath, List<PlacedUnit>> placedByColumn,
+            MemorySegment buffer) {
+        Set<ColumnPath> leftOut = new HashSet<>(plan.dictionariesLeftOut());
+        List<PlacedUnit> inUse = new ArrayList<>();
+        for (PlacedUnit placedUnit : placed) {
+            ColumnPath path = placedUnit.unit().path();
+            if (placedUnit.unit().onDemand()) {
+                if (aFetchedPageUsesTheDictionary(placedByColumn.get(path), path)) {
+                    inUse.add(placedUnit);
+                } else {
+                    leftOut.add(path);
+                }
+            }
+        }
+        readPlacedUnits(inUse, buffer);
+        return leftOut;
+    }
+
+    private static boolean aFetchedPageUsesTheDictionary(List<PlacedUnit> ofColumn, ColumnPath path) {
+        for (PlacedUnit placedUnit : ofColumn) {
+            if (!placedUnit.unit().dictionaryPrefix() && DictionaryFetch.runUsesDictionary(placedUnit.bytes(), path)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private List<FetchedColumnChunk> sliceColumns(
-            Map<ColumnPath, List<PlacedUnit>> placedByColumn, RowGroupChunks chunks) {
+            Map<ColumnPath, List<PlacedUnit>> placedByColumn,
+            RowGroupChunks chunks,
+            Set<ColumnPath> dictionariesLeftOut) {
         List<ColumnPath> leaves = projectedSchema.leafColumns();
         List<FetchedColumnChunk> columns = new ArrayList<>(leaves.size());
         for (ColumnPath path : leaves) {
             List<PlacedUnit> placed = requirePlacedUnits(placedByColumn, path);
             ChunkMeta meta = requireMeta(chunks, path);
-            Optional<MemorySegment> dictionaryPrefix = dictionaryPrefixOf(placed);
+            DictionarySource dictionary = dictionarySourceOf(placed, dictionariesLeftOut.contains(path));
             List<DataPageRun> runs = dataPageRunsOf(placed);
-            columns.add(slicer.slice(dictionaryPrefix, runs, meta, path));
+            columns.add(slicer.slice(dictionary, runs, meta, path));
         }
         return columns;
     }
@@ -334,13 +419,16 @@ public final class RowGroupFetcher {
         return placed;
     }
 
-    private static Optional<MemorySegment> dictionaryPrefixOf(List<PlacedUnit> placed) {
+    private static DictionarySource dictionarySourceOf(List<PlacedUnit> placed, boolean leftOut) {
+        if (leftOut) {
+            return new DictionarySource.LeftOut();
+        }
         for (PlacedUnit placedUnit : placed) {
             if (placedUnit.unit().dictionaryPrefix()) {
-                return Optional.of(placedUnit.bytes());
+                return new DictionarySource.Prefix(placedUnit.bytes());
             }
         }
-        return Optional.empty();
+        return new DictionarySource.FirstRun();
     }
 
     private static List<DataPageRun> dataPageRunsOf(List<PlacedUnit> placed) {

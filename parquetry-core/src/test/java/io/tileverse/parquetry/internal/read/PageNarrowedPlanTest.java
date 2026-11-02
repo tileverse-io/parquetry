@@ -33,6 +33,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Set;
+import java.util.function.IntFunction;
 import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 
@@ -54,13 +56,17 @@ import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.DictionaryPageHeader;
+import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.format.EncodingStats;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.PageLocation;
+import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.RowGroup;
+import io.tileverse.parquetry.internal.filter.LearnedPages;
 import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
@@ -75,11 +81,14 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.FooterRewrite;
 
 /**
  * Plan-level behavior of {@link RowGroupFetcher#planFor(RowGroupSurvivor, Optional)} against a real multi-page file: a
  * present row mask narrows each column to the byte runs of its surviving pages plus the dictionary prefix, an absent
- * mask plans whole chunks, and every shape the mask cannot be trusted for falls back to the whole chunk.
+ * mask plans whole chunks, and every shape the mask cannot be trusted for falls back to the whole chunk. A surviving
+ * page known not to use the dictionary changes what the plan does with the prefix. Learned encodings leave it out, and
+ * the count of dictionary-encoded pages in the footer leaves it to be read on demand.
  *
  * <p>The fixture holds one row group of two long columns split into twenty pages each. Column {@code a} is written
  * {@code PLAIN} and has no dictionary page; column {@code b} is written dictionary-encoded, which puts a dictionary
@@ -232,7 +241,7 @@ class PageNarrowedPlanTest {
             Fixture fixture = Fixture.open(source);
             MemorySegment firstDataPage = fixture.readFirstDataPage(A, arena);
             List<DataPageRun> runs = List.of(new DataPageRun(firstDataPage, 0));
-            Optional<MemorySegment> prefixThatIsReallyADataPage = Optional.of(firstDataPage);
+            DictionarySource prefixThatIsReallyADataPage = new DictionarySource.Prefix(firstDataPage);
             ChunkMeta meta = fixture.meta(A);
 
             ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA);
@@ -250,8 +259,8 @@ class PageNarrowedPlanTest {
         try (Arena arena = Arena.ofConfined();
                 ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
-            Optional<MemorySegment> lyingPage =
-                    Optional.of(withInflatedUncompressedSize(fixture.readDictionaryPrefix(B, arena), arena));
+            DictionarySource lyingPage = new DictionarySource.Prefix(
+                    withInflatedUncompressedSize(fixture.readDictionaryPrefix(B, arena), arena));
             List<DataPageRun> runs = List.of(new DataPageRun(fixture.readFirstDataPage(B, arena), 0));
             ChunkMeta meta = fixture.meta(B);
             ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA);
@@ -273,8 +282,8 @@ class PageNarrowedPlanTest {
         try (Arena arena = Arena.ofConfined();
                 ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
-            Optional<MemorySegment> lyingPage =
-                    Optional.of(withNegativeValueCount(fixture.readDictionaryPrefix(B, arena), arena));
+            DictionarySource lyingPage =
+                    new DictionarySource.Prefix(withNegativeValueCount(fixture.readDictionaryPrefix(B, arena), arena));
             List<DataPageRun> runs = List.of(new DataPageRun(fixture.readFirstDataPage(B, arena), 0));
             ChunkMeta meta = fixture.meta(B);
             ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA);
@@ -291,13 +300,199 @@ class PageNarrowedPlanTest {
         try (Arena arena = Arena.ofConfined();
                 ByteRangeSource source = ByteRangeSource.ofFile(file)) {
             Fixture fixture = Fixture.open(source);
-            MemorySegment dictionaryPage = fixture.readDictionaryPrefix(B, arena);
+            DictionarySource dictionaryPage = new DictionarySource.Prefix(fixture.readDictionaryPrefix(B, arena));
 
             ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA);
 
             assertThatIllegalStateException()
-                    .isThrownBy(() -> slicer.slice(Optional.of(dictionaryPage), List.of(), fixture.meta(B), B))
+                    .isThrownBy(() -> slicer.slice(dictionaryPage, List.of(), fixture.meta(B), B))
                     .withMessageContaining(B.dot());
+        }
+    }
+
+    // a run may start at any page, and a sniff would fail on a chunk declaring its dictionary page offset
+    @Test
+    void leftOutDictionaryIsNotSniffed() {
+        try (Arena arena = Arena.ofConfined();
+                ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.open(source);
+            MemorySegment firstDataPage = fixture.readFirstDataPage(B, arena);
+            List<DataPageRun> runs = List.of(new DataPageRun(firstDataPage, 0));
+            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA);
+
+            FetchedColumnChunk chunk = slicer.slice(new DictionarySource.LeftOut(), runs, fixture.meta(B), B);
+
+            assertThat(chunk.dictionaryPage()).isEmpty();
+            assertThat(chunk.dataPageRuns().get(0).segment().byteSize()).isEqualTo(firstDataPage.byteSize());
+        }
+    }
+
+    @Test
+    void prefixViewIsReadOnly() {
+        MemorySegment writable = MemorySegment.ofArray(new byte[1]);
+
+        assertThat(new DictionarySource.Prefix(writable).bytes().isReadOnly()).isTrue();
+    }
+
+    @Test
+    void onlyAPrefixWaitsOnDemand() {
+        assertThatThrownBy(() -> new FetchUnit(A, 0, 1, 0, false, true))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(A.dot());
+    }
+
+    // The encodings of the surviving pages decide. A dictionary-encoded page out of the selection does not count.
+    @Test
+    void learnedPlainPagesLeaveItOut() {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.open(source);
+            PageIndex learned = fixture.learnedPagesOfB(page -> page < 2 ? Encoding.RLE_DICTIONARY : Encoding.PLAIN);
+
+            FetchPlan plan = fixture.plan(Optional.of(fixture.maskOver(rowsOfPages(2, 4), learned)));
+
+            assertThat(unitsOf(plan, B)).noneMatch(FetchUnit::dictionaryPrefix);
+            assertThat(plan.dictionariesLeftOut()).containsExactly(B);
+            assertThat(runOrdinals(plan, B)).containsExactly(2, 4);
+        }
+    }
+
+    @Test
+    void learnedDictionaryPageFetchesIt() {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.open(source);
+            PageIndex learned = fixture.learnedPagesOfB(page -> page == 4 ? Encoding.RLE_DICTIONARY : Encoding.PLAIN);
+
+            FetchPlan plan = fixture.plan(Optional.of(fixture.maskOver(rowsOfPages(2, 4), learned)));
+
+            assertDictionaryPrefix(plan, fixture, B);
+            assertThat(dictionaryPrefixOf(plan, B).onDemand()).isFalse();
+            assertThat(plan.dictionariesLeftOut()).isEmpty();
+        }
+    }
+
+    @Test
+    void pagesPastTheCountAskOnDemand() {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.openCounting(source, 2);
+
+            FetchPlan plan = fixture.plan(Optional.of(fixture.maskOver(rowsOfPages(4))));
+
+            assertDictionaryPrefix(plan, fixture, B);
+            assertThat(dictionaryPrefixOf(plan, B).onDemand()).isTrue();
+            assertThat(plan.dictionariesLeftOut()).isEmpty();
+        }
+    }
+
+    // the count k makes the pages from 0 to k - 1 dictionary-encoded, and page k is the first past them
+    @Test
+    void aPageAtTheCountAsksOnDemand() {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.openCounting(source, 4);
+
+            FetchPlan plan = fixture.plan(Optional.of(fixture.maskOver(rowsOfPages(4))));
+
+            assertThat(dictionaryPrefixOf(plan, B).onDemand()).isTrue();
+        }
+    }
+
+    @Test
+    void aPageUnderTheCountFetchesIt() {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.openCounting(source, 2);
+
+            FetchPlan plan = fixture.plan(Optional.of(fixture.maskOver(rowsOfPages(1, 4))));
+
+            assertDictionaryPrefix(plan, fixture, B);
+            assertThat(dictionaryPrefixOf(plan, B).onDemand()).isFalse();
+        }
+    }
+
+    // a corrupt footer can count more pages than the page index lists
+    @Test
+    void aCountPastThePagesFetchesIt() {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.openWithStats(source, statsWith(PAGE_COUNT + 5, 1));
+
+            FetchPlan plan = fixture.plan(Optional.of(fixture.maskOver(rowsOfPages(4))));
+
+            assertThat(dictionaryPrefixOf(plan, B).onDemand()).isFalse();
+        }
+    }
+
+    @Test
+    void noCountFetchesIt() {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.open(source);
+            assertThat(fixture.meta(B).dictionaryEncodedPages()).isEmpty();
+
+            FetchPlan plan = fixture.plan(Optional.of(fixture.maskOver(rowsOfPages(4))));
+
+            assertDictionaryPrefix(plan, fixture, B);
+            assertThat(dictionaryPrefixOf(plan, B).onDemand()).isFalse();
+            assertThat(plan.dictionariesLeftOut()).isEmpty();
+        }
+    }
+
+    @Test
+    void aWholeChunkKeepsItsDictionary() {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.openCounting(source, 0);
+            PageIndex learned = fixture.learnedPagesOfB(page -> Encoding.PLAIN);
+            RowRanges allRows = RowRanges.all(ROW_COUNT);
+
+            FetchPlan byCount = fixture.plan(Optional.of(fixture.maskOver(allRows)));
+            FetchPlan byEncodings = fixture.plan(Optional.of(fixture.maskOver(allRows, learned)));
+
+            assertWholeChunk(byCount, fixture.meta(B), B);
+            assertWholeChunk(byEncodings, fixture.meta(B), B);
+            assertThat(byCount.dictionariesLeftOut()).isEmpty();
+            assertThat(byEncodings.dictionariesLeftOut()).isEmpty();
+        }
+    }
+
+    // The buffer and the budget see the same bytes with or without a count. The prefix opens this plan of one column.
+    @Test
+    void onDemandRoomStaysInTheBuffer() {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture counted = Fixture.openCounting(source, 2);
+            Fixture uncounted = Fixture.open(source);
+            ParquetSchema onlyB = WriteFixtures.schemaOf(requiredLong(B.name()));
+            RowGroupFetcher fetcher = TestFetchers.over(source, SCHEMA, onlyB, SegmentPool.getDefault());
+            RowRanges onePage = rowsOfPages(4);
+
+            FetchPlan onDemand = fetcher.planFor(counted.survivor(), Optional.of(counted.maskOver(onePage)));
+            FetchPlan readAtOnce = fetcher.planFor(uncounted.survivor(), Optional.of(uncounted.maskOver(onePage)));
+
+            assertThat(dictionaryPrefixOf(onDemand, B).onDemand()).isTrue();
+            assertThat(onDemand.requestedBytes()).isEqualTo(readAtOnce.requestedBytes());
+            assertThat(onDemand.spanBytes()).isEqualTo(readAtOnce.spanBytes());
+        }
+    }
+
+    // The count alone would fetch the prefix for page 1. The entry records page 1 as PLAIN, and the entry decides.
+    @Test
+    void learnedEncodingsBeatTheCount() {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.openCounting(source, 2);
+            PageIndex learned = fixture.learnedPagesOfB(page -> Encoding.PLAIN);
+
+            FetchPlan plan = fixture.plan(Optional.of(fixture.maskOver(rowsOfPages(1), learned)));
+
+            assertThat(unitsOf(plan, B)).noneMatch(FetchUnit::dictionaryPrefix);
+            assertThat(plan.dictionariesLeftOut()).containsExactly(B);
+        }
+    }
+
+    // The count alone would leave the prefix unread for page 4. The entry records page 4 as using the dictionary.
+    @Test
+    void learnedPageBeatsTheCount() {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.openCounting(source, 2);
+            PageIndex learned = fixture.learnedPagesOfB(page -> Encoding.RLE_DICTIONARY);
+
+            FetchPlan plan = fixture.plan(Optional.of(fixture.maskOver(rowsOfPages(4), learned)));
+
+            assertThat(dictionaryPrefixOf(plan, B).onDemand()).isFalse();
         }
     }
 
@@ -420,7 +615,21 @@ class PageNarrowedPlanTest {
     private record Fixture(ByteRangeSource source, RowGroup rowGroup, RowGroupChunks chunks, RowGroupFetcher fetcher) {
 
         static Fixture open(ByteRangeSource source) {
+            return of(source, ParquetFormat.readFooter(source));
+        }
+
+        /** The fixture file with a footer giving {@code dictionaryEncodedPages} as the count for column {@code b}. */
+        static Fixture openCounting(ByteRangeSource source, int dictionaryEncodedPages) {
+            return openWithStats(source, statsWith(dictionaryEncodedPages, PAGE_COUNT - dictionaryEncodedPages));
+        }
+
+        /** The fixture file with a footer giving {@code stats} as the encoding statistics of column {@code b}. */
+        static Fixture openWithStats(ByteRangeSource source, List<EncodingStats> stats) {
             FileMetaData footer = ParquetFormat.readFooter(source);
+            return of(source, FooterRewrite.encodingStats(B, 0, stats).apply(footer));
+        }
+
+        private static Fixture of(ByteRangeSource source, FileMetaData footer) {
             RowGroup rowGroup = footer.rowGroups().get(0);
             RowGroupChunks chunks = TestRowGroupChunks.of(footer, 0, SCHEMA, indexLoader(source));
             RowGroupFetcher fetcher =
@@ -445,7 +654,33 @@ class PageNarrowedPlanTest {
         }
 
         RowMask maskOver(RowRanges surviving) {
-            return new RowMask(surviving, Map.of(A, pageIndex(A), B, pageIndex(B)));
+            return maskOver(surviving, pageIndex(B));
+        }
+
+        RowMask maskOver(RowRanges surviving, PageIndex pagesOfB) {
+            return new RowMask(surviving, Map.of(A, pageIndex(A), B, pagesOfB));
+        }
+
+        /** The real pages of column {@code b}, learned with the encoding given by {@code encodingOf} for each page. */
+        PageIndex learnedPagesOfB(IntFunction<Encoding> encodingOf) {
+            ChunkMeta meta = meta(B);
+            List<PageLocation> locations = pageIndex(B).locations();
+            LearnedPages.Builder builder = LearnedPages.builder(PrimitiveKind.INT64, Optional.empty(), PAGE_COUNT);
+            for (int page = 0; page < PAGE_COUNT; page++) {
+                PageLocation location = locations.get(page);
+                long offset = location.offset() - meta.chunkStart();
+                int size = location.compressedPageSize();
+                builder.add(
+                        offset,
+                        size,
+                        location.firstRowIndex(),
+                        PAGE_VALUE_LIMIT,
+                        encodingOf.apply(page),
+                        Optional.empty());
+            }
+            LearnedPages learned = builder.build();
+            return PageIndex.learned(learned, meta, ROW_COUNT, PrimitiveKind.INT64, Optional.empty())
+                    .orElseThrow();
         }
 
         /** A whole-chunk plan with every unit of {@code path} removed. The fetch must refuse to slice it. */
@@ -456,7 +691,7 @@ class PageNarrowedPlanTest {
                     kept.add(unit);
                 }
             }
-            return new FetchPlan(kept, true);
+            return new FetchPlan(kept, true, Set.of());
         }
 
         /**
@@ -590,6 +825,24 @@ class PageNarrowedPlanTest {
 
     private static RowRanges firstAndLastRows() {
         return new RowRanges(List.of(new Range(0, 9), new Range(ROW_COUNT - 10, ROW_COUNT - 1)));
+    }
+
+    /** The rows of {@code pages}, given in ascending order. */
+    private static RowRanges rowsOfPages(int... pages) {
+        List<Range> rows = new ArrayList<>(pages.length);
+        for (int page : pages) {
+            long firstRow = (long) page * PAGE_VALUE_LIMIT;
+            rows.add(new Range(firstRow, firstRow + PAGE_VALUE_LIMIT - 1));
+        }
+        return new RowRanges(rows);
+    }
+
+    /** Encoding statistics counting one dictionary page and data pages of two encodings. */
+    private static List<EncodingStats> statsWith(int dictionaryEncodedPages, int plainPages) {
+        return List.of(
+                new EncodingStats(PageType.DICTIONARY_PAGE, Encoding.PLAIN, 1),
+                new EncodingStats(PageType.DATA_PAGE, Encoding.RLE_DICTIONARY, dictionaryEncodedPages),
+                new EncodingStats(PageType.DATA_PAGE, Encoding.PLAIN, plainPages));
     }
 
     private static IndexSectionLoader indexLoader(ByteRangeSource source) {

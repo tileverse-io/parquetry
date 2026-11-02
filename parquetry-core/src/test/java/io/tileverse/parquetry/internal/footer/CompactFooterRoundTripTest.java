@@ -27,6 +27,7 @@ import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -54,9 +55,12 @@ import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.ColumnMetaData;
 import io.tileverse.parquetry.format.CompressionCodec;
+import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.format.EncodingStats;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.GeospatialStatistics;
 import io.tileverse.parquetry.format.OffsetIndex;
+import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.format.PhysicalType;
@@ -87,8 +91,9 @@ import io.tileverse.parquetry.testkit.TestCorpus;
  * against the wire record as the scan path reads it today.
  *
  * <p>The fixtures are chosen to cover the shapes encoded specially by the blob - dictionary pages, page indexes, bloom
- * filters, nested leaf paths, native geospatial bounds, absent statistics, and several row groups - and
- * {@link #theFixtureSetExercisesEveryEncodedShape()} fails if a future corpus change stops exercising one of them.
+ * filters, nested leaf paths, native geospatial bounds, chunks mixing encodings, absent statistics, and several row
+ * groups - and {@link #theFixtureSetExercisesEveryEncodedShape()} fails if a future corpus change stops exercising one
+ * of them.
  */
 class CompactFooterRoundTripTest {
 
@@ -99,8 +104,13 @@ class CompactFooterRoundTripTest {
     private static final String DICT_PAGE_OFFSET_ZERO = "parquet-testing/data/dict-page-offset-zero.parquet";
     private static final String NESTED_MAPS = "parquet-testing/data/nested_maps.snappy.parquet";
     private static final String NESTED_LISTS = "parquet-testing/data/nested_lists.snappy.parquet";
+    private static final String LARGE_STRING_MAP = "parquet-testing/data/large_string_map.brotli.parquet";
     private static final String NATIVE_GEOMETRY = "geoparquet-testing/data/encodings/point-native-geometry.parquet";
     private static final String GEOPARQUET_BUILDINGS = "parquetry/geo/buildings-gp110-bbox-covering.parquet";
+
+    private static final OptionalLong DICTIONARY_OFFSET = OptionalLong.of(4L);
+    private static final OptionalLong NO_DICTIONARY_OFFSET = OptionalLong.empty();
+    private static final EncodingStats DICTIONARY_PAGE = new EncodingStats(PageType.DICTIONARY_PAGE, Encoding.PLAIN, 1);
 
     @TempDir
     Path tempDir;
@@ -114,6 +124,7 @@ class CompactFooterRoundTripTest {
                 DICT_PAGE_OFFSET_ZERO,
                 NESTED_MAPS,
                 NESTED_LISTS,
+                LARGE_STRING_MAP,
                 NATIVE_GEOMETRY,
                 GEOPARQUET_BUILDINGS);
     }
@@ -141,7 +152,8 @@ class CompactFooterRoundTripTest {
 
     /**
      * Pins every layout constant at once: the header, the row-group lane stride, the chunk record stride, the geo entry
-     * stride, and the verbatim statistics arena must account for the whole blob and nothing more.
+     * stride, the encoding entry stride, and the verbatim statistics arena must account for the whole blob and nothing
+     * more.
      */
     @ParameterizedTest
     @MethodSource("corpusFiles")
@@ -154,10 +166,11 @@ class CompactFooterRoundTripTest {
 
             long rowGroups = compact.rowGroupCount();
             long leaves = compact.leafCount();
-            long expected = 40L
+            long expected = 48L
                     + 8L * rowGroups
                     + 96L * rowGroups * leaves
                     + 64L * geoBboxCount(wire)
+                    + 8L * mixedChunkCount(wire)
                     + statisticsByteCount(wire);
 
             assertThat(compact.byteSize()).isEqualTo(expected);
@@ -622,6 +635,236 @@ class CompactFooterRoundTripTest {
         }
     }
 
+    @Test
+    void aMixedChunkKeepsItsPageCount() {
+        ChunkMeta chunk = encodedChunk(
+                DICTIONARY_OFFSET,
+                DICTIONARY_PAGE,
+                dataPages(Encoding.RLE_DICTIONARY, 3),
+                dataPages(Encoding.PLAIN, 5));
+
+        assertThat(chunk.dictionaryEncodedPages()).hasValue(3);
+    }
+
+    @Test
+    void aDictionaryOnlyChunkHasNoCount() {
+        ChunkMeta chunk = encodedChunk(DICTIONARY_OFFSET, DICTIONARY_PAGE, dataPages(Encoding.RLE_DICTIONARY, 8));
+
+        assertThat(chunk.dictionaryEncodedPages()).isEmpty();
+    }
+
+    @Test
+    void plainOnlyChunkHasNoCount() {
+        ChunkMeta chunk = encodedChunk(NO_DICTIONARY_OFFSET, dataPages(Encoding.PLAIN, 8));
+
+        assertThat(chunk.dictionaryEncodedPages()).isEmpty();
+    }
+
+    @Test
+    void noEncodingStatsHasNoCount() {
+        ChunkMeta chunk = encodedChunk(DICTIONARY_OFFSET);
+
+        assertThat(chunk.dictionaryEncodedPages()).isEmpty();
+    }
+
+    @Test
+    void unusedDictionaryCountsZero() {
+        ChunkMeta chunk = encodedChunk(DICTIONARY_OFFSET, DICTIONARY_PAGE, dataPages(Encoding.PLAIN, 8));
+
+        assertThat(chunk.dictionaryEncodedPages()).hasValue(0);
+    }
+
+    @Test
+    void bothPageVersionsCount() {
+        ChunkMeta chunk = encodedChunk(
+                DICTIONARY_OFFSET,
+                DICTIONARY_PAGE,
+                dataPages(Encoding.RLE_DICTIONARY, 2),
+                new EncodingStats(PageType.DATA_PAGE_V2, Encoding.RLE_DICTIONARY, 3),
+                new EncodingStats(PageType.DATA_PAGE_V2, Encoding.PLAIN, 1));
+
+        assertThat(chunk.dictionaryEncodedPages()).hasValue(5);
+    }
+
+    @Test
+    void plainDictionaryCounts() {
+        ChunkMeta chunk = encodedChunk(
+                DICTIONARY_OFFSET,
+                new EncodingStats(PageType.DICTIONARY_PAGE, Encoding.PLAIN_DICTIONARY, 1),
+                dataPages(Encoding.PLAIN_DICTIONARY, 4),
+                dataPages(Encoding.PLAIN, 1));
+
+        assertThat(chunk.dictionaryEncodedPages()).hasValue(4);
+    }
+
+    // Encoding statistics may list data pages alone, with the offset as the only sign of a dictionary page.
+    @Test
+    void dictionaryOffsetAloneCounts() {
+        ChunkMeta chunk =
+                encodedChunk(DICTIONARY_OFFSET, dataPages(Encoding.RLE_DICTIONARY, 3), dataPages(Encoding.PLAIN, 5));
+
+        assertThat(chunk.dictionaryEncodedPages()).hasValue(3);
+    }
+
+    // Some writers leave the offset unset, with the statistic as the only sign of a dictionary page.
+    @Test
+    void dictionaryStatisticAloneCounts() {
+        ChunkMeta chunk = encodedChunk(
+                NO_DICTIONARY_OFFSET,
+                DICTIONARY_PAGE,
+                dataPages(Encoding.RLE_DICTIONARY, 3),
+                dataPages(Encoding.PLAIN, 5));
+
+        assertThat(chunk.dictionaryEncodedPages()).hasValue(3);
+    }
+
+    @Test
+    void aZeroOffsetIsNoDictionary() {
+        ChunkMeta chunk = encodedChunk(OptionalLong.of(0L), dataPages(Encoding.PLAIN, 8));
+
+        assertThat(chunk.dictionaryEncodedPages()).isEmpty();
+    }
+
+    @Test
+    void aNegativeCountIsDropped() {
+        ChunkMeta chunk = encodedChunk(
+                DICTIONARY_OFFSET,
+                DICTIONARY_PAGE,
+                dataPages(Encoding.RLE_DICTIONARY, -3),
+                dataPages(Encoding.PLAIN, 5));
+
+        assertThat(chunk.dictionaryEncodedPages()).isEmpty();
+    }
+
+    @Test
+    void anOverflowingCountIsDropped() {
+        ChunkMeta chunk = encodedChunk(
+                DICTIONARY_OFFSET,
+                DICTIONARY_PAGE,
+                dataPages(Encoding.RLE_DICTIONARY, Integer.MAX_VALUE),
+                dataPages(Encoding.PLAIN_DICTIONARY, 1),
+                dataPages(Encoding.PLAIN, 5));
+
+        assertThat(chunk.dictionaryEncodedPages()).isEmpty();
+    }
+
+    // Both row groups list their columns out of schema order.
+    @Test
+    void countsFollowTheChunk() {
+        List<ColumnMetaData> firstGroup = List.of(mixedChunk("b", 2), mixedChunk("a", 1));
+        List<ColumnMetaData> secondGroup = List.of(mixedChunk("b", 4), mixedChunk("a", 3));
+
+        CompactFooter compact = encodeInt32Leaves(List.of(firstGroup, secondGroup), "a", "b");
+
+        assertThat(compact.chunk(0, 0).dictionaryEncodedPages()).hasValue(1);
+        assertThat(compact.chunk(0, 1).dictionaryEncodedPages()).hasValue(2);
+        assertThat(compact.chunk(1, 0).dictionaryEncodedPages()).hasValue(3);
+        assertThat(compact.chunk(1, 1).dictionaryEncodedPages()).hasValue(4);
+    }
+
+    // The position of this entry differs from its chunk index.
+    @Test
+    void anEntryFollowsAChunkWithNone() {
+        ColumnMetaData plainOnly = chunkWithStats("a", NO_DICTIONARY_OFFSET, dataPages(Encoding.PLAIN, 8));
+
+        CompactFooter compact = encodeInt32Leaves(List.of(List.of(plainOnly, mixedChunk("b", 2))), "a", "b");
+
+        assertThat(compact.chunk(0, 0).dictionaryEncodedPages()).isEmpty();
+        assertThat(compact.chunk(0, 1).dictionaryEncodedPages()).hasValue(2);
+    }
+
+    @Test
+    void aMixedChunkCostsEightBytes() {
+        ColumnMetaData bareA = chunkWithStats("a", DICTIONARY_OFFSET);
+        ColumnMetaData bareB = chunkWithStats("b", NO_DICTIONARY_OFFSET);
+        ColumnMetaData dictionaryOnlyA =
+                chunkWithStats("a", DICTIONARY_OFFSET, DICTIONARY_PAGE, dataPages(Encoding.RLE_DICTIONARY, 8));
+        ColumnMetaData corruptCountA = chunkWithStats(
+                "a",
+                DICTIONARY_OFFSET,
+                DICTIONARY_PAGE,
+                dataPages(Encoding.RLE_DICTIONARY, -3),
+                dataPages(Encoding.PLAIN, 5));
+        ColumnMetaData plainOnlyB = chunkWithStats("b", NO_DICTIONARY_OFFSET, dataPages(Encoding.PLAIN, 8));
+
+        long noStatistics = sizeOfOneRowGroup(bareA, bareB);
+
+        assertThat(sizeOfOneRowGroup(dictionaryOnlyA, plainOnlyB)).isEqualTo(noStatistics);
+        assertThat(sizeOfOneRowGroup(corruptCountA, plainOnlyB)).isEqualTo(noStatistics);
+        assertThat(sizeOfOneRowGroup(mixedChunk("a", 3), plainOnlyB)).isEqualTo(noStatistics + 8);
+        assertThat(sizeOfOneRowGroup(mixedChunk("a", 3), mixedChunk("b", 3))).isEqualTo(noStatistics + 16);
+    }
+
+    // Eight entries take the bytes of one geo entry and must not read as one extent.
+    @Test
+    void mixedChunksAreNoGeoExtents() {
+        List<ColumnMetaData> oneChunk = List.of(mixedChunk("a", 1));
+
+        CompactFooter compact = encodeInt32Leaves(Collections.nCopies(8, oneChunk), "a");
+
+        assertThat(compact.geoExtentCount()).isZero();
+    }
+
+    /** The only chunk of a footer with one row group and one leaf, recording {@code stats}. */
+    private static ChunkMeta encodedChunk(OptionalLong dictionaryPageOffset, EncodingStats... stats) {
+        ColumnMetaData meta = chunkWithStats("a", dictionaryPageOffset, stats);
+        return encodeInt32Leaves(List.of(List.of(meta)), "a").chunk(0, 0);
+    }
+
+    private static long sizeOfOneRowGroup(ColumnMetaData a, ColumnMetaData b) {
+        return encodeInt32Leaves(List.of(List.of(a, b)), "a", "b").byteSize();
+    }
+
+    /** Encodes a footer with one row group per list, against a schema of the INT32 leaves named by {@code leaves}. */
+    private static CompactFooter encodeInt32Leaves(List<List<ColumnMetaData>> rowGroups, String... leaves) {
+        List<RowGroup> groups = new ArrayList<>();
+        for (List<ColumnMetaData> chunks : rowGroups) {
+            List<ColumnChunk> columns =
+                    chunks.stream().map(CompactFooterRoundTripTest::chunkOf).toList();
+            groups.add(RowGroup.builder().columns(columns).build());
+        }
+        FileMetaData footer =
+                FileMetaData.builder().version(1).rowGroups(groups).build();
+        return CompactFooter.encode(footer, LeafIndex.of(int32Schema(leaves)));
+    }
+
+    private static ParquetSchema int32Schema(String... names) {
+        List<SchemaNode> leaves = new ArrayList<>();
+        for (String name : names) {
+            leaves.add(new SchemaNode.Primitive(
+                    name, Repetition.REQUIRED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1));
+        }
+        return new ParquetSchema(new SchemaNode.Group("schema", Repetition.REQUIRED, leaves, Optional.empty(), -1));
+    }
+
+    /** A chunk with a dictionary page, {@code dictionaryEncoded} data pages using it, and one PLAIN data page. */
+    private static ColumnMetaData mixedChunk(String column, int dictionaryEncoded) {
+        return chunkWithStats(
+                column,
+                DICTIONARY_OFFSET,
+                DICTIONARY_PAGE,
+                dataPages(Encoding.RLE_DICTIONARY, dictionaryEncoded),
+                dataPages(Encoding.PLAIN, 1));
+    }
+
+    private static ColumnMetaData chunkWithStats(
+            String column, OptionalLong dictionaryPageOffset, EncodingStats... stats) {
+        return ColumnMetaData.builder()
+                .type(PhysicalType.INT32)
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .pathInSchema(List.of(column))
+                .numValues(1L)
+                .totalCompressedSize(64L)
+                .dataPageOffset(1024L)
+                .dictionaryPageOffset(dictionaryPageOffset)
+                .encodingStats(List.of(stats))
+                .build();
+    }
+
+    private static EncodingStats dataPages(Encoding encoding, int count) {
+        return new EncodingStats(PageType.DATA_PAGE, encoding, count);
+    }
+
     // --- per-file comparison against the wire records ---
 
     private static void assertRowGroupMatchesWire(CompactFooter compact, int rg, RowGroup wireGroup) {
@@ -661,6 +904,9 @@ class CompactFooterRoundTripTest {
         assertThat(chunk.dictionaryPageOffset())
                 .as("%s dictionaryPageOffset", where)
                 .isEqualTo(realDictionaryPageOffset(meta));
+        assertThat(chunk.dictionaryEncodedPages())
+                .as("%s dictionaryEncodedPages", where)
+                .isEqualTo(dictionaryEncodedPagesOf(meta));
         assertThat(chunk.numValues()).as("%s numValues", where).isEqualTo(meta.numValues());
         assertThat(chunk.totalCompressedSize())
                 .as("%s totalCompressedSize", where)
@@ -763,6 +1009,7 @@ class CompactFooterRoundTripTest {
         BLOOM_FILTER,
         NESTED_LEAF,
         GEO_BBOX,
+        MIXED_ENCODINGS,
         ABSENT_STATISTICS,
         SEVERAL_ROW_GROUPS
     }
@@ -811,6 +1058,9 @@ class CompactFooterRoundTripTest {
         if (chunk.geoExtent().isPresent()) {
             shapes.add(EncodedShape.GEO_BBOX);
         }
+        if (chunk.dictionaryEncodedPages().isPresent()) {
+            shapes.add(EncodedShape.MIXED_ENCODINGS);
+        }
         if (chunk.minValue().isEmpty() && chunk.maxValue().isEmpty()) {
             shapes.add(EncodedShape.ABSENT_STATISTICS);
         }
@@ -858,6 +1108,47 @@ class CompactFooterRoundTripTest {
             }
         }
         return count;
+    }
+
+    /** Chunks with an 8-byte encoding entry. */
+    private static long mixedChunkCount(FileMetaData wire) {
+        long count = 0;
+        for (RowGroup group : wire.rowGroups()) {
+            for (ColumnChunk chunk : group.columns()) {
+                if (dictionaryEncodedPagesOf(chunk.metaData().orElseThrow()).isPresent()) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
+    /**
+     * The count kept for a chunk with a dictionary page and at least one data page with another encoding, read off its
+     * encoding statistics. Other chunks keep no count.
+     */
+    private static OptionalInt dictionaryEncodedPagesOf(ColumnMetaData meta) {
+        int dictionaryEncoded = 0;
+        int otherEncoded = 0;
+        for (EncodingStats stats : meta.encodingStats()) {
+            boolean dataPage = stats.pageType() == PageType.DATA_PAGE || stats.pageType() == PageType.DATA_PAGE_V2;
+            boolean usesDictionary =
+                    stats.encoding() == Encoding.RLE_DICTIONARY || stats.encoding() == Encoding.PLAIN_DICTIONARY;
+            if (dataPage && usesDictionary) {
+                dictionaryEncoded += stats.count();
+            }
+            if (dataPage && !usesDictionary) {
+                otherEncoded += stats.count();
+            }
+        }
+        boolean mixed = hasDictionaryPage(meta) && otherEncoded > 0 && dictionaryEncoded >= 0;
+        return mixed ? OptionalInt.of(dictionaryEncoded) : OptionalInt.empty();
+    }
+
+    private static boolean hasDictionaryPage(ColumnMetaData meta) {
+        List<EncodingStats> stats = meta.encodingStats();
+        boolean inStatistics = stats.stream().anyMatch(s -> s.pageType() == PageType.DICTIONARY_PAGE);
+        return inStatistics || realDictionaryPageOffset(meta).isPresent();
     }
 
     /** The bytes of the statistics bounds chosen by {@link ChunkBounds} for the chunks: the size of the arena. */

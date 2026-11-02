@@ -44,9 +44,10 @@ import lombok.NonNull;
  * @param useBloomFilter run the BLOOM_FILTER tier (when loaded)
  * @param useRecordLevelFilter run the RECORD_LEVEL tier inline during record assembly
  * @param usePageNarrowedFetch when the decode side qualifies a row group for page-skip, fetch only the surviving page
- *     runs (plus the dictionary prefix) instead of whole column chunks; when off, fetches stay whole-chunk while
- *     decode-side page skip continues unchanged. A page left out of the fetch is never header-walked either, hence it
- *     counts toward neither {@code pagesDecoded} nor {@code pagesPruned} in the read stats (see
+ *     runs, plus the dictionary prefix unless each fetched page is known not to use it. A column keeping each of its
+ *     pages fetches its whole chunk. When off, fetches stay whole-chunk while decode-side page skip continues
+ *     unchanged. A page left out of the fetch is never header-walked either, hence it counts toward neither
+ *     {@code pagesDecoded} nor {@code pagesPruned} in the read stats (see
  *     {@link io.tileverse.parquetry.observe.RowGroupRead})
  * @param queryObserver receives query and row-group boundary callbacks; never {@code null} (defaults to
  *     {@link QueryObserver#NONE})

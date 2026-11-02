@@ -236,11 +236,11 @@ failing them gets no learning pass. A full scan learns nothing.
   `par explain --analyze --format json` leaves the learning pass out, because
   the fetch clock stops before it.
 - **One packed entry per chunk.** An entry lists the data pages of its chunk,
-  with their offsets, sizes, first rows, null counts and min/max bounds. A chunk
-  gets an entry for all its data pages or no entry at all. A read learns only
-  row groups with flat scanned columns and no declared offset index. It keeps
-  the entries of the scanned chunks of a row group together or not at all,
-  because a row mask needs the pages of the scanned columns.
+  with their offsets, sizes, first rows, encodings, null counts and min/max
+  bounds. A chunk gets an entry for all its data pages or no entry at all. A read
+  learns only row groups with flat scanned columns and no declared offset index.
+  It keeps the entries of the scanned chunks of a row group together or not at
+  all, because a row mask needs the pages of the scanned columns.
 - **Trusted bounds only.** A read uses page bounds only where the reader
   applies an order to them and can decode them. Long binary bounds are cut to
   64 bytes, and a cut bound still holds for its page. Geometry, geography and
@@ -249,9 +249,11 @@ failing them gets no learning pass. A full scan learns nothing.
   process, beside the parsed footers
   ([Memory and tuning](memory-and-tuning.md#the-metadata-cache)). A later read
   of the row group takes them as it takes a declared page index. The
-  COLUMN_INDEX tier, the `RowMask` and the fetch of the surviving pages do not
-  tell the two sources apart. An `explain()` after the first read shows the
-  decisions of the next one.
+  COLUMN_INDEX tier and the `RowMask` do not tell the two sources apart. The
+  fetch of the surviving pages differs in one point, because learned pages record
+  their encodings and can leave a dictionary page out
+  ([Fetch and decode](#5-fetch-and-decode)). An `explain()` after the first read
+  shows the decisions of the next one.
 - **Turning it off.** `ReadOptions.builder().useColumnIndexFilter(false)` turns
   the COLUMN_INDEX tier off for a read, and with it both the learning and the
   use of learned pages. A heap share of 0 for the metadata cache turns learning
@@ -274,6 +276,14 @@ and does not depend on the cache. pyarrow writes one with
 `write_page_index=True`, and `par cp` writes a copy with one, because
 parquetry's writer declares a page index by default. Learning is a bridge for
 the files written without one.
+
+Writers should leave geometry out of dictionary encoding. pyarrow tries a
+dictionary on each column by default (`use_dictionary=True`), and WKB
+deduplicates nothing in it. On a file of the Overture buildings release,
+1,357,824 dictionary entries serve 1,357,824 rows, and the chunk then falls back
+to PLAIN. `use_dictionary` takes a list of columns, and the columns with repeated
+values keep their dictionary. parquetry's writer writes geometry PLAIN unless
+told otherwise.
 
 ---
 
@@ -325,7 +335,7 @@ What each piece guarantees:
   before the next page. With a `RowMask`, `PageCursor` skips non-surviving pages
   outright, and surviving pages are compacted to the surviving rows.
 - **A dictionary decodes on the first page using it, on the thread decoding that
-  page.** The fetch reads and checks the header of a chunk's dictionary page, and
+  page.** The fetch reads and checks the header of a fetched dictionary page, and
   the page stays compressed in the fetch buffer. `BatchColumnReader` decodes it
   for the first page needing its values and keeps the result for the chunk. A page
   in another encoding reads no dictionary, and neither does a page holding only
@@ -344,6 +354,24 @@ What each piece guarantees:
   read reaches a page using it. An unreadable dictionary page header fails the
   fetch, as does a header declaring a negative size or value count, or a payload
   past the fetched bytes.
+- **A narrowed fetch reads a dictionary page when a fetched page uses it.** The
+  dictionary page sits in the prefix of its chunk, the bytes before the first
+  data page. A fetch narrowed by a row mask leaves the prefix out when each
+  surviving page is known not to use it. Learned pages record the encoding of
+  each page, and their answer is exact. A declared page index records no
+  encoding. The `encoding_stats` of the chunk give the count of dictionary-encoded
+  pages, and a page at or past that count is taken to use no dictionary.
+  parquet-mr and Arrow fall back to PLAIN once per chunk, and the
+  dictionary-encoded pages come first. The format does not promise that order,
+  and the fetch checks it. The prefix keeps its room in the fetch buffer, and the
+  budget sees the same bytes, but the first request leaves the prefix unread.
+  Once the pages arrive, the fetch thread reads their headers from memory. A
+  dictionary-encoded page sends the prefix to one more request, into the room
+  already held. A wrong count therefore costs one request and never a row, and a
+  right count costs no request. A page header failing to parse fails the fetch,
+  as it would fail the decode. A declared index without a count reads the prefix
+  with the pages. parquetry's writer records no `encoding_stats`, and its files
+  read this way. A chunk fetched whole holds its dictionary page.
 
 **Memory contract.** Two budgets bound a read. `FetchBudget` caps the *off-heap*
 bytes held by column-chunk fetches, the current row group's and the prefetched
@@ -541,6 +569,7 @@ classDiagram
 | Metadata cache (footers + learned pages) | `data/FooterMetadataCache.java`, `data/ParquetCaches.java` |
 | Survivors + page-skip mask | `internal/read/RowGroupSurvivor.java`, `internal/read/RowMask.java`, `internal/read/page/PageSelection.java` |
 | Fetch | `internal/read/RowGroupFetcher.java`, `internal/read/RowGroupPrefetcher.java` |
+| Dictionary page of a narrowed fetch | `internal/read/DictionaryFetch.java`, `internal/read/DictionarySource.java`, `internal/read/ColumnChunkSlicer.java` |
 | Parallel decode + budgets | `internal/read/ParallelDecodeCoordinator.java`, `internal/read/StreamingBatchSource.java`, `runtime/DecodeBudget.java`, `internal/read/BatchRowGroupReader.java` |
 | Column / page decode | `internal/read/BatchColumnReader.java`, `internal/read/page/PageCursor.java`, `internal/read/page/PageDecoder.java` |
 | Masked scan (filtered decode) | `internal/read/MaskedScanRowGroupReader.java`, `internal/read/MaskedValues.java`, `internal/read/ScanStages.java`, `internal/read/ValueDecode.java` |

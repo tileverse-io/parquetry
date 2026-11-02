@@ -163,6 +163,27 @@ class PageIndexTest {
     }
 
     @Test
+    void learnedPagesTellTheirEncoding() {
+        LearnedPages.Builder builder = int64Builder(2);
+        builder.add(0, 100, 0, 100, Encoding.RLE_DICTIONARY, Optional.empty());
+        builder.add(100, 100, 100, 100, Encoding.PLAIN, Optional.empty());
+
+        PageIndex pages = learned(builder.build(), 0, 200, 200).orElseThrow();
+
+        assertThat(pages.encoding(0)).contains(Encoding.RLE_DICTIONARY);
+        assertThat(pages.encoding(1)).contains(Encoding.PLAIN);
+    }
+
+    @Test
+    void declaredPagesTellNone() {
+        PageIndex pages = TestPageIndexes.pages(300, 0, 100, 200);
+        ColumnIndex eachPageHoldsValues = columnIndex(List.of(false, false, false), Optional.empty());
+
+        assertThat(pages.encoding(0)).isEmpty();
+        assertThat(withStatistics(pages, eachPageHoldsValues).encoding(0)).isEmpty();
+    }
+
+    @Test
     void learnedStatisticsReadBounds() {
         PageIndex pages = learned(THREE_LEARNED_PAGES, 0, 300, 300).orElseThrow();
 

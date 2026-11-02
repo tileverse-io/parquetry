@@ -23,17 +23,23 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import java.lang.foreign.MemorySegment;
 import java.util.BitSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.SortedMap;
+import java.util.TreeMap;
 
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
+import io.tileverse.parquetry.format.Encoding;
+import io.tileverse.parquetry.format.EncodingStats;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.GeospatialStatistics;
 import io.tileverse.parquetry.format.MalformedFileException;
+import io.tileverse.parquetry.format.PageType;
 import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.format.Statistics;
@@ -45,33 +51,35 @@ import io.tileverse.parquetry.schema.ColumnPath;
  *
  * <p>One blob replaces the tree of wire records otherwise retained by a parsed footer for as long as a file stays open:
  * a lane per row group, a fixed-width record per (row group, leaf column) pair, a sparse section for the chunks with
- * native geospatial bounds, and an arena holding verbatim the statistics min/max bytes kept by {@link ChunkBounds}.
- * Each read is offset arithmetic, and {@link #chunk(int, int)} hands out a {@link ChunkMeta} window rather than a
- * rehydrated object.
+ * native geospatial bounds, a sparse section for the chunks mixing encodings, and an arena holding verbatim the
+ * statistics min/max bytes kept by {@link ChunkBounds}. Each read is offset arithmetic, and {@link #chunk(int, int)}
+ * hands out a {@link ChunkMeta} window onto the blob.
  *
- * <p>Deliberately dropped: encodings, encoding statistics, size statistics, column key/value metadata, sorting columns,
- * the deprecated {@code file_offset}, crypto metadata, and the statistics distinct count and exactness flags. Nothing
- * on the planning or scan path reads them. The statistics NaN count is reduced to two facts: whether it is zero, and
- * whether it adds up with the null count to the values of the chunk. The null count of a leaf named by
- * {@link UncountedNulls} is dropped too.
+ * <p>Deliberately dropped: encodings, size statistics, column key/value metadata, sorting columns, the deprecated
+ * {@code file_offset}, crypto metadata, and the statistics distinct count and exactness flags. Nothing on the planning
+ * or scan path reads them. The encoding statistics are reduced to the count of dictionary-encoded data pages, kept for
+ * the chunks mixing encodings. The statistics NaN count is reduced to two facts: whether it is zero, and whether it
+ * adds up with the null count to the values of the chunk. The null count of a leaf named by {@link UncountedNulls} is
+ * dropped too.
  *
  * <h2>Layout</h2>
  *
  * <p>Every numeric lane is little-endian and read through an unaligned layout, which a segment over a heap
- * {@code byte[]} requires. A 40-byte header names the section offsets, followed in order by the row-group lanes, the
- * chunk table (addressed by {@code rowGroup * leafCount + leaf}), the geo section, and the arena, which runs to the end
- * of the segment. Every record size below is a multiple of eight, which puts each eight-byte lane on an eight-byte
- * boundary.
+ * {@code byte[]} requires. A 48-byte header names the section offsets, followed in order by the row-group lanes, the
+ * chunk table (addressed by {@code rowGroup * leafCount + leaf}), the geo section, the encoding section (sorted by
+ * chunk index), and the arena, which runs to the end of the segment. Every record size below is a multiple of eight,
+ * which puts each eight-byte lane on an eight-byte boundary.
  */
 public final class CompactFooter {
 
-    private static final int HEADER_BYTES = 40;
+    private static final int HEADER_BYTES = 48;
     private static final int HEADER_ROW_GROUP_COUNT = 0;
     private static final int HEADER_LEAF_COUNT = 4;
     private static final int HEADER_ROW_GROUP_SECTION = 8;
     private static final int HEADER_CHUNK_TABLE = 16;
     private static final int HEADER_GEO_SECTION = 24;
     private static final int HEADER_ARENA = 32;
+    private static final int HEADER_ENCODING_SECTION = 40;
 
     private static final int ROW_GROUP_RECORD_BYTES = 8;
     private static final int ROW_GROUP_NUM_ROWS = 0;
@@ -111,6 +119,12 @@ public final class CompactFooter {
      */
     static final int FLAG_BOUNDS_UNORDERED = 0x40;
 
+    /**
+     * Set on a chunk with an entry in the encoding section. Such a chunk has a dictionary page, and its encoding
+     * statistics show at least one data page with another encoding. A chunk without this flag has no entry.
+     */
+    static final int FLAG_MIXED_ENCODINGS = 0x80;
+
     /** Set in the NaN flags of a chunk with a recorded NaN count of zero: the chunk holds no NaN cell. */
     static final int NAN_FLAG_ZERO_COUNT = 0x1;
 
@@ -129,6 +143,10 @@ public final class CompactFooter {
     static final int GEO_ZMAX = 40;
     static final int GEO_MMIN = 48;
     static final int GEO_MMAX = 56;
+
+    private static final int ENCODING_ENTRY_BYTES = 8;
+    private static final int ENCODING_CHUNK_INDEX = 0;
+    static final int ENCODING_DICTIONARY_PAGES = 4;
 
     /** Written into a long lane whose value the footer does not record. */
     static final long ABSENT_LONG = -1L;
@@ -152,6 +170,7 @@ public final class CompactFooter {
     private final long rowGroupSectionOffset;
     private final long chunkTableOffset;
     private final long geoSectionOffset;
+    private final long encodingSectionOffset;
     private final long arenaOffset;
 
     private CompactFooter(MemorySegment filled) {
@@ -162,6 +181,7 @@ public final class CompactFooter {
         this.rowGroupSectionOffset = readOnly.get(INT64, HEADER_ROW_GROUP_SECTION);
         this.chunkTableOffset = readOnly.get(INT64, HEADER_CHUNK_TABLE);
         this.geoSectionOffset = readOnly.get(INT64, HEADER_GEO_SECTION);
+        this.encodingSectionOffset = readOnly.get(INT64, HEADER_ENCODING_SECTION);
         this.arenaOffset = readOnly.get(INT64, HEADER_ARENA);
     }
 
@@ -238,7 +258,7 @@ public final class CompactFooter {
      * header, which rules a whole file out of the native bounds tier without a walk of the chunk table.
      */
     public int geoExtentCount() {
-        return (int) ((arenaOffset - geoSectionOffset) / GEO_ENTRY_BYTES);
+        return (int) ((encodingSectionOffset - geoSectionOffset) / GEO_ENTRY_BYTES);
     }
 
     /**
@@ -289,6 +309,29 @@ public final class CompactFooter {
         return geoSectionOffset + (long) geoIndex * GEO_ENTRY_BYTES;
     }
 
+    /**
+     * The encoding entry of a chunk with {@link #FLAG_MIXED_ENCODINGS} set. A chunk record has no lane for the position
+     * of its entry. A binary search finds the entry, because the entries are sorted by chunk index.
+     */
+    long encodingEntryBase(int chunkIndex) {
+        int low = 0;
+        int high = (int) ((arenaOffset - encodingSectionOffset) / ENCODING_ENTRY_BYTES) - 1;
+        while (low <= high) {
+            int middle = (low + high) >>> 1;
+            long entry = encodingSectionOffset + (long) middle * ENCODING_ENTRY_BYTES;
+            int entryChunk = blob.get(INT32, entry + ENCODING_CHUNK_INDEX);
+            if (entryChunk == chunkIndex) {
+                return entry;
+            }
+            if (entryChunk < chunkIndex) {
+                low = middle + 1;
+            } else {
+                high = middle - 1;
+            }
+        }
+        throw new IllegalStateException("Chunk " + chunkIndex + " is marked as mixing encodings but has no entry");
+    }
+
     long longAt(long offset) {
         return blob.get(INT64, offset);
     }
@@ -316,12 +359,14 @@ public final class CompactFooter {
      *
      * @param arenaBytes total bytes of the statistics bounds kept for the chunks
      * @param geoEntries number of chunks with a native geospatial bounding box
+     * @param encodingEntries number of chunks mixing encodings
      */
-    private record SectionSizes(long arenaBytes, int geoEntries) {}
+    private record SectionSizes(long arenaBytes, int geoEntries, int encodingEntries) {}
 
     private static SectionSizes measureSections(List<RowGroup> rowGroups, ChunkBounds bounds) {
         long arenaBytes = 0L;
         int geoEntries = 0;
+        int encodingEntries = 0;
         for (RowGroup rowGroup : rowGroups) {
             for (ColumnChunk chunk : rowGroup.columns()) {
                 Optional<ColumnMetaData> chunkMeta = chunk.metaData();
@@ -333,9 +378,12 @@ public final class CompactFooter {
                 if (geoBoundingBox(meta).isPresent()) {
                     geoEntries++;
                 }
+                if (dictionaryEncodedPages(meta).isPresent()) {
+                    encodingEntries++;
+                }
             }
         }
-        return new SectionSizes(arenaBytes, geoEntries);
+        return new SectionSizes(arenaBytes, geoEntries, encodingEntries);
     }
 
     private static Optional<BoundingBox> geoBoundingBox(ColumnMetaData meta) {
@@ -343,8 +391,52 @@ public final class CompactFooter {
     }
 
     /**
+     * The count of dictionary-encoded data pages of a chunk mixing encodings, empty for other chunks. A chunk mixes
+     * encodings when it has a dictionary page and its encoding statistics show at least one data page with another
+     * encoding. A corrupt statistic can make the sum of the page counts negative, and such a chunk keeps no count.
+     */
+    private static OptionalInt dictionaryEncodedPages(ColumnMetaData meta) {
+        int dictionaryEncoded = 0;
+        int otherEncoded = 0;
+        for (EncodingStats stats : meta.encodingStats()) {
+            if (isDataPage(stats.pageType())) {
+                if (isDictionaryEncoding(stats.encoding())) {
+                    dictionaryEncoded += stats.count();
+                } else {
+                    otherEncoded += stats.count();
+                }
+            }
+        }
+        boolean mixed = otherEncoded > 0 && dictionaryEncoded >= 0 && hasDictionaryPage(meta);
+        return mixed ? OptionalInt.of(dictionaryEncoded) : OptionalInt.empty();
+    }
+
+    private static boolean isDataPage(PageType type) {
+        return type == PageType.DATA_PAGE || type == PageType.DATA_PAGE_V2;
+    }
+
+    private static boolean isDictionaryEncoding(Encoding encoding) {
+        return encoding == Encoding.RLE_DICTIONARY || encoding == Encoding.PLAIN_DICTIONARY;
+    }
+
+    /** Some writers leave the dictionary page offset unset, and then only the encoding statistics show the page. */
+    private static boolean hasDictionaryPage(ColumnMetaData meta) {
+        if (dictionaryPageOffset(meta) != NO_DICTIONARY_PAGE) {
+            return true;
+        }
+        return meta.encodingStats().stream().anyMatch(stats -> stats.pageType() == PageType.DICTIONARY_PAGE);
+    }
+
+    /** A wire offset of zero or less points at no dictionary page; either spelling of absent is stored as zero. */
+    private static long dictionaryPageOffset(ColumnMetaData meta) {
+        long offset = meta.dictionaryPageOffset().orElse(NO_DICTIONARY_PAGE);
+        return offset > 0 ? offset : NO_DICTIONARY_PAGE;
+    }
+
+    /**
      * Fills one freshly allocated blob. Both the geo section and the arena are sparse, and each grows through a cursor
-     * as the chunks are visited in wire order.
+     * as the chunks are visited in wire order. The encoding section is sparse too, and its entries wait for the end of
+     * the walk, because a row group may list its columns out of leaf order and the section is sorted by chunk index.
      *
      * <p>A slot for a leaf with no chunk in its row group keeps the allocation's zero fill. Nothing stamps an absent
      * sentinel into it: its present flag stays clear, and that flag is what {@link CompactFooter#chunkIfPresent(int,
@@ -359,10 +451,12 @@ public final class CompactFooter {
         private final long rowGroupSectionOffset;
         private final long chunkTableOffset;
         private final long geoSectionOffset;
+        private final long encodingSectionOffset;
         private final long arenaOffset;
         private final BitSet unorderedLeaves;
         private final BitSet uncountedLeaves;
         private final ChunkBounds bounds;
+        private final SortedMap<Integer, Integer> dictionaryEncodedPagesByChunk = new TreeMap<>();
         private int nextGeoEntry;
         private int nextArenaByte;
 
@@ -382,7 +476,8 @@ public final class CompactFooter {
             this.rowGroupSectionOffset = HEADER_BYTES;
             this.chunkTableOffset = rowGroupSectionOffset + (long) rowGroupCount * ROW_GROUP_RECORD_BYTES;
             this.geoSectionOffset = chunkTableOffset + chunkTableBytes(rowGroupCount, leafCount);
-            this.arenaOffset = geoSectionOffset + (long) sizes.geoEntries() * GEO_ENTRY_BYTES;
+            this.encodingSectionOffset = geoSectionOffset + (long) sizes.geoEntries() * GEO_ENTRY_BYTES;
+            this.arenaOffset = encodingSectionOffset + (long) sizes.encodingEntries() * ENCODING_ENTRY_BYTES;
             this.blob = allocate(arenaOffset + sizes.arenaBytes());
         }
 
@@ -410,6 +505,7 @@ public final class CompactFooter {
                 writeRowGroupLane(rowGroupIndex, rowGroup);
                 writeChunks(rowGroupIndex, rowGroup);
             }
+            writeEncodingSection();
             return blob;
         }
 
@@ -419,6 +515,7 @@ public final class CompactFooter {
             blob.set(INT64, HEADER_ROW_GROUP_SECTION, rowGroupSectionOffset);
             blob.set(INT64, HEADER_CHUNK_TABLE, chunkTableOffset);
             blob.set(INT64, HEADER_GEO_SECTION, geoSectionOffset);
+            blob.set(INT64, HEADER_ENCODING_SECTION, encodingSectionOffset);
             blob.set(INT64, HEADER_ARENA, arenaOffset);
         }
 
@@ -448,7 +545,8 @@ public final class CompactFooter {
                         + " names a column not declared by the file schema");
             }
             ChunkSite site = new ChunkSite(rowGroupIndex, path);
-            long base = chunkTableOffset + ((long) rowGroupIndex * leafCount + leaf) * CHUNK_RECORD_BYTES;
+            int chunkIndex = rowGroupIndex * leafCount + leaf;
+            long base = chunkTableOffset + (long) chunkIndex * CHUNK_RECORD_BYTES;
             requireLeafNotAlreadyWritten(base, site);
             writeChunkOffsets(base, chunk, meta);
             writeChunkCounts(base, meta, uncountedLeaves.get(leaf));
@@ -457,7 +555,8 @@ public final class CompactFooter {
             writeChunkNaNFlags(base, meta);
             int geoFlags = writeChunkGeoBbox(base, meta);
             int orderFlag = unorderedLeaves.get(leaf) ? FLAG_BOUNDS_UNORDERED : 0;
-            blob.set(JAVA_BYTE, base + CHUNK_FLAGS, (byte) (FLAG_CHUNK_PRESENT | geoFlags | orderFlag));
+            int encodingFlag = collectDictionaryEncodedPages(chunkIndex, meta);
+            blob.set(JAVA_BYTE, base + CHUNK_FLAGS, (byte) (FLAG_CHUNK_PRESENT | geoFlags | orderFlag | encodingFlag));
         }
 
         /**
@@ -486,12 +585,6 @@ public final class CompactFooter {
                     chunk.offsetIndexOffset(),
                     chunk.offsetIndexLength());
             writeBloomLocator(base, meta);
-        }
-
-        /** A wire offset of zero or less points at no dictionary page; either spelling of absent is stored as zero. */
-        private static long dictionaryPageOffset(ColumnMetaData meta) {
-            long offset = meta.dictionaryPageOffset().orElse(NO_DICTIONARY_PAGE);
-            return offset > 0 ? offset : NO_DICTIONARY_PAGE;
         }
 
         /**
@@ -635,6 +728,25 @@ public final class CompactFooter {
             }
             blob.set(DOUBLE, lane, value.getAsDouble());
             return flag;
+        }
+
+        /** Keeps the chunk's count for the encoding section and returns the flag bit describing it. */
+        private int collectDictionaryEncodedPages(int chunkIndex, ColumnMetaData meta) {
+            OptionalInt pages = dictionaryEncodedPages(meta);
+            if (pages.isEmpty()) {
+                return 0;
+            }
+            dictionaryEncodedPagesByChunk.put(chunkIndex, pages.getAsInt());
+            return FLAG_MIXED_ENCODINGS;
+        }
+
+        private void writeEncodingSection() {
+            long entry = encodingSectionOffset;
+            for (Map.Entry<Integer, Integer> chunk : dictionaryEncodedPagesByChunk.entrySet()) {
+                blob.set(INT32, entry + ENCODING_CHUNK_INDEX, chunk.getKey());
+                blob.set(INT32, entry + ENCODING_DICTIONARY_PAGES, chunk.getValue());
+                entry += ENCODING_ENTRY_BYTES;
+            }
         }
     }
 

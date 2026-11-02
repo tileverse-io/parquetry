@@ -42,7 +42,7 @@ import lombok.NonNull;
 
 /**
  * Slices one column chunk's fetched bytes out of the fetch buffer, producing a {@link FetchedColumnChunk} view whose
- * runs cover just the data-page region. The slicer reads and checks the header of the chunk's dictionary page and
+ * runs cover just the data-page region. The slicer reads and checks the header of a fetched dictionary page and
  * describes the page as a {@link DictionaryPage}. The page stays compressed in the fetch buffer until a column reader
  * needs its values.
  */
@@ -57,26 +57,29 @@ final class ColumnChunkSlicer {
     /**
      * Builds the chunk view from the fetched pieces of one column chunk.
      *
-     * <p>The dictionary page comes from {@code dictionaryPrefix} when the fetch planned the chunk's leading bytes as
-     * their own range; the prefix holds the chunk's true first bytes (the dictionary page, plus any writer padding
-     * around it), which keeps the first-page-header sniffing intact. Bytes left in the prefix after the dictionary page
-     * are ignored. With no prefix, the head of the first run is sniffed instead, which is the whole-chunk shape: one
-     * run starting at the chunk's first byte.
+     * <p>A {@link DictionarySource.Prefix} holds the chunk's true first bytes (the dictionary page, plus any writer
+     * padding around it), and the first page header of the chunk stays at its head. Bytes left in the prefix after the
+     * dictionary page are ignored. {@link DictionarySource.FirstRun} sniffs the head of the first run. A chunk fetched
+     * whole is one run starting at the chunk's first byte. {@link DictionarySource.LeftOut} sniffs nothing, because the
+     * first run of such a column may start at any page.
      *
-     * @param dictionaryPrefix view of the chunk's bytes up to its first data page, when fetched separately
+     * @param source where the chunk's dictionary page is, as told by the fetch
      * @param runs views of the fetched stretches of the chunk's pages, in file order; never empty
      */
-    FetchedColumnChunk slice(
-            Optional<MemorySegment> dictionaryPrefix, List<DataPageRun> runs, ChunkMeta meta, ColumnPath path) {
+    FetchedColumnChunk slice(DictionarySource source, List<DataPageRun> runs, ChunkMeta meta, ColumnPath path) {
         if (runs.isEmpty()) {
             throw new IllegalStateException("No data-page bytes were fetched for column " + path.dot()
                     + "; every fetched chunk holds at least one run of pages");
         }
-        if (dictionaryPrefix.isPresent()) {
-            Optional<DictionaryPage> dictionaryPage =
-                    dictionaryPageOfPrefix(dictionaryPrefix.orElseThrow(), meta, path);
-            return chunkOf(path, meta, runs, dictionaryPage);
-        }
+        return switch (source) {
+            case DictionarySource.Prefix(MemorySegment bytes) ->
+                chunkOf(path, meta, runs, dictionaryPageOfPrefix(bytes, meta, path));
+            case DictionarySource.FirstRun _ -> chunkSniffingFirstRun(runs, meta, path);
+            case DictionarySource.LeftOut _ -> chunkOf(path, meta, runs, Optional.empty());
+        };
+    }
+
+    private FetchedColumnChunk chunkSniffingFirstRun(List<DataPageRun> runs, ChunkMeta meta, ColumnPath path) {
         MemorySegment head = runs.get(0).segment();
         DictionaryPageAndOffset dict = sniffDictionaryPage(head, meta, path);
         if (dict.dataPageOffset() == 0) {
