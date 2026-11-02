@@ -33,6 +33,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.BeforeAll;
@@ -52,6 +53,7 @@ import io.tileverse.parquetry.filter.RowRanges.Range;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnIndex;
 import io.tileverse.parquetry.format.ColumnMetaData;
+import io.tileverse.parquetry.format.DictionaryPageHeader;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.OffsetIndex;
@@ -233,7 +235,7 @@ class PageNarrowedPlanTest {
             Optional<MemorySegment> prefixThatIsReallyADataPage = Optional.of(firstDataPage);
             ChunkMeta meta = fixture.meta(A);
 
-            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA, SegmentPool.create());
+            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA);
 
             assertThatThrownBy(() -> slicer.slice(prefixThatIsReallyADataPage, runs, meta, A))
                     .isInstanceOf(MalformedFileException.class)
@@ -252,12 +254,35 @@ class PageNarrowedPlanTest {
                     Optional.of(withInflatedUncompressedSize(fixture.readDictionaryPrefix(B, arena), arena));
             List<DataPageRun> runs = List.of(new DataPageRun(fixture.readFirstDataPage(B, arena), 0));
             ChunkMeta meta = fixture.meta(B);
-            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA, SegmentPool.create());
+            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA);
+            DecodeBufferAllocator allocator = TestDecodeBuffers.ample(SegmentPool.create());
+
+            FetchedColumnChunk chunk = slicer.slice(lyingPage, runs, meta, B);
+            DictionaryPage page = chunk.dictionaryPage().orElseThrow();
+
+            assertThatThrownBy(() -> page.decode(allocator))
+                    .isInstanceOf(MalformedFileException.class)
+                    .hasMessageContaining(B.dot())
+                    .hasMessageContaining("declares");
+        }
+    }
+
+    // a negative count fails the slice, whether or not a page reads the dictionary
+    @Test
+    void negativeDictionaryCountFails() {
+        try (Arena arena = Arena.ofConfined();
+                ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.open(source);
+            Optional<MemorySegment> lyingPage =
+                    Optional.of(withNegativeValueCount(fixture.readDictionaryPrefix(B, arena), arena));
+            List<DataPageRun> runs = List.of(new DataPageRun(fixture.readFirstDataPage(B, arena), 0));
+            ChunkMeta meta = fixture.meta(B);
+            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA);
 
             assertThatThrownBy(() -> slicer.slice(lyingPage, runs, meta, B))
                     .isInstanceOf(MalformedFileException.class)
                     .hasMessageContaining(B.dot())
-                    .hasMessageContaining("declares");
+                    .hasMessageContaining("negative value count");
         }
     }
 
@@ -268,7 +293,7 @@ class PageNarrowedPlanTest {
             Fixture fixture = Fixture.open(source);
             MemorySegment dictionaryPage = fixture.readDictionaryPrefix(B, arena);
 
-            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA, SegmentPool.create());
+            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA);
 
             assertThatIllegalStateException()
                     .isThrownBy(() -> slicer.slice(Optional.of(dictionaryPage), List.of(), fixture.meta(B), B))
@@ -486,19 +511,44 @@ class PageNarrowedPlanTest {
      * The dictionary page at the start of {@code prefix}, its header declaring one uncompressed byte more than it has.
      */
     private static MemorySegment withInflatedUncompressedSize(MemorySegment prefix, Arena arena) {
-        MemorySegmentInputStream stream = new MemorySegmentInputStream(prefix, 0L, prefix.byteSize());
-        PageHeader header = ParquetFormat.readPageHeader(stream);
-        PageHeader inflated = new PageHeader(
+        return withHeader(
+                prefix,
+                arena,
+                header -> new PageHeader(
+                        header.type(),
+                        header.uncompressedPageSize() + 1,
+                        header.compressedPageSize(),
+                        header.crc(),
+                        header.dataPageHeader(),
+                        header.indexPageHeader(),
+                        header.dictionaryPageHeader(),
+                        header.dataPageHeaderV2()));
+    }
+
+    private static MemorySegment withNegativeValueCount(MemorySegment prefix, Arena arena) {
+        return withHeader(prefix, arena, PageNarrowedPlanTest::negativeValueCount);
+    }
+
+    private static PageHeader negativeValueCount(PageHeader header) {
+        DictionaryPageHeader counted = header.dictionaryPageHeader().orElseThrow();
+        DictionaryPageHeader negative = new DictionaryPageHeader(-1, counted.encoding(), counted.isSorted());
+        return new PageHeader(
                 header.type(),
-                header.uncompressedPageSize() + 1,
+                header.uncompressedPageSize(),
                 header.compressedPageSize(),
                 header.crc(),
                 header.dataPageHeader(),
                 header.indexPageHeader(),
-                header.dictionaryPageHeader(),
+                Optional.of(negative),
                 header.dataPageHeaderV2());
+    }
+
+    /** The page at the head of {@code prefix}, its header rewritten by {@code rewrite}. */
+    private static MemorySegment withHeader(MemorySegment prefix, Arena arena, UnaryOperator<PageHeader> rewrite) {
+        MemorySegmentInputStream stream = new MemorySegmentInputStream(prefix, 0L, prefix.byteSize());
+        PageHeader header = ParquetFormat.readPageHeader(stream);
         ByteArrayOutputStream page = new ByteArrayOutputStream();
-        ParquetFormat.writePageHeader(page, inflated);
+        ParquetFormat.writePageHeader(page, rewrite.apply(header));
         MemorySegment payload = prefix.asSlice(stream.position(), header.compressedPageSize());
         page.writeBytes(payload.toArray(ValueLayout.JAVA_BYTE));
         byte[] bytes = page.toByteArray();

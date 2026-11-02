@@ -53,6 +53,15 @@ final class TestDecodeBuffers {
                 new FetchSpillStore(spillDir(), DiskBudget.ofBytes(AMPLE_DISK_BUDGET)));
     }
 
+    /**
+     * A decode budget with no room over a caller-supplied pool. Each mandatory acquire maps a file on disk, hence the
+     * pool's accounting shows only the buffers borrowed around the decode valve.
+     */
+    static DecodeBufferAllocator spilling(SegmentPool pool) {
+        return new DecodeBufferAllocator(
+                pool, DecodeBudget.ofBytes(1), new FetchSpillStore(spillDir(), DiskBudget.ofBytes(AMPLE_DISK_BUDGET)));
+    }
+
     private static Path spillDir() {
         try {
             Path dir = Files.createTempDirectory("parquetry-test-decode-spill-");

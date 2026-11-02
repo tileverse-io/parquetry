@@ -90,6 +90,10 @@ import lombok.NonNull;
  * {@link #skipWindow} and {@link #skipSpanningRow} step over rows against that count, and a page with all its rows
  * stepped over is discarded without decompression. A reader with a row mask loads each page selected by the mask to
  * size its windows, because no header states the mask's rows.
+ *
+ * <p>The chunk's dictionary page stays compressed until a loaded page needs its values. The reader decodes it for that
+ * page and keeps the {@link Dictionary} for the pages after it. A page in another encoding reads no dictionary, and
+ * neither does a page holding only nulls. A page discarded unread decodes nothing.
  */
 final class BatchColumnReader {
 
@@ -102,7 +106,7 @@ final class BatchColumnReader {
     private final Compression codec;
     private final long totalValues;
     private final PageCursor pageCursor;
-    private final Optional<Dictionary<?>> dictionary;
+    private final Optional<DictionaryPage> dictionaryPage;
     private final RowRanges survivingRows; // null when this column is not masked
     private final ValueDecode valueDecode;
     private final DecodeBufferAllocator decodeBufferAllocator;
@@ -141,13 +145,14 @@ final class BatchColumnReader {
     private boolean[] pageBooleans;
 
     // Scratch holder for PLAIN/DELTA binary between value decode and the freeze step that consolidates it into the
-    // shared backing. Never populated for dictionary-encoded binary, which decodes into pageIndices instead.
+    // shared backing. A page reading the dictionary decodes into pageIndices. It leaves this field null.
     private MemorySegment[] pageSegments;
     // PLAIN/DELTA binary is frozen into one shared heap backing; offsets are meaningful only for the variable kind.
     private MemorySegment pageBinaryBacking;
     // Row-indexed cumulative value-byte offsets (size pageSize + 1), every slot written. The backing depends on the
     // lane: a window of binaryMetaScratch for the direct path, a heap array from the freeze lane.
     private IntSequence pageBinaryOffsets;
+    // The page reads its values through the dictionary. A page holding only nulls reads none, whatever its encoding.
     private boolean pageWasDictionary;
 
     // Per-row source positions for the direct off-heap binary path: pageValuePos.get(row) is the absolute byte offset
@@ -169,7 +174,9 @@ final class BatchColumnReader {
     // Heap index slots for the windowed masked lane, filled as the window's kept slots decode and wrapped into
     // pageIndices at the end of decodeKeptSlots; null outside that window.
     private int[] maskedIndices;
-    // Chunk-level dictionary entries (shared heap-owned segments), built once from this.dictionary and reused across
+    // The chunk's dictionary, null until a page needs its values.
+    private Dictionary<?> decodedDictionary;
+    // Chunk-level dictionary entries (shared heap-owned segments), built once from decodedDictionary and reused across
     // pages.
     private MemorySegment[] dictEntries;
     // Total byte size of dictEntries, summed as the entries are built and handed to every vector over them.
@@ -241,7 +248,7 @@ final class BatchColumnReader {
         this.maxLevels = new LevelMaxima(chunk.maxRepetitionLevel(), chunk.maxDefinitionLevel());
         this.codec = Compression.forWireCodec(chunk.codec());
         this.totalValues = chunk.numValues();
-        this.dictionary = chunk.dictionary();
+        this.dictionaryPage = chunk.dictionaryPage();
         requireFlatColumnForOnDemand(chunk, valueDecode);
         if (survivingRows != null) {
             requirePageIndexForRowMask(chunk, pageIndex);
@@ -1117,7 +1124,7 @@ final class BatchColumnReader {
         pageLogicalRowCount = (pageRepLevels == null) ? pageSize : pageRepLevels.countOf(0);
         pageCursor.recordCurrentPageRowCount(pageLogicalRowCount);
         clearTypedPayloads();
-        pageWasDictionary = PageDecoders.isDictionaryEncoded(page.valuesEncoding());
+        pageWasDictionary = PageDecoders.isDictionaryEncoded(page.valuesEncoding()) && pageValidity.cardinality() > 0;
         try {
             if (valueDecode == ValueDecode.WINDOWED_MASK) {
                 openWindowDecoder(page);
@@ -1200,8 +1207,8 @@ final class BatchColumnReader {
         if (isDictionaryBinaryPage()) {
             dictionaryEntries();
         }
-        windowDecoder = PageDecoders.decoderFor(
-                leaf.kind(), this::requiredByteWidth, page.valuesEncoding(), dictionary.orElse(null));
+        windowDecoder =
+                PageDecoders.decoderFor(leaf.kind(), this::requiredByteWidth, page.valuesEncoding(), pageDictionary());
         windowDecoder.load(page.valueBytes(), nonNullCount);
     }
 
@@ -1374,7 +1381,7 @@ final class BatchColumnReader {
         decodedValueCount += nonNullCount;
         Encoding encoding = page.valuesEncoding();
         MemorySegment valueBuf = page.valueBytes();
-        Dictionary<?> dict = dictionary.orElse(null);
+        Dictionary<?> dict = pageDictionary();
         if (isDictionaryBinaryPage()) {
             if (survivingRows == null) {
                 pageIndices = decodeDictionaryIndices(valueBuf, encoding, nonNullCount, dict);
@@ -1597,18 +1604,14 @@ final class BatchColumnReader {
      * sequence wholesale (the Arrow buffer codec serializes every slot, null rows included) and a stale slot would
      * resolve {@code dictEntries[indices.get(row)]} to the wrong entry - or out of the dictionary's bounds entirely on
      * reused pool bytes. An all-valid page overwrites every slot; a nullable page decodes densely at the segment's head
-     * and the in-place reverse spread zeroes the null slots; an all-null page is one explicit zero fill. Dictionary and
-     * direct-binary pages are mutually exclusive per page, hence the binary-metadata handle is free to hold the index
-     * segment. The chunk-level {@link #dictEntries} is materialized here on first use.
+     * and the in-place reverse spread zeroes the null slots. Dictionary and direct-binary pages are mutually exclusive
+     * per page, hence the binary-metadata handle is free to hold the index segment. The chunk-level
+     * {@link #dictEntries} is materialized here on first use.
      */
     private IntSequence decodeDictionaryIndices(
             MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         dictionaryEntries();
         MemorySegment out = acquireBinaryMeta((long) pageSize * Integer.BYTES);
-        if (nonNullCount == 0) {
-            out.fill((byte) 0);
-            return IntSequence.ofSegment(out, pageSize);
-        }
         RleDictionaryPageDecoder<?> decoder = PageDecoders.dictionaryDecoderFor(leaf.kind(), encoding, dict);
         decoder.load(buf, nonNullCount);
         decoder.decodeIndicesInto(nonNullCount, out);
@@ -1623,9 +1626,6 @@ final class BatchColumnReader {
             MemorySegment buf, Encoding encoding, int nonNullCount, Dictionary<?> dict) {
         dictionaryEntries();
         int[] indices = new int[pageSize];
-        if (nonNullCount == 0) {
-            return indices;
-        }
         RleDictionaryPageDecoder<?> decoder = PageDecoders.dictionaryDecoderFor(leaf.kind(), encoding, dict);
         decoder.load(buf, nonNullCount);
         if (nonNullCount == pageSize) {
@@ -1878,7 +1878,7 @@ final class BatchColumnReader {
     }
 
     /**
-     * True when the current page is dictionary-encoded and the column is one of the binary kinds. These pages decode
+     * True when the current page reads the dictionary and the column is one of the binary kinds. These pages decode
      * into {@code pageIndices} over the shared {@code dictEntries} rather than per-value segments.
      */
     private boolean isDictionaryBinaryPage() {
@@ -1900,9 +1900,12 @@ final class BatchColumnReader {
         if (dictEntries != null) {
             return dictEntries;
         }
-        Dictionary<?> dict = dictionary.orElseThrow(() -> new IllegalStateException(
-                "Dictionary-encoded data page requires a loaded Dictionary; none supplied for column "
-                        + columnPath.dot()));
+        Dictionary<?> dict = dictionary();
+        if (dict == null) {
+            throw new IllegalStateException(
+                    "Dictionary-encoded data page requires a loaded Dictionary; none supplied for column "
+                            + columnPath.dot());
+        }
         MemorySegment[] entries = new MemorySegment[dict.size()];
         long entryBytes = 0;
         for (int k = 0; k < entries.length; k++) {
@@ -1914,11 +1917,27 @@ final class BatchColumnReader {
         return dictEntries;
     }
 
+    /** The dictionary read by the current page, or null for a page reading none. */
+    private Dictionary<?> pageDictionary() {
+        return pageWasDictionary ? dictionary() : null;
+    }
+
+    /**
+     * The chunk's dictionary, or null for a chunk without a dictionary page. The first call decodes the page, and the
+     * later ones return that result. One reader consumes a chunk, hence the memo needs no synchronization.
+     */
+    private Dictionary<?> dictionary() {
+        if (decodedDictionary == null && dictionaryPage.isPresent()) {
+            decodedDictionary = dictionaryPage.orElseThrow().decode(decodeBufferAllocator);
+        }
+        return decodedDictionary;
+    }
+
     /**
      * Converts the just-decoded PLAIN/DELTA binary page from per-value slice objects (views into the page Arena) into a
-     * single heap-owned backing buffer the page Arena can no longer invalidate. Dictionary-encoded binary pages do not
-     * reach the freeze: they decode into row-positioned {@code pageIndices} over the heap-owned {@code dictEntries},
-     * which outlive the Arena on their own.
+     * single heap-owned backing buffer out of reach of the page Arena. Binary pages reading the dictionary do not reach
+     * the freeze: they decode into row-positioned {@code pageIndices} over the heap-owned {@code dictEntries}, which
+     * outlive the Arena on their own.
      *
      * <p>The scratch {@code MemorySegment[]} that the decoders, compaction, and selected-rows decode filled is read
      * once here, then released; from this point on the page's binary values live only in {@code pageBinaryBacking}
@@ -2486,9 +2505,5 @@ final class BatchColumnReader {
 
     ColumnPath columnPath() {
         return columnPath;
-    }
-
-    Optional<Dictionary<?>> dictionary() {
-        return dictionary;
     }
 }

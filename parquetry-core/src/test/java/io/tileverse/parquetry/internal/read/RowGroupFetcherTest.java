@@ -45,7 +45,6 @@ import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
 import io.tileverse.parquetry.internal.read.PageIndexLearner.WholeChunk;
-import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
@@ -148,9 +147,9 @@ class RowGroupFetcherTest {
         return raw;
     }
 
-    // the dictionary pages of a row group are decompressed into pooled buffers, never into a mapping of their own
+    // a fetch leaves the dictionary pages of a row group undecoded, and its buffer is the only borrow
     @Test
-    void dictionaryPagesComeFromThePool() {
+    void fetchDecodesNoDictionary() {
         Path file = CorpusFixtures.parquetTestingData().resolve("alltypes_dictionary.parquet");
         SegmentPool pool = SegmentPool.create();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
@@ -161,61 +160,20 @@ class RowGroupFetcherTest {
             RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, pool);
             FetchPlan plan = fetcher.planFor(survivor, Optional.empty());
             try (RowGroupFetch fetch = fetcher.fetch(survivor, plan, BudgetReservation.NONE)) {
-                int dictionaryColumns = (int) fetch.columns().stream()
-                        .filter(column -> column.dictionary().isPresent())
+                long dictionaryColumns = fetch.columns().stream()
+                        .filter(column -> column.dictionaryPage().isPresent())
                         .count();
                 assertThat(dictionaryColumns)
                         .as("the fixture is dictionary-encoded")
                         .isPositive();
                 assertThat(pool.stats().totalBorrows())
-                        .as("one borrow for the fetch buffer and one per dictionary page")
-                        .isEqualTo(1L + dictionaryColumns);
+                        .as("one borrow for the fetch buffer")
+                        .isEqualTo(1L);
             }
             assertThat(pool.stats().outstandingBorrows()).isZero();
         } finally {
             pool.close();
         }
-    }
-
-    // the decoded dictionary holds heap copies: reusing the pool's buffers cannot change its values
-    @Test
-    void dictionaryOutlivesItsBuffer() {
-        Path file = CorpusFixtures.parquetTestingData().resolve("alltypes_dictionary.parquet");
-        SegmentPool pool = SegmentPool.create();
-        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
-            FileMetaData footer = ParquetFormat.readFooter(source);
-            ParquetSchema schema = SchemaBuilder.build(footer.schema());
-            RowGroupSurvivor survivor =
-                    RowGroupSurvivor.full(TestRowGroupChunks.of(footer, 0, schema, TestRowGroupChunks.reading(source)));
-            RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, pool);
-            FetchPlan plan = fetcher.planFor(survivor, Optional.empty());
-            int stringColumn = schema.leafColumns().indexOf(ColumnPath.of("string_col"));
-            Dictionary<?> strings;
-            try (RowGroupFetch fetch = fetcher.fetch(survivor, plan, BudgetReservation.NONE)) {
-                strings = fetch.columns().get(stringColumn).dictionary().orElseThrow();
-            }
-            byte[] first = ((MemorySegment) strings.get(0)).toArray(ValueLayout.JAVA_BYTE);
-            assertThat(first).isNotEmpty();
-            scribbleOverFreeBuffers(pool);
-            assertThat(((MemorySegment) strings.get(0)).toArray(ValueLayout.JAVA_BYTE))
-                    .as("the dictionary does not read from the returned buffer")
-                    .isEqualTo(first);
-        } finally {
-            pool.close();
-        }
-    }
-
-    /** Borrows every free buffer of the pool, overwrites it and returns it. */
-    private static void scribbleOverFreeBuffers(SegmentPool pool) {
-        int free = pool.stats().freeSegments();
-        assertThat(free).as("the dictionary buffers went back to the pool").isPositive();
-        List<SegmentPool.Pooled> borrowed = new ArrayList<>();
-        for (int i = 0; i < free; i++) {
-            SegmentPool.Pooled buffer = pool.borrow(8192);
-            buffer.segment().fill((byte) 0xFF);
-            borrowed.add(buffer);
-        }
-        borrowed.forEach(SegmentPool.Pooled::close);
     }
 
     @Test

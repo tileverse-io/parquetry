@@ -20,7 +20,6 @@ import java.util.Optional;
 
 import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
-import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;
 
@@ -30,11 +29,11 @@ import lombok.NonNull;
  * One projected column chunk as a read-only view into a fetch buffer, plus the metadata needed to walk it page by page.
  *
  * <p>This is the unit produced by {@link RowGroupFetcher} and consumed by the per-row-group readers.
- * {@code dataPageRuns} covers the chunk's data-page region (after any dictionary page was consumed during the fetch): a
- * chunk fetched whole is the single run based at ordinal zero, while a page-narrowed fetch is one run per
- * byte-contiguous stretch of fetched pages. The data pages remain compressed and are decoded lazily by the column
- * reader, one at a time. The decoded dictionary (small, shared across data pages) is held here directly and is never
- * part of a run.
+ * {@code dataPageRuns} covers the chunk's data-page region, past any dictionary page: a chunk fetched whole is the
+ * single run based at ordinal zero, while a page-narrowed fetch is one run per byte-contiguous stretch of fetched
+ * pages. The data pages remain compressed and are decoded lazily by the column reader, one at a time. The dictionary
+ * page stays compressed too, and is never part of a run. The column reader decodes it for the first data page needing
+ * its values.
  *
  * <p>This view does not own memory. Its segments are valid only while the owning {@link RowGroupFetch} is open; that
  * fetch returns the pooled segments to the {@link SegmentPool} when it is closed.
@@ -46,7 +45,7 @@ import lombok.NonNull;
  * @param maxDefinitionLevel max definition level computed from the file schema at this leaf
  * @param dataPageRuns read-only views of the fetched stretches of the chunk's compressed data-page region, in file
  *     order
- * @param dictionary the decoded dictionary page if the column chunk has one; otherwise empty
+ * @param dictionaryPage the undecoded dictionary page if the column chunk has one; otherwise empty
  */
 record FetchedColumnChunk(
         @NonNull ColumnPath path,
@@ -55,7 +54,7 @@ record FetchedColumnChunk(
         int maxRepetitionLevel,
         int maxDefinitionLevel,
         @NonNull List<DataPageRun> dataPageRuns,
-        @NonNull Optional<Dictionary<?>> dictionary) {
+        @NonNull Optional<DictionaryPage> dictionaryPage) {
 
     FetchedColumnChunk {
         dataPageRuns = List.copyOf(dataPageRuns);

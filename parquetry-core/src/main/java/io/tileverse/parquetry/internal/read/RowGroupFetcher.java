@@ -88,7 +88,7 @@ public final class RowGroupFetcher {
         this.mandatoryAllocator = mandatoryAllocator;
         this.accumulator = accumulator;
         this.learner = learner;
-        this.slicer = new ColumnChunkSlicer(fileSchema, pool);
+        this.slicer = new ColumnChunkSlicer(fileSchema);
     }
 
     /**

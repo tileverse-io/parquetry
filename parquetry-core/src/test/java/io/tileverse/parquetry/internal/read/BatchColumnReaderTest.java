@@ -25,10 +25,12 @@ import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
-import java.nio.IntBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.BitSet;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -43,6 +45,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.columnar.BinaryVector;
@@ -54,16 +57,26 @@ import io.tileverse.parquetry.columnar.IntVector;
 import io.tileverse.parquetry.columnar.Levels;
 import io.tileverse.parquetry.columnar.LongVector;
 import io.tileverse.parquetry.columnar.Validity;
+import io.tileverse.parquetry.data.Compression;
+import io.tileverse.parquetry.filter.RowRanges;
+import io.tileverse.parquetry.filter.RowRanges.Range;
 import io.tileverse.parquetry.format.CompressionCodec;
+import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.MalformedFileException;
+import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.internal.filter.PageIndex;
+import io.tileverse.parquetry.internal.filter.TestPageIndexes;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
-import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.internal.read.page.PageCursor;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
+import io.tileverse.parquetry.schema.SchemaBuilder;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.testsupport.CorpusFixtures;
 import io.tileverse.parquetry.testsupport.VectorArrays;
 
 /**
@@ -908,33 +921,24 @@ class BatchColumnReaderTest {
         }
 
         /**
-         * Pins the all-null lane's explicit zero fill of the pooled page-metadata segment. No index decode and no
-         * spread run for a page with zero non-null values; only the fill stands between a previous borrower's bytes and
-         * the wholesale {@code dictionaryIndices()} reads. Same two-dirty-block seeding as the null-slots test.
+         * Pins the layout of a page holding nulls only. It holds no index and reads no dictionary, which makes its
+         * vector a consolidated one with a zero offset for each row.
          */
         @Test
-        void allNullDictionaryPageIndexSlotsAreZeroFilledNotStalePoolBytes() throws IOException {
-            int rows = 4096; // 16KB of i32 index slots
-            SegmentPool pool = SegmentPool.create();
-            seedTwoDirtyBlocks(pool, (long) rows * Integer.BYTES);
-            assertThat(pool.stats().freeSegments())
-                    .as("both dirty blocks must be retained or this test pins nothing")
-                    .isEqualTo(2);
-
+        void allNullPageReadsConsolidated() throws IOException {
+            int rows = 8;
             byte[][] dictValues = {bytes("alpha"), bytes("beta")};
             int[] defLevels = new int[rows]; // all zero: every row is null
             FetchedColumnChunk chunk = dictionaryEncodedByteArrayChunk(dictValues, new int[0], defLevels);
-            BatchColumnReader reader =
-                    new BatchColumnReader(TestDecodeBuffers.ample(pool), chunk, optionalByteArrayLeaf());
+            BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(), chunk, optionalByteArrayLeaf());
 
             BinaryVector binary = (BinaryVector) reader.readBatch(rows, TestDecodeBuffers.batchBuffers());
 
             assertThat(binary.validity().cardinality()).isZero();
-            IntSequence rawIndices = binary.dictionaryIndices();
-            for (int row = 0; row < rows; row++) {
-                assertThat(rawIndices.get(row))
-                        .as("null slot at row %d reads the zero placeholder", row)
-                        .isZero();
+            assertThat(binary.isDictionary()).isFalse();
+            IntSequence offsets = binary.consolidatedOffsets();
+            for (int row = 0; row <= rows; row++) {
+                assertThat(offsets.get(row)).as("offset of row %d", row).isZero();
             }
         }
 
@@ -1267,6 +1271,279 @@ class BatchColumnReaderTest {
         return rows;
     }
 
+    // --- a dictionary decoded when a page uses it ---
+
+    @Test
+    void plainPageDecodesNoDictionary() throws IOException {
+        SchemaNode.Primitive leaf = requiredInt32Leaf();
+        FetchedColumnChunk plainPages = plainInt32Chunk(new int[] {1, 2}, new int[] {3});
+        FetchedColumnChunk chunk = withCorruptDictionary(plainPages, PrimitiveKind.INT32);
+
+        assertThat(eagerRows(chunk, leaf)).containsExactly(1, 2, 3);
+        assertThat(windowedRows(chunk, leaf)).containsExactly(1, 2, 3);
+    }
+
+    @Test
+    void dictionaryDecodesOnFirstUse() throws IOException {
+        byte[] plainPage =
+                encodeV1Page(2, encodeInt32sLittleEndian(new int[] {1, 2}), org.apache.parquet.format.Encoding.PLAIN);
+        byte[] indexPage = encodeV1Page(
+                2,
+                encodeRleDictionaryIndexPage(new int[] {0, 1}, 2),
+                org.apache.parquet.format.Encoding.RLE_DICTIONARY);
+        FetchedColumnChunk pages = heapChunk(PATH, concat(plainPage, indexPage), 4, /*maxRep*/ 0, /*maxDef*/ 0);
+        FetchedColumnChunk chunk = withCorruptDictionary(pages, PrimitiveKind.INT32);
+        SegmentPool pool = SegmentPool.create();
+        BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(pool), chunk, requiredInt32Leaf());
+        BatchBuffers buffers = TestDecodeBuffers.batchBuffers();
+
+        ColumnVector plainRows = reader.readBatch(2, buffers);
+
+        assertThat(rowsOf(plainRows)).containsExactly(1, 2);
+        assertThatThrownBy(() -> reader.readBatch(2, buffers))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("Column val data page 1")
+                .hasMessageContaining("dictionary page");
+        reader.close();
+        assertThat(pool.stats().outstandingBorrows()).isZero();
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = ValueDecode.class,
+            names = {"EAGER_ON_DEMAND", "WINDOWED_MASK"})
+    void heldDeadPageNeedsNoDictionary(ValueDecode valueDecode) throws IOException {
+        FetchedColumnChunk indexPage = dictionaryEncodedInt32Chunk(new int[] {100, 200}, new int[] {0, 1});
+        FetchedColumnChunk chunk = withCorruptDictionary(indexPage, PrimitiveKind.INT32);
+        BatchColumnReader reader =
+                new BatchColumnReader(TestDecodeBuffers.ample(), chunk, requiredInt32Leaf(), null, null, valueDecode);
+
+        reader.skipWindow(reader.logicalRowsRemainingInCurrentPage());
+
+        assertThat(reader.skippedDataPageCount()).isEqualTo(1);
+        assertThat(reader.hasMore()).isFalse();
+    }
+
+    @ParameterizedTest
+    @EnumSource(PrimitiveKind.class)
+    void allNullPageNeedsNoDictionary(PrimitiveKind kind) throws IOException {
+        int rows = 5;
+        SchemaNode.Primitive leaf = optionalLeaf(kind);
+        FetchedColumnChunk chunk = withCorruptDictionary(allNullIndexPage(rows), kind);
+
+        List<Object> nulls = Collections.nCopies(rows, null);
+        List<Object> nullsUnderTheMask = Collections.nCopies(rows - 2, null);
+
+        assertThat(eagerRows(chunk, leaf)).isEqualTo(nulls);
+        assertThat(windowedRows(chunk, leaf)).isEqualTo(nulls);
+        assertThat(maskedRows(chunk, leaf, rows, ValueDecode.EAGER)).isEqualTo(nullsUnderTheMask);
+        assertThat(maskedRows(chunk, leaf, rows, ValueDecode.WINDOWED_MASK)).isEqualTo(nullsUnderTheMask);
+    }
+
+    // The shape of a vector follows its page inside one reader, and the dictionary outlasts the page of nulls.
+    @ParameterizedTest
+    @EnumSource(
+            value = ValueDecode.class,
+            names = {"EAGER", "WINDOWED_MASK"})
+    void nullPageBetweenIndexPages(ValueDecode valueDecode) throws IOException {
+        byte[][] dictValues = {bytes("alpha"), bytes("beta")};
+        byte[] firstPage = encodeDictionaryByteArrayPage(2, new int[] {1, 1}, new int[] {0, 1});
+        byte[] nullPage = encodeDictionaryByteArrayPage(2, new int[] {0, 0}, new int[0]);
+        byte[] lastPage = encodeDictionaryByteArrayPage(2, new int[] {1, 1}, new int[] {1, 0});
+        byte[] chunkBuffer = concat(concat(firstPage, nullPage), lastPage);
+        FetchedColumnChunk chunk = dictionaryByteArrayChunk(dictValues, chunkBuffer, 6);
+        SegmentPool pool = SegmentPool.create();
+        DecodeBufferAllocator noDecodeRoom = TestDecodeBuffers.spilling(pool);
+        BatchColumnReader reader =
+                new BatchColumnReader(noDecodeRoom, chunk, optionalByteArrayLeaf(), null, null, valueDecode);
+
+        List<ColumnVector> pages = pageVectors(reader, valueDecode);
+        reader.close();
+
+        assertThat(pages)
+                .extracting(page -> ((BinaryVector) page).isDictionary())
+                .containsExactly(true, false, true);
+        assertThat(rowsOfAll(pages)).containsExactly("alpha", "beta", null, null, "beta", "alpha");
+        assertThat(pool.stats().totalBorrows())
+                .as("one borrow per data page and one for the dictionary of all three")
+                .isEqualTo(4L);
+    }
+
+    @Test
+    void indexPageNeedsADictionaryPage() throws IOException {
+        byte[] intPage = encodeV1Page(
+                2,
+                encodeRleDictionaryIndexPage(new int[] {0, 1}, 2),
+                org.apache.parquet.format.Encoding.RLE_DICTIONARY);
+        byte[] binaryPage = encodeDictionaryByteArrayPage(2, new int[] {1}, new int[] {0});
+        FetchedColumnChunk ints = heapChunk(PATH, intPage, 2, /*maxRep*/ 0, /*maxDef*/ 0);
+        FetchedColumnChunk binaries = heapChunk(PATH, binaryPage, 1, /*maxRep*/ 0, /*maxDef*/ 1);
+        DecodeBufferAllocator allocator = TestDecodeBuffers.ample();
+        BatchColumnReader intReader = new BatchColumnReader(allocator, ints, requiredInt32Leaf());
+        BatchColumnReader binaryReader = new BatchColumnReader(allocator, binaries, optionalByteArrayLeaf());
+        BatchBuffers buffers = TestDecodeBuffers.batchBuffers();
+
+        assertThatThrownBy(() -> intReader.readBatch(2, buffers))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("needs a dictionary page");
+        assertThatThrownBy(() -> binaryReader.readBatch(1, buffers))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("none supplied for column val");
+    }
+
+    // The decode budget has no room. The decode valve maps files, and the pool counts the page arenas alone.
+    @Test
+    void dictionaryBorrowsFromThePool() throws IOException {
+        SegmentPool pool = SegmentPool.create();
+        DecodeBufferAllocator noDecodeRoom = TestDecodeBuffers.spilling(pool);
+        BatchColumnReader reader =
+                new BatchColumnReader(noDecodeRoom, dictionaryByteArrayChunk(), optionalByteArrayLeaf());
+        BatchBuffers buffers = TestDecodeBuffers.batchBuffers();
+
+        reader.readBatch(Integer.MAX_VALUE, buffers);
+        reader.readBatch(Integer.MAX_VALUE, buffers);
+        reader.close();
+
+        assertThat(pool.stats().totalBorrows())
+                .as("one borrow per data page and one for the dictionary of both")
+                .isEqualTo(3L);
+        assertThat(pool.stats().outstandingBorrows()).isZero();
+    }
+
+    // The decoded dictionary holds heap copies: reusing the pool's buffers cannot change its values.
+    @Test
+    void dictionaryOutlivesItsBuffer() {
+        Path file = CorpusFixtures.parquetTestingData().resolve("alltypes_dictionary.parquet");
+        SegmentPool pool = SegmentPool.create();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            BinaryVector strings = readStringColumn(source, pool);
+            assertThat(strings.isDictionary())
+                    .as("the fixture is dictionary-encoded")
+                    .isTrue();
+            byte[] first = strings.get(0).toArray(JAVA_BYTE);
+            assertThat(first).isNotEmpty();
+
+            scribbleOverFreeBuffers(pool);
+
+            assertThat(strings.get(0).toArray(JAVA_BYTE))
+                    .as("the dictionary does not read from the returned buffer")
+                    .isEqualTo(first);
+        } finally {
+            pool.close();
+        }
+    }
+
+    /** The string column of the first row group. The reader and the fetch behind it are closed when this returns. */
+    private static BinaryVector readStringColumn(ByteRangeSource source, SegmentPool pool) {
+        FileMetaData footer = ParquetFormat.readFooter(source);
+        ParquetSchema schema = SchemaBuilder.build(footer.schema());
+        RowGroupSurvivor survivor =
+                RowGroupSurvivor.full(TestRowGroupChunks.of(footer, 0, schema, TestRowGroupChunks.reading(source)));
+        RowGroupFetcher fetcher = TestFetchers.over(source, schema, schema, pool);
+        FetchPlan plan = fetcher.planFor(survivor, Optional.empty());
+        ColumnPath stringColumn = ColumnPath.of("string_col");
+        SchemaNode.Primitive leaf =
+                (SchemaNode.Primitive) schema.find(stringColumn).orElseThrow();
+        try (RowGroupFetch fetch = fetcher.fetch(survivor, plan, BudgetReservation.NONE)) {
+            FetchedColumnChunk chunk = fetch.columns().get(schema.leafColumns().indexOf(stringColumn));
+            BatchColumnReader reader = new BatchColumnReader(TestDecodeBuffers.ample(pool), chunk, leaf);
+            ColumnVector strings = reader.readBatch(Integer.MAX_VALUE, TestDecodeBuffers.batchBuffers());
+            reader.close();
+            return (BinaryVector) strings;
+        }
+    }
+
+    /** Borrows every free buffer of the pool, overwrites it and returns it. */
+    private static void scribbleOverFreeBuffers(SegmentPool pool) {
+        int free = pool.stats().freeSegments();
+        assertThat(free).as("the dictionary buffers went back to the pool").isPositive();
+        List<SegmentPool.Pooled> borrowed = new ArrayList<>();
+        for (int i = 0; i < free; i++) {
+            SegmentPool.Pooled buffer = pool.borrow(8192);
+            buffer.segment().fill((byte) 0xFF);
+            borrowed.add(buffer);
+        }
+        borrowed.forEach(SegmentPool.Pooled::close);
+    }
+
+    /**
+     * {@code chunk} with a dictionary page whose decode fails. The page declares more values than its bytes hold, and a
+     * FIXED_LEN_BYTE_ARRAY page fails earlier, for its missing type length.
+     */
+    private static FetchedColumnChunk withCorruptDictionary(FetchedColumnChunk chunk, PrimitiveKind kind) {
+        return new FetchedColumnChunk(
+                chunk.path(),
+                chunk.codec(),
+                chunk.numValues(),
+                chunk.maxRepetitionLevel(),
+                chunk.maxDefinitionLevel(),
+                chunk.dataPageRuns(),
+                Optional.of(dictionaryPageOf(kind, new byte[3], 64)));
+    }
+
+    /** One dictionary-encoded page of an optional column holding {@code rows} nulls. */
+    private static FetchedColumnChunk allNullIndexPage(int rows) throws IOException {
+        byte[] defLevels = rleEncodeBits(new int[rows], /*maxLevel*/ 1);
+        byte[] noIndex = encodeRleDictionaryIndexPage(new int[0], 2);
+        byte[] payload = buildV1PayloadWithDefLevels(defLevels, noIndex);
+        byte[] page = encodeV1Page(rows, payload, org.apache.parquet.format.Encoding.RLE_DICTIONARY);
+        return heapChunk(PATH, page, rows, /*maxRep*/ 0, /*maxDef*/ 1);
+    }
+
+    /** The rows of {@code chunk} as the windowed lane reads them, one window per page, each row kept. */
+    private static List<Object> windowedRows(FetchedColumnChunk chunk, SchemaNode.Primitive leaf) {
+        BatchColumnReader reader =
+                new BatchColumnReader(TestDecodeBuffers.ample(), chunk, leaf, null, null, ValueDecode.WINDOWED_MASK);
+        List<ColumnVector> pages = pageVectors(reader, ValueDecode.WINDOWED_MASK);
+        return rowsOfAll(pages);
+    }
+
+    /** The rows of the one page of {@code chunk} kept by a row mask dropping the first and the last of them. */
+    private static List<Object> maskedRows(
+            FetchedColumnChunk chunk, SchemaNode.Primitive leaf, int pageRows, ValueDecode valueDecode) {
+        RowRanges mask = new RowRanges(List.of(new Range(1, pageRows - 2)));
+        PageIndex onePage = TestPageIndexes.pages(pageRows, 0);
+        BatchColumnReader reader =
+                new BatchColumnReader(TestDecodeBuffers.ample(), chunk, leaf, mask, onePage, valueDecode);
+        List<ColumnVector> pages = pageVectors(reader, valueDecode);
+        return rowsOfAll(pages);
+    }
+
+    /** One vector per page of {@code reader}, read through its lane with each row kept. */
+    private static List<ColumnVector> pageVectors(BatchColumnReader reader, ValueDecode valueDecode) {
+        BatchBuffers buffers = TestDecodeBuffers.batchBuffers();
+        List<ColumnVector> pages = new ArrayList<>();
+        while (reader.hasMore()) {
+            if (valueDecode == ValueDecode.EAGER) {
+                pages.add(reader.readBatch(Integer.MAX_VALUE, buffers));
+            } else {
+                pages.add(wholeWindow(reader, buffers));
+            }
+        }
+        return pages;
+    }
+
+    /** The rows left in the current page of a windowed reader, each row kept. */
+    private static ColumnVector wholeWindow(BatchColumnReader reader, BatchBuffers buffers) {
+        int windowRows = reader.logicalRowsRemainingInCurrentPage();
+        BitSet eachRow = new BitSet(windowRows);
+        eachRow.set(0, windowRows);
+        return reader.readMaskedWindow(windowRows, eachRow, buffers).vector();
+    }
+
+    private static List<Object> rowsOfAll(List<ColumnVector> vectors) {
+        List<Object> rows = new ArrayList<>();
+        for (ColumnVector vector : vectors) {
+            rows.addAll(rowsOf(vector));
+        }
+        return rows;
+    }
+
+    private static SchemaNode.Primitive optionalLeaf(PrimitiveKind kind) {
+        OptionalInt typeLength = kind == PrimitiveKind.FIXED_LEN_BYTE_ARRAY ? OptionalInt.of(4) : OptionalInt.empty();
+        return new SchemaNode.Primitive("val", Repetition.OPTIONAL, kind, typeLength, Optional.empty(), -1);
+    }
+
     // --- malformed pages ---
 
     @Test
@@ -1360,9 +1637,8 @@ class BatchColumnReaderTest {
      */
     private static FetchedColumnChunk dictionaryEncodedByteArrayChunk(
             byte[][] dictValues, int[] indices, int[] defLevels) throws IOException {
-        Dictionary.BinaryDict dictionary = new Dictionary.BinaryDict(toSegments(dictValues));
         byte[] chunkBuffer = encodeDictionaryByteArrayPage(dictValues.length, defLevels, indices);
-        return dictionaryByteArrayChunk(dictionary, chunkBuffer, defLevels.length);
+        return dictionaryByteArrayChunk(dictValues, chunkBuffer, defLevels.length);
     }
 
     /**
@@ -1373,11 +1649,10 @@ class BatchColumnReaderTest {
     private static FetchedColumnChunk dictionaryEncodedByteArrayChunkTwoPages(
             byte[][] dictValues, int[] defLevels1, int[] indices1, int[] defLevels2, int[] indices2)
             throws IOException {
-        Dictionary.BinaryDict dictionary = new Dictionary.BinaryDict(toSegments(dictValues));
         byte[] page1 = encodeDictionaryByteArrayPage(dictValues.length, defLevels1, indices1);
         byte[] page2 = encodeDictionaryByteArrayPage(dictValues.length, defLevels2, indices2);
         byte[] chunkBuffer = concat(page1, page2);
-        return dictionaryByteArrayChunk(dictionary, chunkBuffer, defLevels1.length + defLevels2.length);
+        return dictionaryByteArrayChunk(dictValues, chunkBuffer, defLevels1.length + defLevels2.length);
     }
 
     private static byte[] encodeDictionaryByteArrayPage(int dictionarySize, int[] defLevels, int[] indices)
@@ -1388,9 +1663,10 @@ class BatchColumnReaderTest {
         return encodeV1Page(defLevels.length, payload, org.apache.parquet.format.Encoding.RLE_DICTIONARY);
     }
 
-    private static FetchedColumnChunk dictionaryByteArrayChunk(
-            Dictionary.BinaryDict dictionary, byte[] chunkBuffer, int numValues) {
+    private static FetchedColumnChunk dictionaryByteArrayChunk(byte[][] dictValues, byte[] chunkBuffer, int numValues) {
         MemorySegment segment = MemorySegment.ofArray(chunkBuffer).asReadOnly();
+        DictionaryPage dictionaryPage =
+                dictionaryPageOf(PrimitiveKind.BYTE_ARRAY, encodePlainByteArrays(dictValues), dictValues.length);
 
         return new FetchedColumnChunk(
                 PATH,
@@ -1399,13 +1675,17 @@ class BatchColumnReaderTest {
                 /*maxRep*/ 0,
                 /*maxDef*/ 1,
                 List.of(new DataPageRun(segment, 0)),
-                Optional.of(dictionary));
+                Optional.of(dictionaryPage));
     }
 
-    private static List<MemorySegment> toSegments(byte[][] values) {
-        return java.util.Arrays.stream(values)
-                .map(value -> MemorySegment.ofArray(value).asReadOnly())
-                .toList();
+    /**
+     * An uncompressed dictionary page over {@code plainEntries}, its entries in PLAIN encoding. A reader decodes it as
+     * it decodes a dictionary page of a file.
+     */
+    static DictionaryPage dictionaryPageOf(PrimitiveKind kind, byte[] plainEntries, int valueCount) {
+        MemorySegment payload = MemorySegment.ofArray(plainEntries).asReadOnly();
+        return new DictionaryPage(
+                payload, plainEntries.length, valueCount, Compression.uncompressed(), kind, OptionalInt.empty(), PATH);
     }
 
     /**
@@ -1641,16 +1921,16 @@ class BatchColumnReaderTest {
     /**
      * Builds a {@link FetchedColumnChunk} for a dictionary-encoded INT32 column.
      *
-     * <p>The dictionary is built directly from {@code dictValues}. The data page payload is a RLE-bit-packed index
-     * stream: one bit-width byte followed by the RLE-bit-packed-hybrid body (one group of 8 values, padded with zeros).
-     * The bit-width is chosen as the minimum needed to represent the largest index value.
+     * <p>The dictionary page holds {@code dictValues} in PLAIN encoding. The data page payload is a RLE-bit-packed
+     * index stream: one bit-width byte followed by the RLE-bit-packed-hybrid body (one group of 8 values, padded with
+     * zeros). The bit-width is chosen as the minimum needed to represent the largest index value.
      *
      * @param dictValues the unique values in the dictionary
      * @param indices the per-row index references into the dictionary
      */
     private static FetchedColumnChunk dictionaryEncodedInt32Chunk(int[] dictValues, int[] indices) throws IOException {
-        Dictionary.IntDict dictionary =
-                new Dictionary.IntDict(IntBuffer.wrap(dictValues).asReadOnlyBuffer());
+        DictionaryPage dictionaryPage =
+                dictionaryPageOf(PrimitiveKind.INT32, encodeInt32sLittleEndian(dictValues), dictValues.length);
 
         byte[] pagePayload = encodeRleDictionaryIndexPage(indices, dictValues.length);
         byte[] chunkBuffer =
@@ -1665,7 +1945,7 @@ class BatchColumnReaderTest {
                 /*maxRep*/ 0,
                 /*maxDef*/ 0,
                 List.of(new DataPageRun(segment, 0)),
-                Optional.of(dictionary));
+                Optional.of(dictionaryPage));
     }
 
     /**

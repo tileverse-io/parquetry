@@ -324,6 +324,26 @@ What each piece guarantees:
   short-lived confined `Arena`, decoded into heap arrays, and the arena is closed
   before the next page. With a `RowMask`, `PageCursor` skips non-surviving pages
   outright, and surviving pages are compacted to the surviving rows.
+- **A dictionary decodes on the first page using it, on the thread decoding that
+  page.** The fetch reads and checks the header of a chunk's dictionary page, and
+  the page stays compressed in the fetch buffer. `BatchColumnReader` decodes it
+  for the first page needing its values and keeps the result for the chunk. A page
+  in another encoding reads no dictionary, and neither does a page holding only
+  nulls. A flat column read without a row mask keeps its dictionary undecoded in
+  two cases: no surviving row reaches a dictionary-encoded page of a column mixing
+  encodings, or an output-only column or a leaf of a later stage (section 6) has
+  no surviving row in a row group or a run of pages. A leaf of the first stage
+  decodes its pages in order and needs its dictionary. An output column with only
+  dictionary-encoded pages needs it too, in a row group with a surviving row. A
+  repeated column and a reader under a row mask load their pages to size their
+  windows. At a page boundary the scan can read one row alone, because a repeated
+  column defers the last row of its page or a column stands on a page with no
+  rows. An output column loads its page for that row, even when the row fails. A
+  loaded dictionary-encoded page holding a value decodes the dictionary, with or
+  without a surviving row. A corrupt dictionary page fails a read only when the
+  read reaches a page using it. An unreadable dictionary page header fails the
+  fetch, as does a header declaring a negative size or value count, or a payload
+  past the fetched bytes.
 
 **Memory contract.** Two budgets bound a read. `FetchBudget` caps the *off-heap*
 bytes held by column-chunk fetches, the current row group's and the prefetched
