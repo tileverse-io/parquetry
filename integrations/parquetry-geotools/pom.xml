@@ -12,7 +12,7 @@
   <description>Read-only GeoTools DataStore for GeoParquet, backed by the parquetry dataset catalog.</description>
 
   <properties>
-    <gt.version>35.0</gt.version>
+    <gt.version>35.2</gt.version>
   </properties>
 
   <dependencyManagement>
