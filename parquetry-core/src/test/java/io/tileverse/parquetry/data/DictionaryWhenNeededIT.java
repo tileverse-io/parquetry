@@ -80,9 +80,9 @@ import io.tileverse.parquetry.testsupport.FooterRewrite;
 
 /**
  * A dictionary is decoded when a page uses it, and a narrowed fetch reads it when a fetched page uses it. A dictionary
- * fetched as its own prefix decodes ahead, and a read decodes the later dictionaries of a column ahead once it has used
- * one. A corrupt dictionary page fails the reads reaching a page using it, and the reads staying away from such pages
- * return their rows.
+ * fetched as its own prefix decodes ahead when a fetched page uses it, and a read decodes the later dictionaries of a
+ * column ahead once it has used one. A corrupt dictionary page fails the reads reaching a page using it, and the reads
+ * staying away from such pages return their rows.
  *
  * <p>Each file holds the same {@value #ROWS} rows in pages of {@value #PAGE_VALUES} rows, under a small dictionary
  * budget. The label and score columns repeat four values over the first {@value #DICTIONARY_ROWS} rows, and each row
@@ -238,7 +238,7 @@ class DictionaryWhenNeededIT {
         return row < DICTIONARY_ROWS ? row % 4 : 1_000.0 + row;
     }
 
-    // The page index narrows the reads by default, and their fetches decode the corrupt prefix ahead.
+    // The page index narrows the reads by default, and a fetch of a page using the corrupt prefix decodes it ahead.
     @Test
     void corruptDictionaryFailsItsRows() throws IOException {
         Path corrupt = copyWithCorruptDictionary(LABEL);

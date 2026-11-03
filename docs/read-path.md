@@ -364,13 +364,17 @@ What each piece guarantees:
   group. Decoding it during the fetch costs no more CPU, and the reader finds it
   ready. A short read of whole chunks has no earlier row group to learn from. Its
   dictionaries stay lazy, and a file without a page index keeps the saving. A
-  dictionary fetched as its own prefix on a narrowed chunk counts as a use of its
-  column and decodes ahead at once. Page pruning picked the fetched pages, and a
-  use is likely. The thread that read the bytes decompresses them faster than
-  another core. A dictionary decoded ahead and left unused costs that decode and
-  nothing more. The decode ahead borrows its scratch from the pool, and a borrow
-  never waits. It never fails the fetch. When it fails, the page stays undecoded,
-  and a read reaching a page using it raises the failure.
+  dictionary fetched as its own prefix on a narrowed chunk decodes ahead when a
+  fetched page uses it, and that page counts as a use of the column. The thread
+  that read the bytes decompresses them faster than another core. A writer falls
+  back to PLAIN once a chunk outgrows its dictionary, and a fetch of pages after
+  the fallback leaves the dictionary undecoded. The fetch finds such a page by
+  reading the headers of the fetched pages. A header failing to parse counts as
+  no use, and a read reaching the page raises the failure. A dictionary decoded
+  ahead and left unused costs that decode and nothing more. The decode ahead
+  borrows its scratch from the pool, and a borrow never waits. It never fails the
+  fetch. When it fails, the page stays undecoded, and a read reaching a page using
+  it raises the failure.
 - **A narrowed fetch reads a dictionary page when a fetched page uses it.** The
   dictionary page sits in the prefix of its chunk, the bytes before the first
   data page. A fetch narrowed by a row mask leaves the prefix out when each
@@ -385,10 +389,11 @@ What each piece guarantees:
   Once the pages arrive, the fetch thread reads their headers from memory. A
   dictionary-encoded page sends the prefix to one more request, into the room
   already held. A wrong count therefore costs one request and never a row, and a
-  right count costs no request. A page header failing to parse fails the fetch,
-  as it would fail the decode. A declared index without a count reads the prefix
-  with the pages. parquetry's writer records no `encoding_stats`, and its files
-  read this way. A chunk fetched whole holds its dictionary page.
+  right count costs no request. A page header failing to parse on that check
+  fails the fetch, as it would fail the decode. A declared index without a
+  count reads the prefix with the pages. parquetry's writer records no
+  `encoding_stats`, and its files read this way. A chunk fetched whole holds its
+  dictionary page.
 
 **Memory contract.** Two budgets bound a read. `FetchBudget` caps the *off-heap*
 bytes held by column-chunk fetches, the current row group's and the prefetched

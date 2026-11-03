@@ -707,7 +707,7 @@ class RowGroupFetcherTest {
         }
     }
 
-    // A fetched prefix counts as a use of its column, and the whole chunks of the next row group decode ahead.
+    // A fetched page using the prefix counts as a use of its column, and the next whole chunks decode ahead.
     @Test
     void fetchedPrefixMarksItsColumn() throws IOException {
         SegmentPool pool = SegmentPool.create();
@@ -723,6 +723,87 @@ class RowGroupFetcherTest {
                 assertThat(pool.stats().totalBorrows())
                         .as("the fetch buffers and four scratches")
                         .isEqualTo(6L);
+            }
+
+            assertThat(pool.stats().outstandingBorrows()).isZero();
+        } finally {
+            pool.close();
+        }
+    }
+
+    // No count rules the prefix out, and the pages after the fallback to PLAIN leave it undecoded.
+    @Test
+    void plainPagesKeepPrefixLazy() throws IOException {
+        SegmentPool pool = SegmentPool.create();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(writeMixedFile())) {
+            RowGroupFetcher fetcher = TestFetchers.over(source, mixedSchema(), mixedSchema(), pool);
+
+            try (RowGroupFetch fetch = fetchPages(fetcher, source, 7, MIXED_PAGES)) {
+                assertThat(columnOf(fetch, B).dictionaryPage()).isPresent();
+                assertThat(pool.stats().totalBorrows()).as("the fetch buffer").isEqualTo(1L);
+            }
+
+            assertThat(pool.stats().outstandingBorrows()).isZero();
+        } finally {
+            pool.close();
+        }
+    }
+
+    // The column stays unmarked, and a whole chunk fetched after the plain pages stays lazy.
+    @Test
+    void plainPagesMarkNoColumn() throws IOException {
+        SegmentPool pool = SegmentPool.create();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(writeMixedFile())) {
+            RowGroupFetcher fetcher = TestFetchers.over(source, mixedSchema(), mixedSchema(), pool);
+            try (RowGroupFetch _ = fetchPages(fetcher, source, 7, MIXED_PAGES)) {
+                assertThat(pool.stats().totalBorrows()).as("the fetch buffer").isEqualTo(1L);
+            }
+
+            try (RowGroupFetch _ = fetchWhole(fetcher, source, 0)) {
+                assertThat(pool.stats().totalBorrows()).as("the fetch buffers").isEqualTo(2L);
+            }
+
+            assertThat(pool.stats().outstandingBorrows()).isZero();
+        } finally {
+            pool.close();
+        }
+    }
+
+    // The read has used the dictionary of the column, and a fetch of plain pages still has no use for it.
+    @Test
+    void usedColumnKeepsPrefixLazy() throws IOException {
+        SegmentPool pool = SegmentPool.create();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(writeMixedFile())) {
+            RowGroupFetcher fetcher = TestFetchers.over(source, mixedSchema(), mixedSchema(), pool);
+            try (RowGroupFetch _ = fetchPages(fetcher, source, 0, 2)) {
+                assertThat(pool.stats().totalBorrows())
+                        .as("the fetch buffer and two scratches")
+                        .isEqualTo(3L);
+            }
+
+            try (RowGroupFetch _ = fetchPages(fetcher, source, 7, MIXED_PAGES)) {
+                assertThat(pool.stats().totalBorrows())
+                        .as("one more fetch buffer")
+                        .isEqualTo(4L);
+            }
+
+            assertThat(pool.stats().outstandingBorrows()).isZero();
+        } finally {
+            pool.close();
+        }
+    }
+
+    // The fetch survives the unreadable header and leaves the prefix undecoded.
+    @Test
+    void unreadableHeaderKeepsPrefixLazy() throws IOException {
+        SegmentPool pool = SegmentPool.create();
+        Path corrupt = withUnreadableHeaderOfPage(writeMixedFile(), B, 7);
+        try (ByteRangeSource source = ByteRangeSource.ofFile(corrupt)) {
+            RowGroupFetcher fetcher = TestFetchers.over(source, mixedSchema(), mixedSchema(), pool);
+
+            try (RowGroupFetch fetch = fetchPages(fetcher, source, 7, MIXED_PAGES)) {
+                assertThat(columnOf(fetch, B).dictionaryPage()).isPresent();
+                assertThat(pool.stats().totalBorrows()).as("the fetch buffer").isEqualTo(1L);
             }
 
             assertThat(pool.stats().outstandingBorrows()).isZero();
@@ -896,6 +977,14 @@ class RowGroupFetcherTest {
         RowGroupSurvivor survivor = survivorOf(source, rowGroup);
         RowMask firstPage = rowsOf(survivor, 0, GROUP_PAGE_VALUES - 1L);
         FetchPlan plan = fetcher.planFor(survivor, Optional.of(firstPage));
+        return fetcher.fetch(survivor, plan, BudgetReservation.NONE);
+    }
+
+    /** Fetches the pages from {@code firstPage} to {@code endPage}, exclusive, of a mixed file with no count. */
+    private static RowGroupFetch fetchPages(
+            RowGroupFetcher fetcher, ByteRangeSource source, int firstPage, int endPage) {
+        RowGroupSurvivor survivor = survivorOf(source, 0);
+        FetchPlan plan = fetcher.planFor(survivor, Optional.of(pagesOf(survivor, firstPage, endPage)));
         return fetcher.fetch(survivor, plan, BudgetReservation.NONE);
     }
 

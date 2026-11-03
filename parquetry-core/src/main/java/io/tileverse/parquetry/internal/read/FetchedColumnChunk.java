@@ -33,8 +33,8 @@ import lombok.NonNull;
  * single run based at ordinal zero, while a page-narrowed fetch is one run per byte-contiguous stretch of fetched
  * pages. The data pages remain compressed and are decoded lazily by the column reader, one at a time. The dictionary
  * page is never part of a run. It stays compressed too until the first data page needing its values, unless the fetch
- * decoded it ahead. A fetch does that for a page read as its own prefix, and for a column with a dictionary used by the
- * read.
+ * decoded it ahead. A fetch does that for a page read as its own prefix when a fetched page uses it, and for any other
+ * page of a column with a dictionary used by the read.
  *
  * <p>This view does not own memory. Its segments are valid only while the owning {@link RowGroupFetch} is open; that
  * fetch returns the pooled segments to the {@link SegmentPool} when it is closed.

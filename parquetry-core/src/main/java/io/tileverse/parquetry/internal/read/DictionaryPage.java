@@ -38,9 +38,9 @@ import lombok.NonNull;
  * takes. The view reads the fetch buffer of the row group, and that buffer outlives the readers of the row group. A
  * column reader can therefore decode the page for the first data page needing its values.
  *
- * <p>A reader asking for the dictionary records the column as used by the read, as does a fetch reading the page as its
- * own prefix. The fetch then decodes the pages of that column ahead, and {@link #decode} hands that dictionary back.
- * See {@link ColumnChunkSlicer}.
+ * <p>A reader asking for the dictionary records the column as used by the read. A fetch reading the page as its own
+ * prefix records it when a fetched page uses the dictionary. The fetch then decodes the pages of that column ahead, and
+ * {@link #decode} hands that dictionary back. See {@link ColumnChunkSlicer}.
  */
 final class DictionaryPage {
 
