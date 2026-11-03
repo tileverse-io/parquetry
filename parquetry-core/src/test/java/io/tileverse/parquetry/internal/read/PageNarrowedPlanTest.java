@@ -856,8 +856,8 @@ class PageNarrowedPlanTest {
 
     /** The page at the head of {@code prefix}, its header rewritten by {@code rewrite}. */
     private static MemorySegment withHeader(MemorySegment prefix, Arena arena, UnaryOperator<PageHeader> rewrite) {
-        MemorySegmentInputStream stream = new MemorySegmentInputStream(prefix, 0L, prefix.byteSize());
-        PageHeader header = ParquetFormat.readPageHeader(stream);
+        MemorySegmentInputStream stream = MemorySegmentInputStream.pageHeaderAt(prefix, 0L, prefix.byteSize());
+        PageHeader header = stream.readPageHeader();
         ByteArrayOutputStream page = new ByteArrayOutputStream();
         ParquetFormat.writePageHeader(page, rewrite.apply(header));
         MemorySegment payload = prefix.asSlice(stream.position(), header.compressedPageSize());

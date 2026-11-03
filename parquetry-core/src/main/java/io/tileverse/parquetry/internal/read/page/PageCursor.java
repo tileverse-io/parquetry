@@ -27,7 +27,6 @@ import io.tileverse.parquetry.format.DataPageHeaderV2;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.PageType;
-import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.LevelMaxima;
@@ -38,8 +37,8 @@ import io.tileverse.parquetry.schema.LevelMaxima;
  * <p>The chunk arrives as an ordered list of {@link DataPageRun}s - one run for a chunk fetched whole, several when the
  * fetch skipped the pages that cannot hold a surviving row. The cursor tracks a byte offset inside the current run's
  * {@link MemorySegment}, moves on to the next run when the current one is exhausted, and dispatches header reads
- * through {@link ParquetFormat#readPageHeader}. Non-data pages (e.g. a misplaced dictionary or index page) are skipped
- * silently; {@link #nextDataPage} returns {@code null} when the last run is exhausted.
+ * through {@link MemorySegmentInputStream#readPageHeader}. Non-data pages (e.g. a misplaced dictionary or index page)
+ * are skipped silently; {@link #nextDataPage} returns {@code null} when the last run is exhausted.
  *
  * <p>The same walk is also available in two steps for a reader that decides from a page's header whether the page is
  * worth decompressing: {@link #peekNextDataPage} yields the page's header and compressed bytes, and the reader then
@@ -387,9 +386,9 @@ public final class PageCursor {
      * {@link ParquetFormatException} on premature end-of-stream or Thrift decode failure.
      */
     private PageHeader readNextPageHeader() {
-        MemorySegmentInputStream stream = new MemorySegmentInputStream(runBytes, position, runLimit);
+        MemorySegmentInputStream stream = MemorySegmentInputStream.pageHeaderAt(runBytes, position, runLimit);
         try {
-            PageHeader header = ParquetFormat.readPageHeader(stream);
+            PageHeader header = stream.readPageHeader();
             long consumed = stream.position() - position;
             if (consumed <= 0) {
                 throw new MalformedFileException("Page header read advanced the cursor by " + consumed

@@ -29,7 +29,6 @@ import io.tileverse.parquetry.format.DictionaryPageHeader;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.PageType;
-import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
@@ -187,7 +186,7 @@ final class ColumnChunkSlicer {
      */
     private Optional<DictionaryPage> dictionaryPageOfPrefix(
             MemorySegment prefix, ChunkMeta meta, ColumnPath path, boolean decodeAhead) {
-        MemorySegmentInputStream stream = new MemorySegmentInputStream(prefix, 0L, prefix.byteSize());
+        MemorySegmentInputStream stream = MemorySegmentInputStream.pageHeaderAt(prefix, 0L, prefix.byteSize());
         PageHeader header = readPageHeader(stream, path);
         if (header.type() != PageType.DICTIONARY_PAGE) {
             throw new MalformedFileException(named(path)
@@ -214,7 +213,8 @@ final class ColumnChunkSlicer {
         if (chunkSegment.byteSize() == 0) {
             return NO_DICTIONARY;
         }
-        MemorySegmentInputStream stream = new MemorySegmentInputStream(chunkSegment, 0L, chunkSegment.byteSize());
+        MemorySegmentInputStream stream =
+                MemorySegmentInputStream.pageHeaderAt(chunkSegment, 0L, chunkSegment.byteSize());
         PageHeader header = readPageHeader(stream, path);
         if (header.type() != PageType.DICTIONARY_PAGE) {
             if (meta.dictionaryPageOffset().isPresent()) {
@@ -354,7 +354,7 @@ final class ColumnChunkSlicer {
      */
     private static PageHeader readPageHeader(MemorySegmentInputStream stream, ColumnPath path) {
         try {
-            return ParquetFormat.readPageHeader(stream);
+            return stream.readPageHeader();
         } catch (ParquetFormatException e) {
             throw e.withContext(
                     "Failed to read dictionary page header for column " + path.dot() + ": " + e.getMessage(),

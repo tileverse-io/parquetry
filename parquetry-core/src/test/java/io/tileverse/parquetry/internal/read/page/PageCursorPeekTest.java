@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
 
 import org.junit.jupiter.api.Test;
 
@@ -143,6 +144,29 @@ class PageCursorPeekTest {
         assertThatThrownBy(() -> cursor.peekNextDataPage(FLAT))
                 .isInstanceOf(MalformedFileException.class)
                 .hasMessageContaining("Column v data page 0 declares " + declared + " uncompressed bytes");
+    }
+
+    // Statistics are the only part of a header without a bounded size.
+    @Test
+    void longHeaderIsRefused() {
+        MemorySegment chunk = PageFixtures.v1PageWithMinValue((16 << 20) + 1);
+        PageCursor cursor = new PageCursor(chunk, V, null, PageSizeLimit.NONE);
+
+        assertThatThrownBy(() -> cursor.peekNextDataPage(FLAT))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("column v")
+                .hasMessageContaining("does not end within the 16777216 bytes");
+    }
+
+    @Test
+    void truncatedHeaderIsMalformed() {
+        MemorySegment chunk = PageFixtures.v1FlatChunk(5).asSlice(0, 3);
+        PageCursor cursor = new PageCursor(chunk, V, null, PageSizeLimit.NONE);
+
+        assertThatThrownBy(() -> cursor.peekNextDataPage(FLAT))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("column v")
+                .hasMessageContaining("does not end within the 3 bytes");
     }
 
     private static void discardNextPage(PageCursor cursor) {

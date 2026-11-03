@@ -24,7 +24,6 @@ import io.tileverse.parquetry.format.DataPageHeaderV2;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.PageHeader;
-import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
@@ -106,7 +105,7 @@ enum DictionaryFetch {
     static boolean runUsesDictionary(MemorySegment run, ColumnPath path) {
         long position = 0;
         while (position < run.byteSize()) {
-            MemorySegmentInputStream stream = new MemorySegmentInputStream(run, position, run.byteSize());
+            MemorySegmentInputStream stream = MemorySegmentInputStream.pageHeaderAt(run, position, run.byteSize());
             PageHeader header = readPageHeader(stream, path);
             if (isDictionaryEncoded(header)) {
                 return true;
@@ -118,7 +117,7 @@ enum DictionaryFetch {
 
     private static PageHeader readPageHeader(MemorySegmentInputStream stream, ColumnPath path) {
         try {
-            return ParquetFormat.readPageHeader(stream);
+            return stream.readPageHeader();
         } catch (ParquetFormatException e) {
             throw e.withContext(
                     "Failed to read page header for column " + path.dot() + ": " + e.getMessage(), -1L, "PageHeader");
