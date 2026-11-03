@@ -15,10 +15,12 @@
  */
 package io.tileverse.parquetry.internal.write.page;
 
+import static io.tileverse.parquetry.internal.write.page.PageWriter.MAX_PAGE_HEADER_BOUND_BYTES;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -340,7 +342,45 @@ class PageWriterV2Test {
         assertThat(written.isMaxValueExact()).isTrue();
     }
 
+    @Test
+    void longBoundsLeftOutOfHeader() throws Exception {
+        PageStatistics stats = pageStats(new byte[1], new byte[MAX_PAGE_HEADER_BOUND_BYTES + 1], 1, false);
+
+        Statistics written = writtenStatistics(stats);
+
+        assertThat(written.nullCount()).hasValue(1L);
+        assertThat(written.minValue().byteSize()).isZero();
+        assertThat(written.maxValue().byteSize()).isZero();
+        assertThat(written.isMinValueExact()).isFalse();
+        assertThat(written.isMaxValueExact()).isFalse();
+    }
+
+    @Test
+    void boundsOf4KiBStayInHeader() throws Exception {
+        PageStatistics stats =
+                pageStats(new byte[MAX_PAGE_HEADER_BOUND_BYTES], new byte[MAX_PAGE_HEADER_BOUND_BYTES], 1, false);
+
+        Statistics written = writtenStatistics(stats);
+
+        assertThat(written.minValue().byteSize()).isEqualTo(MAX_PAGE_HEADER_BOUND_BYTES);
+        assertThat(written.maxValue().byteSize()).isEqualTo(MAX_PAGE_HEADER_BOUND_BYTES);
+        assertThat(written.isMaxValueExact()).isTrue();
+    }
+
     // --- helpers ---
+
+    /** The statistics in the header of a V2 page written with {@code stats}, over two INT32 values. */
+    private static Statistics writtenStatistics(PageStatistics stats) throws IOException {
+        int[] values = {1, 2};
+        ColumnContext column =
+                new ColumnContext(0, 0, PrimitiveKind.INT32, ParquetVersion.V2_0, Compression.uncompressed());
+        PageEncodeJob job =
+                new PageEncodeJob(values, values.length, 0, values.length, null, null, new PlainInt32Encoder(), stats);
+        GrowableByteSink out = new GrowableByteSink(64);
+        new PageWriter(column).writeDataPageV2(job, out);
+        PageHeader header = ParquetFormat.readPageHeader(new ByteArrayInputStream(out.toByteArray()));
+        return header.dataPageHeaderV2().orElseThrow().statistics().orElseThrow();
+    }
 
     private static byte[] encodeFloat(float value) {
         byte[] out = new byte[Float.BYTES];
