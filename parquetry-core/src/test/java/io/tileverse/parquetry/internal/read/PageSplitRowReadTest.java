@@ -44,6 +44,7 @@ import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
+import io.tileverse.parquetry.internal.read.page.PageSizeLimit;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -429,7 +430,8 @@ class PageSplitRowReadTest {
                 MAX_REP,
                 MAX_DEF,
                 List.of(new DataPageRun(segment, 0)),
-                Optional.empty());
+                Optional.empty(),
+                PageSizeLimit.NONE);
     }
 
     private static FetchedColumnChunk repeatedByteArrayChunk(byte[][] dictValues, byte[]... pages) {
@@ -445,7 +447,8 @@ class PageSplitRowReadTest {
                 MAX_REP,
                 MAX_DEF,
                 List.of(new DataPageRun(segment, 0)),
-                Optional.of(dictionaryPage));
+                Optional.of(dictionaryPage),
+                PageSizeLimit.NONE);
     }
 
     private static FetchedColumnChunk flatInt32Chunk(ColumnPath path, int[]... pages) throws IOException {
@@ -465,7 +468,8 @@ class PageSplitRowReadTest {
                 /*maxRep*/ 0,
                 /*maxDef*/ 0,
                 List.of(new DataPageRun(segment, 0)),
-                Optional.empty());
+                Optional.empty(),
+                PageSizeLimit.NONE);
     }
 
     /**

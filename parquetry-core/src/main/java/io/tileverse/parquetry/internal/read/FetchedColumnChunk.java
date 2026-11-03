@@ -20,6 +20,7 @@ import java.util.Optional;
 
 import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
+import io.tileverse.parquetry.internal.read.page.PageSizeLimit;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;
 
@@ -48,6 +49,7 @@ import lombok.NonNull;
  *     order
  * @param dictionaryPage the dictionary page if the fetch read one; otherwise empty. A fetch leaves out the dictionary
  *     page of a chunk only when none of the fetched pages uses it.
+ * @param pageSizeLimit the most uncompressed bytes accepted from a data page of the chunk
  */
 record FetchedColumnChunk(
         @NonNull ColumnPath path,
@@ -56,7 +58,8 @@ record FetchedColumnChunk(
         int maxRepetitionLevel,
         int maxDefinitionLevel,
         @NonNull List<DataPageRun> dataPageRuns,
-        @NonNull Optional<DictionaryPage> dictionaryPage) {
+        @NonNull Optional<DictionaryPage> dictionaryPage,
+        @NonNull PageSizeLimit pageSizeLimit) {
 
     FetchedColumnChunk {
         dataPageRuns = List.copyOf(dataPageRuns);

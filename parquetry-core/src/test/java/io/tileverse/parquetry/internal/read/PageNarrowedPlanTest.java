@@ -35,6 +35,7 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.function.IntFunction;
+import java.util.function.IntUnaryOperator;
 import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 
@@ -322,6 +323,25 @@ class PageNarrowedPlanTest {
                     .isInstanceOf(MalformedFileException.class)
                     .hasMessageContaining(B.dot())
                     .hasMessageContaining("negative value count");
+        }
+    }
+
+    // The decode of the dictionary would allocate the declared bytes of native memory.
+    @Test
+    void oversizedDictionaryIsRefused() {
+        int declared = 100 << 20;
+        try (Arena arena = Arena.ofConfined();
+                ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            Fixture fixture = Fixture.open(source);
+            DictionarySource oversized = new DictionarySource.Prefix(
+                    withUncompressedSize(fixture.readDictionaryPrefix(B, arena), arena, size -> declared));
+            List<DataPageRun> runs = List.of(new DataPageRun(fixture.readFirstDataPage(B, arena), 0));
+            ChunkMeta meta = fixture.meta(B);
+            ColumnChunkSlicer slicer = new ColumnChunkSlicer(SCHEMA, SegmentPool.getDefault());
+
+            assertThatThrownBy(() -> slicer.slice(oversized, runs, meta, B))
+                    .isInstanceOf(MalformedFileException.class)
+                    .hasMessageContaining("Column b dictionary page declares " + declared + " uncompressed bytes");
         }
     }
 
@@ -797,12 +817,17 @@ class PageNarrowedPlanTest {
      * The dictionary page at the start of {@code prefix}, its header declaring one uncompressed byte more than it has.
      */
     private static MemorySegment withInflatedUncompressedSize(MemorySegment prefix, Arena arena) {
+        return withUncompressedSize(prefix, arena, size -> size + 1);
+    }
+
+    /** The dictionary page at the start of {@code prefix}, its header declaring the size given by {@code resize}. */
+    private static MemorySegment withUncompressedSize(MemorySegment prefix, Arena arena, IntUnaryOperator resize) {
         return withHeader(
                 prefix,
                 arena,
                 header -> new PageHeader(
                         header.type(),
-                        header.uncompressedPageSize() + 1,
+                        resize.applyAsInt(header.uncompressedPageSize()),
                         header.compressedPageSize(),
                         header.crc(),
                         header.dataPageHeader(),

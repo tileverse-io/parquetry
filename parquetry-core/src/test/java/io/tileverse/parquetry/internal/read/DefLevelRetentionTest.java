@@ -35,6 +35,7 @@ import org.junit.jupiter.api.Test;
 import io.tileverse.parquetry.columnar.Levels;
 import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
+import io.tileverse.parquetry.internal.read.page.PageSizeLimit;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
@@ -184,7 +185,8 @@ class DefLevelRetentionTest {
                 maxRep,
                 maxDef,
                 List.of(new DataPageRun(segment, 0)),
-                Optional.empty());
+                Optional.empty(),
+                PageSizeLimit.NONE);
     }
 
     private static SchemaNode.Primitive optionalInt32Element() {

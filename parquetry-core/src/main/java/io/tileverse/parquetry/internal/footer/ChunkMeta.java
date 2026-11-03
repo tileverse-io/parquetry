@@ -87,6 +87,14 @@ public final class ChunkMeta {
         return totalCompressedSize() == CompactFooter.SIZE_BEYOND_RANGE;
     }
 
+    /**
+     * The uncompressed byte size of the column chunks of the row group holding this chunk. No page of the chunk holds
+     * more.
+     */
+    public long rowGroupUncompressedSize() {
+        return footer.uncompressedSize(chunkIndex / footer.leafCount());
+    }
+
     /** Number of values in the chunk, nulls included. */
     public long numValues() {
         return footer.longAt(base() + CompactFooter.CHUNK_NUM_VALUES);

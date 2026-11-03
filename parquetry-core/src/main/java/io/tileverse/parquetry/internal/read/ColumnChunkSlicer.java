@@ -35,6 +35,7 @@ import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.internal.footer.ChunkMeta;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.internal.read.page.MemorySegmentInputStream;
+import io.tileverse.parquetry.internal.read.page.PageSizeLimit;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.LevelMaxima;
@@ -153,7 +154,12 @@ final class ColumnChunkSlicer {
                 maxima.maxRepetitionLevel(),
                 maxima.maxDefinitionLevel(),
                 readOnly(runs),
-                dictionaryPage);
+                dictionaryPage,
+                pageSizeLimitOf(meta));
+    }
+
+    private static PageSizeLimit pageSizeLimitOf(ChunkMeta meta) {
+        return PageSizeLimit.ofRowGroup(meta.rowGroupUncompressedSize());
     }
 
     /**
@@ -239,6 +245,7 @@ final class ColumnChunkSlicer {
             throw new MalformedFileException(named(path) + " dictionary page advanced zero bytes");
         }
         requireNonNegativePageSizes(header, path);
+        requireAcceptedSize(header, meta, path);
         requireNonNegativeValueCount(dictHeader, path);
         int compressedSize = header.compressedPageSize();
         if (chunkSegment.byteSize() - headerEnd < compressedSize) {
@@ -259,6 +266,15 @@ final class ColumnChunkSlicer {
             throw new MalformedFileException(named(path) + " dictionary page declares negative sizes:"
                     + " compressed=" + header.compressedPageSize() + ", uncompressed="
                     + header.uncompressedPageSize());
+        }
+    }
+
+    /** Fails a dictionary page above the size limit of its row group, because its decode allocates that much memory. */
+    private static void requireAcceptedSize(PageHeader header, ChunkMeta meta, ColumnPath path) {
+        PageSizeLimit limit = pageSizeLimitOf(meta);
+        int declared = header.uncompressedPageSize();
+        if (!limit.accepts(declared)) {
+            throw limit.refusal(named(path) + " dictionary page", declared);
         }
     }
 

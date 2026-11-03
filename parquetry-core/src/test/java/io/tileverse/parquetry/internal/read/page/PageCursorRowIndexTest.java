@@ -47,7 +47,7 @@ class PageCursorRowIndexTest {
 
     @Test
     void firstRowIndexAccumulatesAcrossPagesWithoutASelection() throws Exception {
-        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7, 4), V, null);
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7, 4), V, null, PageSizeLimit.NONE);
         List<Long> firstRows = new ArrayList<>();
         try (Arena arena = Arena.ofConfined()) {
             for (int page = 0; page < 3; page++) {
@@ -61,7 +61,7 @@ class PageCursorRowIndexTest {
 
     @Test
     void aDisagreeingRowCountFailsLoud() throws Exception {
-        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5), V, null);
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5), V, null, PageSizeLimit.NONE);
         try (Arena arena = Arena.ofConfined()) {
             cursor.nextDataPage(FLAT, Compression.uncompressed(), arena);
             assertThatThrownBy(() -> cursor.recordCurrentPageRowCount(4))
@@ -73,7 +73,7 @@ class PageCursorRowIndexTest {
 
     @Test
     void aNegativeV1ValueCountFailsBeforeThePageIsDecoded() {
-        PageCursor cursor = new PageCursor(PageFixtures.v1PageDeclaring(-3), V, null);
+        PageCursor cursor = new PageCursor(PageFixtures.v1PageDeclaring(-3), V, null, PageSizeLimit.NONE);
 
         assertThatThrownBy(() -> cursor.peekNextDataPage(FLAT))
                 .isInstanceOf(MalformedFileException.class)
@@ -91,7 +91,8 @@ class PageCursorRowIndexTest {
     @ParameterizedTest
     @MethodSource("negativeV2Counts")
     void aNegativeV2CountFailsBeforeThePageIsDecoded(int numValues, int numNulls, int numRows, String count) {
-        PageCursor cursor = new PageCursor(PageFixtures.v2PageDeclaring(numValues, numNulls, numRows), V, null);
+        PageCursor cursor =
+                new PageCursor(PageFixtures.v2PageDeclaring(numValues, numNulls, numRows), V, null, PageSizeLimit.NONE);
 
         assertThatThrownBy(() -> cursor.peekNextDataPage(FLAT))
                 .isInstanceOf(MalformedFileException.class)
@@ -100,14 +101,14 @@ class PageCursorRowIndexTest {
 
     @Test
     void repeatedV2PageHoldsManyValues() {
-        PageCursor cursor = new PageCursor(PageFixtures.v2PageDeclaring(5, 0, 2), V, null);
+        PageCursor cursor = new PageCursor(PageFixtures.v2PageDeclaring(5, 0, 2), V, null, PageSizeLimit.NONE);
 
         assertThat(cursor.peekNextDataPage(REPEATED).statedRowCount()).isEqualTo(2);
     }
 
     @Test
     void onlyAPageRightAfterADecodedPageWithValuesMayContinueARow() throws Exception {
-        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(0, 5, 0, 7), V, null);
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(0, 5, 0, 7), V, null, PageSizeLimit.NONE);
 
         List<Boolean> mayContinue = decodeEachPage(cursor, 4);
 
@@ -118,7 +119,7 @@ class PageCursorRowIndexTest {
 
     @Test
     void aPageReachedAcrossADiscardedPageCannotContinueARow() throws Exception {
-        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7, 4), V, null);
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7, 4), V, null, PageSizeLimit.NONE);
         try (Arena arena = Arena.ofConfined()) {
             cursor.nextDataPage(FLAT, Compression.uncompressed(), arena);
             cursor.recordCurrentPageRowCount(5);

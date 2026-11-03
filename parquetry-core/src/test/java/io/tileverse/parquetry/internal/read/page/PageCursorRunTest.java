@@ -130,13 +130,13 @@ class PageCursorRunTest {
         MemorySegment bytes = MemorySegment.ofArray(new byte[16]).asReadOnly();
         List<DataPageRun> runs = List.of(new DataPageRun(bytes, 0), new DataPageRun(bytes, 4));
         assertThatIllegalArgumentException()
-                .isThrownBy(() -> new PageCursor(runs, VALUE, null))
+                .isThrownBy(() -> new PageCursor(runs, VALUE, null, PageSizeLimit.NONE))
                 .withMessageContaining("PageSelection");
     }
 
     @Test
     void emptyRunListYieldsNoPage() throws IOException {
-        PageCursor cursor = new PageCursor(List.of(), VALUE, null);
+        PageCursor cursor = new PageCursor(List.of(), VALUE, null, PageSizeLimit.NONE);
         assertThat(cursor.hasRemaining()).isFalse();
         try (Arena pageArena = Arena.ofConfined()) {
             assertThat(cursor.nextDataPage(FLAT_REQUIRED, Compression.uncompressed(), pageArena))
@@ -150,7 +150,7 @@ class PageCursorRunTest {
 
     /** Today's shape: the whole data-page region as one segment, ordinals counted from zero. */
     private static PageCursor cursorOverSingleSegment(ChunkFixture fixture, PageSelection selection) {
-        return new PageCursor(fixture.dataPages(), VALUE, selection);
+        return new PageCursor(fixture.dataPages(), VALUE, selection, PageSizeLimit.NONE);
     }
 
     /**
@@ -166,7 +166,7 @@ class PageCursorRunTest {
             }
             runs.add(new DataPageRun(sliceOfPage(fixture, locations, ordinal), ordinal));
         }
-        return new PageCursor(runs, VALUE, selection);
+        return new PageCursor(runs, VALUE, selection, PageSizeLimit.NONE);
     }
 
     /**
@@ -189,7 +189,7 @@ class PageCursorRunTest {
             runs.add(new DataPageRun(sliceOfPages(fixture, locations, runStart, ordinal), runStart));
             ordinal++;
         }
-        return new PageCursor(runs, VALUE, selection);
+        return new PageCursor(runs, VALUE, selection, PageSizeLimit.NONE);
     }
 
     /** The bytes of one page (its header plus payload) as a view into the fetched region. */

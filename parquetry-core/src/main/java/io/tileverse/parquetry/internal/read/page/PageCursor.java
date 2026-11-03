@@ -54,6 +54,7 @@ public final class PageCursor {
     private final List<DataPageRun> runs;
     private final ColumnPath columnPath;
     private final PageSelection selection; // null = no page-skip (decode every data page)
+    private final PageSizeLimit pageSizeLimit;
     private int runIndex = -1;
     private MemorySegment runBytes;
     private long runLimit;
@@ -76,22 +77,26 @@ public final class PageCursor {
     private int skippedDataPageCount;
 
     /** Walks a chunk fetched whole: one run over {@code chunk}, whose first data page is ordinal zero. */
-    public PageCursor(MemorySegment chunk, ColumnPath columnPath, PageSelection selection) {
-        this(List.of(new DataPageRun(chunk, 0)), columnPath, selection);
+    public PageCursor(
+            MemorySegment chunk, ColumnPath columnPath, PageSelection selection, PageSizeLimit pageSizeLimit) {
+        this(List.of(new DataPageRun(chunk, 0)), columnPath, selection, pageSizeLimit);
     }
 
     /**
      * Walks {@code runs} in order. Each run's first data page takes the run's base ordinal - the offset index ordinal
      * the fetch planner recorded - which keeps {@link PageSelection#isSurviving(int)} and
-     * {@link PageSelection#firstRowIndex(int)} correct when the pages between runs were never fetched.
+     * {@link PageSelection#firstRowIndex(int)} correct when the pages between runs were never fetched. A data page
+     * above {@code pageSizeLimit} fails the walk before its payload is decompressed.
      */
-    public PageCursor(List<DataPageRun> runs, ColumnPath columnPath, PageSelection selection) {
+    public PageCursor(
+            List<DataPageRun> runs, ColumnPath columnPath, PageSelection selection, PageSizeLimit pageSizeLimit) {
         // An empty run yields no page, yet hasRemaining() counts any un-walked run as bytes left to decode. Keeping
         // one would make an all-empty run list look non-empty, breaking the empty-chunk contract
         // BatchColumnReader.hasMore() depends on.
         this.runs = runs.stream().filter(run -> run.segment().byteSize() > 0).toList();
         this.columnPath = columnPath;
         this.selection = selection;
+        this.pageSizeLimit = pageSizeLimit;
         if (this.runs.size() > 1 && selection == null) {
             throw new IllegalArgumentException("A multi-run walk needs a PageSelection to resolve run base "
                     + "ordinals to row indexes, column " + columnPath.dot());
@@ -138,6 +143,7 @@ public final class PageCursor {
             if (selection == null || selection.isSurviving(ordinal)) {
                 requireNonNegativeCounts(header, ordinal);
                 requireOneValuePerRow(header, maxLevels, ordinal);
+                requireAcceptedSize(header, ordinal);
                 pendingPage = new PendingDataPage(
                         header, pagePayload, ordinal, firstRowIndexOf(ordinal), statedRowCount(header, maxLevels));
                 return pendingPage;
@@ -243,6 +249,14 @@ public final class PageCursor {
         if (counts.numRows() != counts.numValues()) {
             throw new MalformedFileException("Column " + columnPath.dot() + " V2 data page " + ordinal + " counts "
                     + counts.numRows() + " rows and " + counts.numValues() + " values");
+        }
+    }
+
+    /** Fails a data page above the size limit of its row group, because its decode allocates that much memory. */
+    private void requireAcceptedSize(PageHeader header, int ordinal) {
+        int declared = header.uncompressedPageSize();
+        if (!pageSizeLimit.accepts(declared)) {
+            throw pageSizeLimit.refusal("Column " + columnPath.dot() + " data page " + ordinal, declared);
         }
     }
 

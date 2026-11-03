@@ -68,6 +68,7 @@ import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.filter.bloom.SplitBlockBloomFilter;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
+import io.tileverse.parquetry.internal.read.page.PageSizeLimit;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
@@ -1206,7 +1207,8 @@ class MaskedScanRowGroupReaderTest {
                 0,
                 0,
                 List.of(new DataPageRun(bytes, 0)),
-                Optional.empty());
+                Optional.empty(),
+                PageSizeLimit.NONE);
     }
 
     /** A PLAIN page holding the longs from {@code first} to {@code end}, the end left out. */

@@ -17,12 +17,14 @@ package io.tileverse.parquetry.internal.read.page;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.Arena;
 
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.data.Compression;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.LevelMaxima;
 
@@ -39,7 +41,7 @@ class PageCursorPeekTest {
 
     @Test
     void aPageDiscardedUnreadCountsAsPrunedAndAdvancesTheRowWalk() throws Exception {
-        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7, 4), V, null);
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7, 4), V, null, PageSizeLimit.NONE);
         discardNextPage(cursor);
         discardNextPage(cursor);
 
@@ -67,7 +69,7 @@ class PageCursorPeekTest {
 
     @Test
     void peekingAPageDecodesNothing() {
-        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7), V, null);
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7), V, null, PageSizeLimit.NONE);
 
         PageCursor.PendingDataPage first = cursor.peekNextDataPage(FLAT);
 
@@ -79,7 +81,7 @@ class PageCursorPeekTest {
 
     @Test
     void aWalkHoldingAPeekedPageStillHasBytesToDecode() {
-        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5), V, null);
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5), V, null, PageSizeLimit.NONE);
 
         cursor.peekNextDataPage(FLAT);
 
@@ -90,7 +92,7 @@ class PageCursorPeekTest {
 
     @Test
     void aSecondPeekBeforeTheFirstIsResolvedIsRejected() {
-        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7), V, null);
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7), V, null, PageSizeLimit.NONE);
         cursor.peekNextDataPage(FLAT);
 
         assertThatIllegalStateException()
@@ -100,7 +102,7 @@ class PageCursorPeekTest {
 
     @Test
     void aPageStatingNoRowCountCannotBeDiscardedUnread() {
-        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5), V, null);
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5), V, null, PageSizeLimit.NONE);
 
         PageCursor.PendingDataPage pending = cursor.peekNextDataPage(REPEATED);
 
@@ -114,7 +116,7 @@ class PageCursorPeekTest {
 
     @Test
     void theWholePageReadWalksTheChunkAsBefore() throws Exception {
-        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7), V, null);
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7), V, null, PageSizeLimit.NONE);
 
         try (Arena arena = Arena.ofConfined()) {
             assertThat(cursor.nextDataPage(FLAT, Compression.uncompressed(), arena)
@@ -129,6 +131,18 @@ class PageCursorPeekTest {
                     .isNull();
         }
         assertThat(cursor.decodedDataPageCount()).isEqualTo(2);
+    }
+
+    // The decode of the page would allocate the declared bytes of native memory.
+    @Test
+    void oversizedPageIsRefused() {
+        int declared = 100 << 20;
+        PageSizeLimit limit = PageSizeLimit.ofRowGroup(1_000);
+        PageCursor cursor = new PageCursor(PageFixtures.v1PageDeclaringSize(declared), V, null, limit);
+
+        assertThatThrownBy(() -> cursor.peekNextDataPage(FLAT))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("Column v data page 0 declares " + declared + " uncompressed bytes");
     }
 
     private static void discardNextPage(PageCursor cursor) {

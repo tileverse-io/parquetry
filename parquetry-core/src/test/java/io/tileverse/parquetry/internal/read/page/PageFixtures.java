@@ -85,6 +85,23 @@ final class PageFixtures {
         return MemorySegment.ofArray(chunk.toByteArray()).asReadOnly();
     }
 
+    /** A chunk of one V1 data page with an empty payload and a header declaring {@code uncompressedPageSize} bytes. */
+    static MemorySegment v1PageDeclaringSize(int uncompressedPageSize) {
+        DataPageHeader v1 = new DataPageHeader(1, Encoding.PLAIN, Encoding.RLE, Encoding.RLE, Optional.empty());
+        PageHeader header = new PageHeader(
+                PageType.DATA_PAGE,
+                uncompressedPageSize,
+                0,
+                OptionalInt.empty(),
+                Optional.of(v1),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
+        ByteArrayOutputStream chunk = new ByteArrayOutputStream();
+        ParquetFormat.writePageHeader(chunk, header);
+        return MemorySegment.ofArray(chunk.toByteArray()).asReadOnly();
+    }
+
     /**
      * A chunk of one V1 data page with an empty payload and a header declaring one value. The statistics of the header
      * record a {@code min_value} of {@code minValueBytes} zero bytes, and no other bound.
