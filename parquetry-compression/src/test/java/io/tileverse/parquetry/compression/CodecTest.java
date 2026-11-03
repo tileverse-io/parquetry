@@ -25,9 +25,13 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.stream.Stream;
 import java.util.zip.CRC32;
 
@@ -200,6 +204,33 @@ class CodecTest {
                     Codec.lzo(),
                     Codec.bzip2(),
                     Codec.xz());
+        }
+
+        @Test
+        void zstdRoundTripsAcrossThreads() throws Exception {
+            Codec codec = Codec.zstd();
+            List<byte[]> payloads = new ArrayList<>();
+            List<Future<byte[]>> results = new ArrayList<>();
+            try (ExecutorService threads = Executors.newVirtualThreadPerTaskExecutor()) {
+                for (int task = 0; task < 256; task++) {
+                    byte[] payload = ("row " + task + " of a shared codec ")
+                            .repeat(100 + task)
+                            .getBytes();
+                    payloads.add(payload);
+                    results.add(threads.submit(() -> roundTrip(codec, payload)));
+                }
+                for (int task = 0; task < results.size(); task++) {
+                    assertThat(results.get(task).get()).isEqualTo(payloads.get(task));
+                }
+            }
+        }
+
+        private static byte[] roundTrip(Codec codec, byte[] payload) throws IOException {
+            MemorySegment compressed = MemorySegment.ofArray(new byte[(int) codec.maxCompressedLength(payload.length)]);
+            int compressedLength = codec.compress(MemorySegment.ofArray(payload), compressed);
+            MemorySegment back = MemorySegment.ofArray(new byte[payload.length]);
+            codec.decompress(compressed.asSlice(0, compressedLength), back);
+            return back.toArray(JAVA_BYTE);
         }
 
         /**

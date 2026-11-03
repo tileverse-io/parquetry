@@ -67,8 +67,9 @@ import io.airlift.compress.v3.zstd.ZstdInputStream;
  * {@link #deflate()}, {@link #lz4Raw()}, {@link #lz4Hadoop()}, {@link #zstd(int)}, {@link #brotli()}, {@link #lzo()},
  * {@link #bzip2()}, {@link #xz()}).
  *
- * <p>Instances are stateless and safe to share across virtual threads; each compress/decompress call constructs its own
- * underlying compressor/decompressor so concurrent fan-out cannot race on internal scratch state.
+ * <p>Instances are immutable and safe to share across threads. Concurrent calls never share scratch state. The zstd
+ * codec shares native coders built for concurrent use, and the other codecs construct their compressor or decompressor
+ * per call.
  */
 public sealed interface Codec
         permits Codec.Uncompressed,
@@ -498,6 +499,9 @@ public sealed interface Codec
      * ZSTD codec. The compression level (range {@code [1, 22]}, default {@value #DEFAULT_LEVEL}) is configured at
      * construction time. Size-discovering decompression reads the frame header's content size when present and falls
      * back to streaming decompression when the frame omits it (streaming writers usually do).
+     *
+     * <p>Calls from different threads share the native coders of the process. A native coder keeps its zstd context
+     * from one call to the next.
      */
     record Zstd(int level) implements Codec {
 
@@ -516,14 +520,16 @@ public sealed interface Codec
 
         @Override
         public int decompress(MemorySegment src, MemorySegment output) throws IOException {
-            return CompressionSupport.decompressReadingFrom("ZSTD", src, output, ZstdDecompressor.create()::decompress);
+            ZstdDecompressor decompressor = ZstdCoders.SHARED.decompressor();
+            return CompressionSupport.decompressReadingFrom("ZSTD", src, output, decompressor::decompress);
         }
 
         @Override
         public MemorySegment decompress(MemorySegment src) throws IOException {
             byte[] in = src.toArray(JAVA_BYTE);
             try {
-                long contentSize = ZstdDecompressor.create().getDecompressedSize(in, 0, in.length);
+                ZstdDecompressor decompressor = ZstdCoders.SHARED.decompressor();
+                long contentSize = decompressor.getDecompressedSize(in, 0, in.length);
                 if (contentSize > Integer.MAX_VALUE) {
                     throw new IOException("ZSTD frame content size exceeds maximum: " + contentSize);
                 }
@@ -543,7 +549,7 @@ public sealed interface Codec
 
         @Override
         public int compress(MemorySegment src, MemorySegment output) throws IOException {
-            ZstdCompressor compressor = compressorAtBestLevel();
+            ZstdCompressor compressor = ZstdCoders.SHARED.compressor(level);
             try {
                 return CompressionSupport.compressReadingFrom(src, output, compressor::compress);
             } catch (IllegalArgumentException failure) {
@@ -555,24 +561,8 @@ public sealed interface Codec
 
         @Override
         public long maxCompressedLength(long uncompressedLength) {
-            return compressorAtBestLevel().maxCompressedLength(CompressionSupport.intExact(uncompressedLength));
-        }
-
-        /**
-         * A compressor at the configured {@link #level}, degrading to the backend default when only the non-native zstd
-         * compressor is available (platforms without aircompressor's native zstd, such as Windows). That compressor
-         * accepts only its default level and rejects any other. The level changes the compression ratio, not the wire
-         * format; a payload written at the default level still reads back identically, on every platform.
-         *
-         * <p>The level is already validated to {@code [1, 22]} by the constructor; a rejection here can only mean the
-         * non-native backend declining a non-default level.
-         */
-        private ZstdCompressor compressorAtBestLevel() {
-            try {
-                return ZstdCompressor.create(level);
-            } catch (IllegalArgumentException _) {
-                return ZstdCompressor.create();
-            }
+            ZstdCompressor compressor = ZstdCoders.SHARED.compressor(level);
+            return compressor.maxCompressedLength(CompressionSupport.intExact(uncompressedLength));
         }
     }
 
