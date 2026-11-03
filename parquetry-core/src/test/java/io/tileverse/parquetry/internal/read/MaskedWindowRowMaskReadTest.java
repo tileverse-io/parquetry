@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.function.Consumer;
 import java.util.function.IntPredicate;
 import java.util.stream.Stream;
 
@@ -266,13 +267,28 @@ class MaskedWindowRowMaskReadTest {
                     .isThrownBy(() -> reader.readMaskedWindow(1, survivors, buffers))
                     .withMessageContaining("windowed value decode");
             assertThatIllegalStateException()
-                    .isThrownBy(() -> reader.skipMaskedWindow(1))
+                    .isThrownBy(() -> reader.skipWindow(1))
                     .withMessageContaining("windowed value decode");
             assertThatIllegalStateException()
                     .isThrownBy(() -> reader.readMaskedSpanningRow(true, buffers))
                     .withMessageContaining("windowed value decode");
             return null;
         });
+    }
+
+    // No page header states the mask's rows, hence such a reader loads each page to size its windows.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("masks")
+    void onDemandWalksTheMaskRowSpace(String label, RowRanges mask) throws Exception {
+        Path file = writeRequiredLongs();
+        ParquetSchema schema = flatSchema(requiredInt64("v"));
+        IntPredicate survives = row -> row % 3 == 0;
+        DrainResult eager = drainEagerKeeping(file, schema, V, mask, survives);
+        DrainResult windowSteps = drainOnDemand(file, schema, V, mask, survives, reader -> reader.skipWindow(1));
+        DrainResult rowSteps = drainOnDemand(file, schema, V, mask, survives, BatchColumnReader::skipSpanningRow);
+
+        assertThat(windowSteps.values()).as("%s: window steps", label).isEqualTo(eager.values());
+        assertThat(rowSteps.values()).as("%s: row steps", label).isEqualTo(eager.values());
     }
 
     // --- drains ---
@@ -324,7 +340,7 @@ class MaskedWindowRowMaskReadTest {
                 int windowRows = split.windowRows(rowsServableByPage);
                 BitSet survivors = survivorsOf(firstRow, windowRows, survives);
                 if (survivors.isEmpty()) {
-                    reader.skipMaskedWindow(windowRows);
+                    reader.skipWindow(windowRows);
                 } else {
                     drained.addWindow(reader.readMaskedWindow(windowRows, survivors, acquiredBuffers));
                 }
@@ -335,8 +351,8 @@ class MaskedWindowRowMaskReadTest {
     }
 
     /**
-     * Drains an eager reader under the same mask over every surviving row and keeps the ones {@code survives} accepts:
-     * the parity oracle.
+     * Drains an eager reader under the same mask over every surviving row and keeps the ones accepted by
+     * {@code survives}. This is the parity oracle.
      */
     private DrainResult drainEagerKeeping(
             Path file, ParquetSchema schema, ColumnPath column, RowRanges mask, IntPredicate survives)
@@ -354,7 +370,35 @@ class MaskedWindowRowMaskReadTest {
         });
     }
 
-    /** Reads the current page's remaining surviving rows and keeps the ones {@code survives} accepts. */
+    /**
+     * Drains an on-demand reader one surviving row at a time, reading the rows accepted by {@code survives} and handing
+     * the others to {@code stepOver}. The row counter walks the mask's surviving rows, as in the windowed drain.
+     */
+    private DrainResult drainOnDemand(
+            Path file,
+            ParquetSchema schema,
+            ColumnPath column,
+            RowRanges mask,
+            IntPredicate survives,
+            Consumer<BatchColumnReader> stepOver)
+            throws Exception {
+        return overColumn(file, schema, column, mask, ValueDecode.EAGER_ON_DEMAND, reader -> {
+            DrainedRows drained = new DrainedRows();
+            BatchBuffers acquiredBuffers = TestDecodeBuffers.batchBuffers();
+            int firstRow = 0;
+            while (reader.hasMore()) {
+                if (survives.test(firstRow)) {
+                    readEagerWindow(reader, 1, firstRow, survives, acquiredBuffers, drained);
+                } else {
+                    stepOver.accept(reader);
+                }
+                firstRow++;
+            }
+            return drained.toResult(reader);
+        });
+    }
+
+    /** Reads the current page's remaining surviving rows and keeps the ones accepted by {@code survives}. */
     private static void readEagerWindow(
             BatchColumnReader reader,
             int pageRows,

@@ -65,7 +65,7 @@ public final class VectorizedPredicateEvaluator {
         int rowCount = batch.rowCount();
         return switch (predicate) {
             case Predicate.Always(boolean value) -> value ? all(rowCount) : new BitSet(rowCount);
-            case Predicate.And(List<Predicate> children) -> and(children, batch, rowCount);
+            case Predicate.And(List<Predicate> children) -> and(children, batch, all(rowCount));
             case Predicate.Or(List<Predicate> children) -> or(children, batch);
             // A null geometry has no spatial truth value and is excluded from both a spatial predicate and its
             // negation; the masks scan valid rows only. A plain bit-flip over [0,rowCount) would wrongly turn
@@ -90,6 +90,15 @@ public final class VectorizedPredicateEvaluator {
                 rowPositionMask(batch, col, deleted, rowCount);
             case Predicate.Quantified q -> quantifiedMask(q, batch, rowCount);
         };
+    }
+
+    /** The rows of {@code rows} in {@code batch} satisfying {@code predicate}. */
+    public static BitSet evalWithin(Predicate predicate, ParquetRecordBatch batch, BitSet rows) {
+        BitSet candidates = (BitSet) rows.clone();
+        if (predicate instanceof Predicate.And(List<Predicate> children)) {
+            return and(children, batch, candidates);
+        }
+        return and(List.of(predicate), batch, candidates);
     }
 
     // Keeps each row whose synthesized absolute position is not a deleted position. The reader places the non-null
@@ -242,9 +251,9 @@ public final class VectorizedPredicateEvaluator {
     // Evaluate the cheap, columnar children first to build the candidate set, then run the expensive per-row gates
     // (geometry/spatial WKB, quantified) only over rows that survived. Without this an `attribute AND intersects(...)`
     // would build a JTS geometry for every row in the batch rather than the few the attribute filter keeps. AND is
-    // commutative, hence the result is identical; only the wasted work on already-excluded rows is removed.
-    private static BitSet and(List<Predicate> children, ParquetRecordBatch batch, int rowCount) {
-        BitSet acc = all(rowCount);
+    // commutative, hence the result is identical; only the wasted work on already-excluded rows is removed. This method
+    // narrows {@code candidates} in place and returns it.
+    private static BitSet and(List<Predicate> children, ParquetRecordBatch batch, BitSet candidates) {
         List<Predicate> expensive = null;
         for (Predicate child : children) {
             if (isExpensive(child)) {
@@ -254,20 +263,20 @@ public final class VectorizedPredicateEvaluator {
                 expensive.add(child);
                 continue;
             }
-            acc.and(eval(child, batch));
-            if (acc.isEmpty()) {
-                return acc;
+            candidates.and(eval(child, batch));
+            if (candidates.isEmpty()) {
+                return candidates;
             }
         }
         if (expensive != null) {
             for (Predicate child : expensive) {
-                acc.and(evalRestricted(child, batch, acc));
-                if (acc.isEmpty()) {
-                    return acc;
+                candidates.and(evalRestricted(child, batch, candidates));
+                if (candidates.isEmpty()) {
+                    return candidates;
                 }
             }
         }
-        return acc;
+        return candidates;
     }
 
     // The per-row geometry/spatial gates and the quantified per-row fallback build or materialize per row; the columnar

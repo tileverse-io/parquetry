@@ -23,6 +23,7 @@ import java.util.stream.IntStream;
 
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.format.ColumnIndex;
+import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
@@ -184,6 +185,14 @@ public final class PageIndex {
     /** Whether the bounds of the pages follow an order applied by this reader. It is false without statistics. */
     public boolean boundsOrdered() {
         return statistics.map(PageStatistics::boundsOrdered).orElse(false);
+    }
+
+    /**
+     * The encoding of page {@code page} when this index records it. Learned pages record it, and a declared index does
+     * not.
+     */
+    public Optional<Encoding> encoding(int page) {
+        return statistics.flatMap(source -> source.encoding(page));
     }
 
     /**
@@ -352,8 +361,8 @@ public final class PageIndex {
     }
 
     /**
-     * A source of the statistics of the pages of a chunk, and the type used to decode their bounds. A page index holds
-     * a source only when the source agrees with the pages.
+     * A source of the statistics of the pages of a chunk, with the type used to decode their bounds and the encodings
+     * recorded by the source. A page index holds a source only when the source agrees with the pages.
      */
     private sealed interface PageStatistics permits DeclaredStatistics, LearnedStatistics {
 
@@ -380,6 +389,9 @@ public final class PageIndex {
 
         /** The PLAIN-encoded maximum of page {@code page}, or empty when the source has none. */
         Optional<MemorySegment> max(int page);
+
+        /** The encoding of the values of page {@code page}, or empty when the source records none. */
+        Optional<Encoding> encoding(int page);
     }
 
     /**
@@ -420,6 +432,12 @@ public final class PageIndex {
         @Override
         public Optional<MemorySegment> max(int page) {
             return Optional.of(index.maxValues().get(page));
+        }
+
+        @Override
+        public Optional<Encoding> encoding(int page) {
+            // A column index records no encoding.
+            return Optional.empty();
         }
 
         /** The count of page {@code page} in a per-page list of the index, read only when it has one count per page. */
@@ -473,6 +491,11 @@ public final class PageIndex {
         @Override
         public Optional<MemorySegment> max(int page) {
             return entry.max(page);
+        }
+
+        @Override
+        public Optional<Encoding> encoding(int page) {
+            return Optional.of(entry.encoding(page));
         }
     }
 }

@@ -29,9 +29,16 @@ import lombok.NonNull;
  * @param firstPageOrdinal offset-index ordinal of the range's first data page; meaningful only for a non-prefix unit,
  *     and zero for a whole chunk
  * @param dictionaryPrefix whether the range is the chunk's dictionary prefix rather than data pages
+ * @param onDemand whether the range is a dictionary prefix placed in the fetch buffer but left out of the first read.
+ *     The fetch reads it when a fetched page uses the dictionary.
  */
 record FetchUnit(
-        @NonNull ColumnPath path, long fileOffset, int length, int firstPageOrdinal, boolean dictionaryPrefix) {
+        @NonNull ColumnPath path,
+        long fileOffset,
+        int length,
+        int firstPageOrdinal,
+        boolean dictionaryPrefix,
+        boolean onDemand) {
 
     FetchUnit {
         if (fileOffset < 0) {
@@ -42,6 +49,9 @@ record FetchUnit(
         }
         if (firstPageOrdinal < 0) {
             throw new IllegalArgumentException("firstPageOrdinal must be >= 0, got " + firstPageOrdinal);
+        }
+        if (onDemand && !dictionaryPrefix) {
+            throw new IllegalArgumentException("Only a dictionary prefix waits for a fetched page: " + path.dot());
         }
     }
 }

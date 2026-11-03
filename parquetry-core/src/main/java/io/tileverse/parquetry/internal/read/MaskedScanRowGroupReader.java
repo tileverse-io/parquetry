@@ -45,15 +45,18 @@ import io.tileverse.parquetry.schema.ParquetSchema;
 import lombok.NonNull;
 
 /**
- * Single-pass filtering reader for one row group: it walks the row group in windows, evaluates the predicate over each
- * window's filter columns, and materializes the output columns only for the rows that survive.
+ * Single-pass filtering reader for one row group: it walks the row group in windows, runs the stages of the predicate
+ * over each window, and materializes the output columns only for the rows that survive.
  *
- * <p>A window is the run of rows every column reader can serve from the page it stands on, capped by the read's batch
- * size. Within a window the two column groups play different parts:
+ * <p>A window is the run of rows served by the current page of each column reader, capped by the read's batch size.
+ * Within a window the column groups play different parts:
  *
  * <ul>
- *   <li>The predicate's leaf columns decode their window whole, feed the predicate evaluator, and - where the output
- *       projects them too - are gathered to the surviving rows, never decoded twice.
+ *   <li>The leaves of the first stage decode their window whole and feed the predicate evaluator.
+ *   <li>A leaf first read by a later stage decodes its window whole only when the stages before it left rows, and the
+ *       stage evaluates those rows alone. With no row left the leaf steps over the window, and a page with all its rows
+ *       stepped over is discarded without decompression. {@link ScanStages} sets the order of the stages.
+ *   <li>A filter leaf projected by the output too is gathered to the surviving rows, never decoded twice.
  *   <li>An output-only leaf decodes only the value slots the surviving rows cover, stepping its page decoder over the
  *       rest.
  * </ul>
@@ -64,27 +67,27 @@ import lombok.NonNull;
 final class MaskedScanRowGroupReader implements RowGroupReader {
 
     private final DecodeBufferAllocator decodeBufferAllocator;
-    private final ParquetSchema filterSchema;
-    private final ParquetSchema filterBatchSchema;
+    private final ParquetSchema firstStageBatchSchema;
     private final ParquetSchema outputSchema;
     private final ParquetSchema outputDecodeSchema;
-    private final Predicate predicate;
     private final OptionalInt batchSizeCap;
     private final Optional<RowMask> rowMask;
     private final BatchForm outputForm;
     private final long expectedRows;
-    private final LevelAssemblyPlans filterPlans;
     private final LevelAssemblyPlans outputPlans;
-    // The synthesized columns the predicate reads, and those the output presents; each row group's own base offset.
+    // The synthesized columns read by the first stage, and those presented by the output; each with the row group's
+    // own base offset.
     private final Optional<RowPositionSynthesis> filterPositions;
     private final Optional<RowPositionSynthesis> outputPositions;
 
-    private final Map<ColumnPath, BatchColumnReader> filterReaders = new HashMap<>();
+    // The stages in evaluation order, and the same list without the first one.
+    private final List<RowGroupStage> stages;
+    private final List<RowGroupStage> laterStages;
     private final Map<ColumnPath, BatchColumnReader> outputReaders = new HashMap<>();
-    // Both groups in one list, for the walks that treat every scanned column alike: window sizing, the drain check,
-    // the page tally and close.
+    // The readers of the stages and the output in one list. Window sizing, the drain check, the page tally and
+    // close() walk over it.
     private final List<BatchColumnReader> scanReaders = new ArrayList<>();
-    // The leaves the predicate and the output share, gathered from the window rather than read a second time.
+    // The leaves shared by the stages and the output, gathered from the window and never read a second time.
     private final List<ColumnPath> sharedLeaves = new ArrayList<>();
 
     private ParquetRecordBatch pending;
@@ -95,20 +98,19 @@ final class MaskedScanRowGroupReader implements RowGroupReader {
     /**
      * @param outputSchema the schema each emitted batch exposes, synthesized row-position leaves included; an output
      *     schema with no leaf at all emits row-counted batches with no columns, which is what a count folds
-     * @param filterLeaves the physical leaf columns the predicate reads
+     * @param stages the conditions of the predicate in evaluation order
      * @param rowPosition the row group's row-position synthesis inputs when the read synthesizes any column
      * @param expectedRows the rows this scan must cover: the row group's row count, or the count of surviving rows when
      *     a row mask narrows the readers' row space
      */
-    @SuppressWarnings("java:S107") // the decode inputs plus the scan's predicate and form; a parameter object would
+    @SuppressWarnings("java:S107") // the decode inputs plus the scan's stages and form; a parameter object would
     // only relocate the arity
     MaskedScanRowGroupReader(
             @NonNull DecodeBufferAllocator decodeBufferAllocator,
             @NonNull List<FetchedColumnChunk> chunks,
             @NonNull ParquetSchema fileSchema,
             @NonNull ParquetSchema outputSchema,
-            @NonNull Set<ColumnPath> filterLeaves,
-            @NonNull Predicate predicate,
+            @NonNull ScanStages stages,
             @NonNull OptionalInt batchSizeCap,
             @NonNull Optional<RowMask> rowMask,
             @NonNull BatchForm outputForm,
@@ -116,26 +118,37 @@ final class MaskedScanRowGroupReader implements RowGroupReader {
             long expectedRows) {
         this.decodeBufferAllocator = decodeBufferAllocator;
         this.outputSchema = outputSchema;
-        this.predicate = predicate;
         this.batchSizeCap = batchSizeCap;
         this.rowMask = rowMask;
         this.outputForm = outputForm;
         this.expectedRows = expectedRows;
-        this.filterSchema = fileSchema.project(filterLeaves);
-        this.filterPositions = positionsRead(rowPosition, predicate);
+        this.stages = overRowGroup(stages);
+        this.laterStages = this.stages.subList(1, this.stages.size());
+        ScanStages.Stage firstStage = this.stages.getFirst().conditions();
+        this.filterPositions = positionsRead(rowPosition, firstStage.predicate());
         this.outputPositions = positionsPresented(rowPosition, outputSchema);
-        this.filterBatchSchema = withPositionLeaves(filterSchema, filterPositions);
+        this.firstStageBatchSchema = withPositionLeaves(firstStage.schema(), filterPositions);
         this.outputDecodeSchema = withoutPositionLeaves(outputSchema, outputPositions);
-        this.filterPlans = new LevelAssemblyPlans(filterSchema);
         this.outputPlans = new LevelAssemblyPlans(outputDecodeSchema);
-        buildReaders(ProjectedLeaves.resolve(chunks, fileSchema), filterLeaves, outputDecodeSchema.leafColumns());
+        buildReaders(ProjectedLeaves.resolve(chunks, fileSchema), outputDecodeSchema.leafColumns());
+    }
+
+    /** The stages of the scan over this row group. The first stage reads eagerly, and the others on demand. */
+    private static List<RowGroupStage> overRowGroup(ScanStages stages) {
+        List<RowGroupStage> rowGroupStages = new ArrayList<>(stages.stages().size());
+        for (ScanStages.Stage stage : stages.stages()) {
+            ValueDecode valueDecode = rowGroupStages.isEmpty() ? ValueDecode.EAGER : ValueDecode.EAGER_ON_DEMAND;
+            LevelAssemblyPlans plans = new LevelAssemblyPlans(stage.schema());
+            rowGroupStages.add(new RowGroupStage(stage, valueDecode, plans, new HashMap<>()));
+        }
+        return rowGroupStages;
     }
 
     /**
-     * The synthesized columns the predicate evaluates over, which the filter batch must present. A positional test asks
-     * where a row sits in the file, and the row-group tiers prune by that same true position; a column the projection
-     * also presents as a coalesce therefore reaches the predicate as the position it names, never as the coalesced
-     * lineage value.
+     * The synthesized columns read by the first stage, which holds each row-position condition. The batch of that stage
+     * must present them. A positional test asks where a row sits in the file, and the row-group tiers prune by that
+     * same true position. A column also presented by the projection as a coalesce therefore reaches the predicate as
+     * that position, never as the coalesced lineage value.
      */
     private static Optional<RowPositionSynthesis> positionsRead(
             Optional<RowPositionSynthesis> rowPosition, Predicate predicate) {
@@ -204,24 +217,42 @@ final class MaskedScanRowGroupReader implements RowGroupReader {
     }
 
     /**
-     * Builds one reader per scanned leaf. A predicate leaf materializes its pages as they load, an output-only leaf
-     * defers its values to the windows that keep rows, and a leaf the read fetched for neither is never decoded. Under
-     * a row mask both groups take the same surviving rows, which leaves them serving one row space: row {@code j} of a
-     * filter reader and row {@code j} of an output reader are the same row of the row group.
+     * Builds one reader per scanned leaf. A filter leaf belongs to the first stage reading it, and takes the value
+     * decode of that stage. An output-only leaf defers its values to the windows that keep rows, and a leaf fetched for
+     * neither is never decoded. Under a row mask the filter readers and the output readers take the same surviving
+     * rows, and they serve one row space. Row {@code j} of a filter reader and row {@code j} of an output reader are
+     * the same row of the row group.
      */
-    private void buildReaders(List<ProjectedLeaf> leaves, Set<ColumnPath> filterLeaves, List<ColumnPath> outputLeaves) {
+    private void buildReaders(List<ProjectedLeaf> leaves, List<ColumnPath> outputLeaves) {
         for (ProjectedLeaf leaf : leaves) {
-            if (filterLeaves.contains(leaf.path())) {
-                filterReaders.put(leaf.path(), buildReader(leaf, ValueDecode.EAGER));
-                if (outputLeaves.contains(leaf.path())) {
+            boolean projected = outputLeaves.contains(leaf.path());
+            Optional<RowGroupStage> owner = stageOwning(leaf.path());
+            if (owner.isPresent()) {
+                addOwnReader(owner.orElseThrow(), leaf);
+                if (projected) {
                     sharedLeaves.add(leaf.path());
                 }
-            } else if (outputLeaves.contains(leaf.path())) {
+            } else if (projected) {
                 outputReaders.put(leaf.path(), buildReader(leaf, ValueDecode.WINDOWED_MASK));
             }
         }
-        scanReaders.addAll(filterReaders.values());
+        for (RowGroupStage stage : stages) {
+            scanReaders.addAll(stage.ownReaders().values());
+        }
         scanReaders.addAll(outputReaders.values());
+    }
+
+    private Optional<RowGroupStage> stageOwning(ColumnPath leaf) {
+        for (RowGroupStage stage : stages) {
+            if (stage.conditions().ownLeaves().contains(leaf)) {
+                return Optional.of(stage);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private void addOwnReader(RowGroupStage stage, ProjectedLeaf leaf) {
+        stage.ownReaders().put(leaf.path(), buildReader(leaf, stage.valueDecode()));
     }
 
     private BatchColumnReader buildReader(ProjectedLeaf leaf, ValueDecode valueDecode) {
@@ -283,40 +314,20 @@ final class MaskedScanRowGroupReader implements RowGroupReader {
     }
 
     /**
-     * Reads one window's filter columns and evaluates the predicate over them. The window is the rows every reader can
-     * serve from its current page, capped by the batch size; a window of zero rows while rows remain means a repeated
-     * column deferred its page's last-started row, which advances one row across the page boundary instead.
+     * Runs the stages over one window. The window is the run of rows served by the current page of each reader, capped
+     * by the batch size. A window of zero rows while rows remain means that a repeated column deferred the last-started
+     * row of its page, or that a column stands on a page with no rows. The scan then advances one row across the page
+     * boundary.
      */
     private Window readAndEvaluateWindow() {
         int windowRows = computeWindowRows();
         if (windowRows == 0) {
             return readAndEvaluateSpanningRow();
         }
-        long firstDenseRow = rowsDecodedTotal;
-        BatchBuffers acquired = new BatchBuffers(decodeBufferAllocator);
-        Map<ColumnPath, ColumnVector> leafVectors = new HashMap<>();
-        Map<ColumnPath, LevelSlice> repLevels = new HashMap<>();
-        Map<ColumnPath, LevelSlice> defLevels = new HashMap<>();
-        try {
-            readFilterVectors(windowRows, leafVectors, repLevels, defLevels, acquired);
-            BitSet survivors = evaluate(leafVectors, repLevels, defLevels, firstDenseRow, windowRows, acquired);
-            rowsDecodedTotal += windowRows;
-            return new Window(
-                    firstDenseRow,
-                    windowRows,
-                    Survivors.of(survivors),
-                    leafVectors,
-                    repLevels,
-                    defLevels,
-                    acquired,
-                    false);
-        } catch (RuntimeException e) {
-            acquired.close();
-            throw e;
-        }
+        return runStages(windowRows, false);
     }
 
-    /** The window every reader can serve from its current page, capped by the read's batch size. */
+    /** The window served by the current page of each reader, capped by the read's batch size. */
     private int computeWindowRows() {
         int min = Integer.MAX_VALUE;
         for (BatchColumnReader reader : scanReaders) {
@@ -329,52 +340,12 @@ final class MaskedScanRowGroupReader implements RowGroupReader {
     }
 
     /**
-     * Reads the window's rows from every filter column, capturing each leaf's rep- and def-level windows as views over
-     * the page level sequences before the reader advances.
-     */
-    private void readFilterVectors(
-            int windowRows,
-            Map<ColumnPath, ColumnVector> leafVectors,
-            Map<ColumnPath, LevelSlice> repLevels,
-            Map<ColumnPath, LevelSlice> defLevels,
-            BatchBuffers acquired) {
-        for (Map.Entry<ColumnPath, BatchColumnReader> entry : filterReaders.entrySet()) {
-            BatchColumnReader reader = entry.getValue();
-            int windowValues = reader.valuesForLogicalRows(windowRows);
-            int start = reader.valuesConsumedInCurrentPage();
-            Levels pageRepLevels = reader.currentPageRepLevels();
-            if (pageRepLevels != null) {
-                repLevels.put(entry.getKey(), new LevelSlice(pageRepLevels, start, windowValues));
-            }
-            Levels pageDefLevels = reader.currentPageDefLevels();
-            if (pageDefLevels != null) {
-                defLevels.put(entry.getKey(), new LevelSlice(pageDefLevels, start, windowValues));
-            }
-            leafVectors.put(entry.getKey(), reader.readBatch(windowValues, acquired));
-        }
-    }
-
-    /**
-     * Reads the one row whose values outrun the page some column stands on, and evaluates the predicate over it. Every
-     * column advances that row - across pages where needed - to stay in lockstep.
+     * Runs the stages over the one row at a page boundary of some column. Each column advances that row, across pages
+     * where needed, to stay in lockstep.
      */
     private Window readAndEvaluateSpanningRow() {
         requireUnmaskedSpanningRow();
-        long firstDenseRow = rowsDecodedTotal;
-        BatchBuffers acquired = new BatchBuffers(decodeBufferAllocator);
-        Map<ColumnPath, ColumnVector> leafVectors = new HashMap<>();
-        Map<ColumnPath, LevelSlice> repLevels = new HashMap<>();
-        Map<ColumnPath, LevelSlice> defLevels = new HashMap<>();
-        try {
-            readFilterSpanningRow(leafVectors, repLevels, defLevels, acquired);
-            BitSet survivors = evaluate(leafVectors, repLevels, defLevels, firstDenseRow, 1, acquired);
-            rowsDecodedTotal++;
-            return new Window(
-                    firstDenseRow, 1, Survivors.of(survivors), leafVectors, repLevels, defLevels, acquired, true);
-        } catch (RuntimeException e) {
-            acquired.close();
-            throw e;
-        }
+        return runStages(1, true);
     }
 
     /**
@@ -390,78 +361,177 @@ final class MaskedScanRowGroupReader implements RowGroupReader {
     }
 
     /**
-     * Reads exactly one logical row from every filter column, following it across data-page boundaries. The level
-     * windows come back as reader-owned copies, wrapped whole for the assemblers.
+     * Runs the stages in order over the next {@code windowRows} rows. The stages add their vectors to one window. A
+     * later stage reuses the leaves of an earlier stage from it, and the emitted batch gathers a shared leaf from it.
      */
-    private void readFilterSpanningRow(
-            Map<ColumnPath, ColumnVector> leafVectors,
-            Map<ColumnPath, LevelSlice> repLevels,
-            Map<ColumnPath, LevelSlice> defLevels,
-            BatchBuffers acquired) {
-        for (Map.Entry<ColumnPath, BatchColumnReader> entry : filterReaders.entrySet()) {
-            BatchColumnReader.SpanningRow row = entry.getValue().readSpanningRow(acquired);
-            if (row.repLevels() != null) {
-                repLevels.put(entry.getKey(), LevelSlice.ofWhole(row.repLevels()));
+    private Window runStages(int windowRows, boolean spansPages) {
+        Window window = Window.open(rowsDecodedTotal, windowRows, new BatchBuffers(decodeBufferAllocator), spansPages);
+        try {
+            BitSet rowsLeft = runFirstStage(window);
+            for (RowGroupStage stage : laterStages) {
+                rowsLeft = runLaterStage(stage, window, rowsLeft);
             }
-            if (row.defLevels() != null) {
-                defLevels.put(entry.getKey(), LevelSlice.ofWhole(row.defLevels()));
-            }
-            leafVectors.put(entry.getKey(), row.vector());
+            rowsDecodedTotal += windowRows;
+            return window.withSurvivors(rowsLeft);
+        } catch (RuntimeException e) {
+            window.release();
+            throw e;
         }
     }
 
-    /** Evaluates the predicate over the window's filter batch, timed into the row group's record-filter tally. */
-    private BitSet evaluate(
-            Map<ColumnPath, ColumnVector> leafVectors,
-            Map<ColumnPath, LevelSlice> repLevels,
-            Map<ColumnPath, LevelSlice> defLevels,
-            long firstDenseRow,
-            int windowRows,
-            BatchBuffers acquired) {
+    /** Reads the leaves of the first stage over the window and evaluates each of its rows. */
+    private BitSet runFirstStage(Window window) {
+        RowGroupStage first = stages.getFirst();
+        readOwnLeaves(first, window);
         long start = System.nanoTime();
-        try (ParquetRecordBatch filterBatch =
-                filterBatch(leafVectors, repLevels, defLevels, firstDenseRow, windowRows, acquired)) {
-            return VectorizedPredicateEvaluator.eval(predicate, filterBatch);
+        try (ParquetRecordBatch batch = firstStageBatch(first, window)) {
+            return VectorizedPredicateEvaluator.eval(first.conditions().predicate(), batch);
         } finally {
             recordFilterNanos += System.nanoTime() - start;
         }
     }
 
     /**
-     * The window's filter columns as a batch the predicate evaluator reads, plus the row-position columns the predicate
-     * names. It registers no buffer: the window owns the decode buffers its vectors read, and closing this batch
-     * releases only its own arena.
+     * Narrows {@code rowsLeft} by one later stage. The readers of the stage are read only after {@code rowsLeft} is
+     * known to hold a row, because a read loads the page held compressed by the reader. With no row left they step over
+     * the window, and the stage evaluates nothing.
+     */
+    private BitSet runLaterStage(RowGroupStage stage, Window window, BitSet rowsLeft) {
+        if (rowsLeft.isEmpty()) {
+            stepOverWindow(stage, window);
+            return rowsLeft;
+        }
+        readOwnLeaves(stage, window);
+        long start = System.nanoTime();
+        try (ParquetRecordBatch batch = laterStageBatch(stage, window)) {
+            return VectorizedPredicateEvaluator.evalWithin(stage.conditions().predicate(), batch, rowsLeft);
+        } finally {
+            recordFilterNanos += System.nanoTime() - start;
+        }
+    }
+
+    private static void stepOverWindow(RowGroupStage stage, Window window) {
+        for (BatchColumnReader reader : stage.ownReaders().values()) {
+            if (window.spansPages()) {
+                reader.skipSpanningRow();
+            } else {
+                reader.skipWindow(window.rows());
+            }
+        }
+    }
+
+    private static void readOwnLeaves(RowGroupStage stage, Window window) {
+        if (window.spansPages()) {
+            readFilterSpanningRow(stage.ownReaders(), window);
+        } else {
+            readFilterVectors(stage.ownReaders(), window);
+        }
+    }
+
+    /**
+     * Reads the window's rows from {@code readers}, capturing each leaf's rep- and def-level windows as views over the
+     * page level sequences before the reader advances.
+     */
+    private static void readFilterVectors(Map<ColumnPath, BatchColumnReader> readers, Window window) {
+        for (Map.Entry<ColumnPath, BatchColumnReader> entry : readers.entrySet()) {
+            BatchColumnReader reader = entry.getValue();
+            int windowValues = reader.valuesForLogicalRows(window.rows());
+            int start = reader.valuesConsumedInCurrentPage();
+            Levels pageRepLevels = reader.currentPageRepLevels();
+            if (pageRepLevels != null) {
+                window.repLevels().put(entry.getKey(), new LevelSlice(pageRepLevels, start, windowValues));
+            }
+            Levels pageDefLevels = reader.currentPageDefLevels();
+            if (pageDefLevels != null) {
+                window.defLevels().put(entry.getKey(), new LevelSlice(pageDefLevels, start, windowValues));
+            }
+            window.leafVectors().put(entry.getKey(), reader.readBatch(windowValues, window.batchBuffers()));
+        }
+    }
+
+    /**
+     * Reads exactly one logical row from {@code readers}, following it across data-page boundaries. The level windows
+     * come back as reader-owned copies, wrapped whole for the assemblers.
+     */
+    private static void readFilterSpanningRow(Map<ColumnPath, BatchColumnReader> readers, Window window) {
+        for (Map.Entry<ColumnPath, BatchColumnReader> entry : readers.entrySet()) {
+            BatchColumnReader.SpanningRow row = entry.getValue().readSpanningRow(window.batchBuffers());
+            if (row.repLevels() != null) {
+                window.repLevels().put(entry.getKey(), LevelSlice.ofWhole(row.repLevels()));
+            }
+            if (row.defLevels() != null) {
+                window.defLevels().put(entry.getKey(), LevelSlice.ofWhole(row.defLevels()));
+            }
+            window.leafVectors().put(entry.getKey(), row.vector());
+        }
+    }
+
+    /**
+     * The leaves of the first stage as a batch for the predicate evaluator, plus the row-position columns named by the
+     * stage. The window holds no other leaf yet. The batch registers no buffer. The window owns the decode buffers read
+     * by the vectors, and closing this batch releases only its own arena.
      */
     @MustBeClosed
-    private ParquetRecordBatch filterBatch(
+    private ParquetRecordBatch firstStageBatch(RowGroupStage first, Window window) {
+        Map<ColumnPath, ColumnVector> vectors =
+                assembleStage(first, window.leafVectors(), window.repLevels(), window.defLevels(), window);
+        Map<ColumnPath, ColumnVector> withPositions = addFilterPositions(vectors, window);
+        return new DefaultParquetRecordBatch(firstStageBatchSchema, withPositions, window.rows());
+    }
+
+    /**
+     * The leaves read by {@code stage} as a batch for the predicate evaluator, its own and those reused from earlier
+     * stages. Like the batch of the first stage, it registers no buffer.
+     */
+    @MustBeClosed
+    private ParquetRecordBatch laterStageBatch(RowGroupStage stage, Window window) {
+        Set<ColumnPath> leaves = stage.conditions().leaves();
+        Map<ColumnPath, ColumnVector> vectors = assembleStage(
+                stage,
+                restrictedTo(leaves, window.leafVectors()),
+                restrictedTo(leaves, window.repLevels()),
+                restrictedTo(leaves, window.defLevels()),
+                window);
+        return new DefaultParquetRecordBatch(stage.conditions().schema(), vectors, window.rows());
+    }
+
+    /** The entries of {@code windowEntries} for {@code leaves}. A leaf with no level stream has no level entry. */
+    private static <T> Map<ColumnPath, T> restrictedTo(Set<ColumnPath> leaves, Map<ColumnPath, T> windowEntries) {
+        Map<ColumnPath, T> restricted = HashMap.newHashMap(leaves.size());
+        for (ColumnPath leaf : leaves) {
+            T entry = windowEntries.get(leaf);
+            if (entry != null) {
+                restricted.put(leaf, entry);
+            }
+        }
+        return restricted;
+    }
+
+    private Map<ColumnPath, ColumnVector> assembleStage(
+            RowGroupStage stage,
             Map<ColumnPath, ColumnVector> leafVectors,
             Map<ColumnPath, LevelSlice> repLevels,
             Map<ColumnPath, LevelSlice> defLevels,
-            long firstDenseRow,
-            int windowRows,
-            BatchBuffers acquired) {
-        Map<ColumnPath, ColumnVector> vectors = BatchAssembly.assemble(
+            Window window) {
+        return BatchAssembly.assemble(
                 BatchForm.LEVELS,
-                filterPlans,
-                filterSchema,
+                stage.plans(),
+                stage.conditions().schema(),
                 leafVectors,
                 repLevels,
                 defLevels,
-                windowRows,
+                window.rows(),
                 decodeBufferAllocator,
-                acquired);
-        Map<ColumnPath, ColumnVector> withPositions = addFilterPositions(vectors, firstDenseRow, windowRows);
-        return new DefaultParquetRecordBatch(filterBatchSchema, withPositions, windowRows);
+                window.batchBuffers());
     }
 
     /** The window's synthesized columns over its own rows, which the predicate reads beside the decoded ones. */
-    private Map<ColumnPath, ColumnVector> addFilterPositions(
-            Map<ColumnPath, ColumnVector> vectors, long firstDenseRow, int windowRows) {
+    private Map<ColumnPath, ColumnVector> addFilterPositions(Map<ColumnPath, ColumnVector> vectors, Window window) {
         if (filterPositions.isEmpty()) {
             return vectors;
         }
-        Selection positions = RowPositionVectors.window(rowMask, firstDenseRow, windowRows);
-        return RowPositionVectors.add(vectors, filterPositions.orElseThrow(), positions, windowRows);
+        Selection positions = RowPositionVectors.window(rowMask, window.firstDenseRow(), window.rows());
+        return RowPositionVectors.add(vectors, filterPositions.orElseThrow(), positions, window.rows());
     }
 
     /** Builds the window's emitted batch: survivor-dense output leaves, in the read's batch form. */
@@ -573,7 +643,7 @@ final class MaskedScanRowGroupReader implements RowGroupReader {
             if (window.spansPages()) {
                 reader.readMaskedSpanningRow(false, window.batchBuffers());
             } else {
-                reader.skipMaskedWindow(window.rows());
+                reader.skipWindow(window.rows());
             }
         }
     }
@@ -603,7 +673,7 @@ final class MaskedScanRowGroupReader implements RowGroupReader {
         return new BatchRowGroupReader.PageCounts(decoded, skipped);
     }
 
-    /** The rows this scan ran through decode: every filter-column row of every window it evaluated. */
+    /** The rows of the windows evaluated by this scan, whether or not a later stage read them. */
     @Override
     public long rowsProduced() {
         return rowsDecodedTotal;
@@ -614,7 +684,7 @@ final class MaskedScanRowGroupReader implements RowGroupReader {
         return rowsMatchedTotal;
     }
 
-    /** Time spent evaluating the predicate over the windows, in nanoseconds. */
+    /** Time spent evaluating the stages over the windows, in nanoseconds. */
     @Override
     public long recordFilterNanos() {
         return recordFilterNanos;
@@ -658,11 +728,27 @@ final class MaskedScanRowGroupReader implements RowGroupReader {
     }
 
     /**
-     * One window's decoded filter columns and the rows of it the predicate kept. The vectors and level windows cover
+     * One stage of the scan over this row group.
+     *
+     * @param conditions the conditions of the stage and the leaves read by them
+     * @param valueDecode how the own leaves of the stage materialize a page
+     * @param plans the plans assembling the stage's batches
+     * @param ownReaders the readers of the leaves first read by this stage; a stage holds none when each of its leaves
+     *     was read by an earlier stage
+     */
+    private record RowGroupStage(
+            ScanStages.Stage conditions,
+            ValueDecode valueDecode,
+            LevelAssemblyPlans plans,
+            Map<ColumnPath, BatchColumnReader> ownReaders) {}
+
+    /**
+     * One window's decoded filter columns and the rows of it kept by the predicate. The vectors and level windows cover
      * the window's own rows, indexed from zero; {@code firstDenseRow} places those rows in the row group, counting the
-     * rows the scan walked before them. {@code batchBuffers} holds the decode buffers read by those vectors; the
-     * emitted batch takes them over, and a dropped window releases them. {@code spansPages} marks the one-row window
-     * that follows a row past the page it started in.
+     * rows walked by the scan before them. A leaf of a later stage has no entry when no row reached that stage, and
+     * such a window keeps no row. {@code batchBuffers} holds the decode buffers read by those vectors; the emitted
+     * batch takes them over, and a dropped window releases them. {@code spansPages} marks the one-row window at a page
+     * boundary of some column.
      */
     private record Window(
             long firstDenseRow,
@@ -673,6 +759,31 @@ final class MaskedScanRowGroupReader implements RowGroupReader {
             Map<ColumnPath, LevelSlice> defLevels,
             BatchBuffers batchBuffers,
             boolean spansPages) {
+
+        /** A window with no column read and no survivor yet. The stages fill it, and {@link #withSurvivors} ends it. */
+        static Window open(long firstDenseRow, int rows, BatchBuffers batchBuffers, boolean spansPages) {
+            return new Window(
+                    firstDenseRow,
+                    rows,
+                    Survivors.of(new BitSet()),
+                    new HashMap<>(),
+                    new HashMap<>(),
+                    new HashMap<>(),
+                    batchBuffers,
+                    spansPages);
+        }
+
+        Window withSurvivors(BitSet rowsLeft) {
+            return new Window(
+                    firstDenseRow,
+                    rows,
+                    Survivors.of(rowsLeft),
+                    leafVectors,
+                    repLevels,
+                    defLevels,
+                    batchBuffers,
+                    spansPages);
+        }
 
         int survivorCount() {
             return survivors.count();

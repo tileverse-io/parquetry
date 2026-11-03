@@ -108,8 +108,8 @@ final class DecodedRowGroup implements AutoCloseable {
         BatchRowGroupReader.PageCounts pages = source.pageCounts();
         long rowsDecoded = source.rowsProduced();
         long rowsMatched = observation.matchedEqualsDecoded() ? rowsDecoded : matchedRows;
-        // PageCounts.skipped is the column-index page-skip the RowGroupRead calls pagesPruned: the same pages, two
-        // names.
+        // PageCounts.skipped is what RowGroupRead calls pagesPruned. It counts the pages excluded by the column index,
+        // and the pages of a masked scan with all their rows stepped over.
         RowGroupRead event = new RowGroupRead(
                 observation.rowGroupIndex(),
                 rowsDecoded,

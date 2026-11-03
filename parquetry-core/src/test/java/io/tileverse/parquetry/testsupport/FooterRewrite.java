@@ -32,6 +32,7 @@ import java.util.function.UnaryOperator;
 import io.tileverse.parquetry.format.BoundingBox;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.ColumnMetaData;
+import io.tileverse.parquetry.format.EncodingStats;
 import io.tileverse.parquetry.format.FileMetaData;
 import io.tileverse.parquetry.format.GeospatialStatistics;
 import io.tileverse.parquetry.format.KeyValue;
@@ -288,26 +289,40 @@ public final class FooterRewrite {
         return statistics(column, rowGroup, stats -> withBounds(stats, min, max));
     }
 
-    private static UnaryOperator<FileMetaData> statistics(
-            ColumnPath column, int rowGroup, UnaryOperator<Statistics> edit) {
-        return footer -> withRowGroups(footer, rowGroupsWithStatistics(footer.rowGroups(), column, rowGroup, edit));
+    /**
+     * An edit setting the encoding statistics of {@code column} in the row group at {@code rowGroup}. An empty list
+     * leaves the chunk without encoding statistics, as written by parquetry.
+     */
+    public static UnaryOperator<FileMetaData> encodingStats(
+            ColumnPath column, int rowGroup, List<EncodingStats> stats) {
+        return chunkMetaData(column, rowGroup, metaData -> withEncodingStats(metaData, stats));
     }
 
-    private static List<RowGroup> rowGroupsWithStatistics(
-            List<RowGroup> rowGroups, ColumnPath column, int rowGroup, UnaryOperator<Statistics> edit) {
+    private static UnaryOperator<FileMetaData> statistics(
+            ColumnPath column, int rowGroup, UnaryOperator<Statistics> edit) {
+        return chunkMetaData(column, rowGroup, metaData -> withStatistics(metaData, edit));
+    }
+
+    private static UnaryOperator<FileMetaData> chunkMetaData(
+            ColumnPath column, int rowGroup, UnaryOperator<ColumnMetaData> edit) {
+        return footer -> withRowGroups(footer, rowGroupsWithChunkEdited(footer.rowGroups(), column, rowGroup, edit));
+    }
+
+    private static List<RowGroup> rowGroupsWithChunkEdited(
+            List<RowGroup> rowGroups, ColumnPath column, int rowGroup, UnaryOperator<ColumnMetaData> edit) {
         List<RowGroup> edited = new ArrayList<>(rowGroups);
         RowGroup target = rowGroups.get(rowGroup);
-        edited.set(rowGroup, withColumns(target, chunksWithStatistics(target.columns(), column, edit)));
+        edited.set(rowGroup, withColumns(target, chunksWithColumnEdited(target.columns(), column, edit)));
         return edited;
     }
 
-    private static List<ColumnChunk> chunksWithStatistics(
-            List<ColumnChunk> chunks, ColumnPath column, UnaryOperator<Statistics> edit) {
+    private static List<ColumnChunk> chunksWithColumnEdited(
+            List<ColumnChunk> chunks, ColumnPath column, UnaryOperator<ColumnMetaData> edit) {
         List<ColumnChunk> edited = new ArrayList<>(chunks.size());
         for (ColumnChunk chunk : chunks) {
             ColumnMetaData metaData = chunk.metaData().orElseThrow();
             if (ColumnPath.of(metaData.pathInSchema()).equals(column)) {
-                edited.add(withMetaData(chunk, withStatistics(metaData, edit)));
+                edited.add(withMetaData(chunk, edit.apply(metaData)));
             } else {
                 edited.add(chunk);
             }
@@ -344,6 +359,27 @@ public final class FooterRewrite {
                 metaData.dictionaryPageOffset(),
                 Optional.of(edited),
                 metaData.encodingStats(),
+                metaData.bloomFilterOffset(),
+                metaData.bloomFilterLength(),
+                metaData.sizeStatistics(),
+                metaData.geospatialStatistics());
+    }
+
+    private static ColumnMetaData withEncodingStats(ColumnMetaData metaData, List<EncodingStats> stats) {
+        return new ColumnMetaData(
+                metaData.type(),
+                metaData.encodings(),
+                metaData.pathInSchema(),
+                metaData.codec(),
+                metaData.numValues(),
+                metaData.totalUncompressedSize(),
+                metaData.totalCompressedSize(),
+                metaData.keyValueMetadata(),
+                metaData.dataPageOffset(),
+                metaData.indexPageOffset(),
+                metaData.dictionaryPageOffset(),
+                metaData.statistics(),
+                stats,
                 metaData.bloomFilterOffset(),
                 metaData.bloomFilterLength(),
                 metaData.sizeStatistics(),

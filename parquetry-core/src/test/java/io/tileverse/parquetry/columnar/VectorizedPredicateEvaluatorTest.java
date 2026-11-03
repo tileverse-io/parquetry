@@ -18,11 +18,17 @@ package io.tileverse.parquetry.columnar;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
+import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
+import java.util.Optional;
+import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
 
+import io.tileverse.parquetry.filter.GeometryFilter;
 import io.tileverse.parquetry.filter.Pred;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Value;
@@ -32,6 +38,8 @@ class VectorizedPredicateEvaluatorTest {
 
     private static final ColumnPath ID = ColumnPath.of("id");
     private static final ColumnPath PRICE = ColumnPath.of("price");
+    private static final ColumnPath GEOM = ColumnPath.of("geom");
+    private static final int ROWS = 20;
 
     @Test
     void isNotNullCountsValidRowsViaPopcount() {
@@ -153,5 +161,104 @@ class VectorizedPredicateEvaluatorTest {
         ParquetRecordBatch batch = BatchFixture.intColumn(ID, new int[] {1, 0, 3, 0, 5}, "10101");
         BitSet match = VectorizedPredicateEvaluator.eval(Pred.col("id").isNull(), batch);
         assertThat(match.cardinality()).isEqualTo(2);
+    }
+
+    @Test
+    void evalWithinKeepsOnlyGivenRows() {
+        Predicate firstTenRows = Pred.col("id").lt(10);
+
+        BitSet kept = VectorizedPredicateEvaluator.evalWithin(firstTenRows, rowNumbers(), rows(2, 12));
+
+        assertThat(kept).isEqualTo(rows(2));
+    }
+
+    @Test
+    void evalWithinOrKeepsOnlyGivenRows() {
+        Predicate firstTenRows = Pred.or(Pred.col("id").lt(5), Pred.col("id").lt(10));
+
+        BitSet kept = VectorizedPredicateEvaluator.evalWithin(firstTenRows, rowNumbers(), rows(2, 12));
+
+        assertThat(kept).isEqualTo(rows(2));
+    }
+
+    @Test
+    void evalWithinRestrictsPerRowTests() {
+        RecordingGeometryFilter filter = new RecordingGeometryFilter();
+        Predicate geometryTest = Predicate.geometryFilter(filter);
+
+        BitSet kept = VectorizedPredicateEvaluator.evalWithin(geometryTest, rowNumberCells(), rows(2, 12));
+
+        assertThat(filter.seenRows).containsExactly(2, 12);
+        assertThat(kept).isEqualTo(rows(2, 12));
+    }
+
+    @Test
+    void evalWithinAndRestrictsPerRow() {
+        RecordingGeometryFilter first = new RecordingGeometryFilter();
+        RecordingGeometryFilter second = new RecordingGeometryFilter();
+        Predicate bothTests = Pred.and(Predicate.geometryFilter(first), Predicate.geometryFilter(second));
+
+        VectorizedPredicateEvaluator.evalWithin(bothTests, rowNumberCells(), rows(2, 12));
+
+        assertThat(first.seenRows).containsExactly(2, 12);
+        assertThat(second.seenRows).containsExactly(2, 12);
+    }
+
+    @Test
+    void evalWithinLeavesItsInputAlone() {
+        BitSet given = rows(2, 12);
+
+        VectorizedPredicateEvaluator.evalWithin(Pred.col("id").lt(10), rowNumbers(), given);
+
+        assertThat(given).isEqualTo(rows(2, 12));
+    }
+
+    private static BitSet rows(int... rows) {
+        BitSet bits = new BitSet();
+        for (int row : rows) {
+            bits.set(row);
+        }
+        return bits;
+    }
+
+    /** A batch whose {@code id} column holds the number of each row. */
+    private static ParquetRecordBatch rowNumbers() {
+        int[] ids = IntStream.range(0, ROWS).toArray();
+        return BatchFixture.intColumn(ID, ids, "1".repeat(ROWS));
+    }
+
+    /** A batch whose {@code geom} column holds the number of each row, in one byte. */
+    private static ParquetRecordBatch rowNumberCells() {
+        byte[] cells = new byte[ROWS];
+        for (int row = 0; row < ROWS; row++) {
+            cells[row] = (byte) row;
+        }
+        return BatchFixture.binaryColumn(GEOM, cells);
+    }
+
+    /** Accepts each row and records the numbers of the rows reaching its test. */
+    private static final class RecordingGeometryFilter implements GeometryFilter<MemorySegment> {
+        private final List<Integer> seenRows = new ArrayList<>();
+
+        @Override
+        public ColumnPath column() {
+            return GEOM;
+        }
+
+        @Override
+        public Optional<Predicate.Spatial> pruningPredicate() {
+            return Optional.empty();
+        }
+
+        @Override
+        public MemorySegment decode(MemorySegment wkb) {
+            return wkb;
+        }
+
+        @Override
+        public boolean matches(MemorySegment geometry) {
+            seenRows.add((int) geometry.get(ValueLayout.JAVA_BYTE, 0));
+            return true;
+        }
     }
 }

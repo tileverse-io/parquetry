@@ -22,6 +22,13 @@ enum ValueDecode {
     EAGER,
 
     /**
+     * Decodes as {@link #EAGER} does, and holds each page compressed until a window reads it. A page with all its rows
+     * stepped over is discarded without decompression. A reader with a row mask holds no page. It loads each page
+     * selected by the mask to size its windows, because no header states the mask's rows.
+     */
+    EAGER_ON_DEMAND,
+
+    /**
      * Loads a page's levels and validity without its values and keeps the page's decoder open across the page's
      * windows; each window decodes only the value slots its surviving rows cover.
      */

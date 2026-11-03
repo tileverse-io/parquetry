@@ -236,11 +236,11 @@ failing them gets no learning pass. A full scan learns nothing.
   `par explain --analyze --format json` leaves the learning pass out, because
   the fetch clock stops before it.
 - **One packed entry per chunk.** An entry lists the data pages of its chunk,
-  with their offsets, sizes, first rows, null counts and min/max bounds. A chunk
-  gets an entry for all its data pages or no entry at all. A read learns only
-  row groups with flat scanned columns and no declared offset index. It keeps
-  the entries of the scanned chunks of a row group together or not at all,
-  because a row mask needs the pages of the scanned columns.
+  with their offsets, sizes, first rows, encodings, null counts and min/max
+  bounds. A chunk gets an entry for all its data pages or no entry at all. A read
+  learns only row groups with flat scanned columns and no declared offset index.
+  It keeps the entries of the scanned chunks of a row group together or not at
+  all, because a row mask needs the pages of the scanned columns.
 - **Trusted bounds only.** A read uses page bounds only where the reader
   applies an order to them and can decode them. Long binary bounds are cut to
   64 bytes, and a cut bound still holds for its page. Geometry, geography and
@@ -249,9 +249,11 @@ failing them gets no learning pass. A full scan learns nothing.
   process, beside the parsed footers
   ([Memory and tuning](memory-and-tuning.md#the-metadata-cache)). A later read
   of the row group takes them as it takes a declared page index. The
-  COLUMN_INDEX tier, the `RowMask` and the fetch of the surviving pages do not
-  tell the two sources apart. An `explain()` after the first read shows the
-  decisions of the next one.
+  COLUMN_INDEX tier and the `RowMask` do not tell the two sources apart. The
+  fetch of the surviving pages differs in one point, because learned pages record
+  their encodings and can leave a dictionary page out
+  ([Fetch and decode](#5-fetch-and-decode)). An `explain()` after the first read
+  shows the decisions of the next one.
 - **Turning it off.** `ReadOptions.builder().useColumnIndexFilter(false)` turns
   the COLUMN_INDEX tier off for a read, and with it both the learning and the
   use of learned pages. A heap share of 0 for the metadata cache turns learning
@@ -274,6 +276,14 @@ and does not depend on the cache. pyarrow writes one with
 `write_page_index=True`, and `par cp` writes a copy with one, because
 parquetry's writer declares a page index by default. Learning is a bridge for
 the files written without one.
+
+Writers should leave geometry out of dictionary encoding. pyarrow tries a
+dictionary on each column by default (`use_dictionary=True`), and WKB
+deduplicates nothing in it. On a file of the Overture buildings release,
+1,357,824 dictionary entries serve 1,357,824 rows, and the chunk then falls back
+to PLAIN. `use_dictionary` takes a list of columns, and the columns with repeated
+values keep their dictionary. parquetry's writer writes geometry PLAIN unless
+told otherwise.
 
 ---
 
@@ -324,6 +334,66 @@ What each piece guarantees:
   short-lived confined `Arena`, decoded into heap arrays, and the arena is closed
   before the next page. With a `RowMask`, `PageCursor` skips non-surviving pages
   outright, and surviving pages are compacted to the surviving rows.
+- **In a chunk fetched whole, a dictionary decodes on the first page using it, on
+  the thread decoding that page, until the read has used a dictionary of its
+  column.** The fetch reads and checks the header of a fetched dictionary page,
+  and the page stays compressed in the fetch buffer. `BatchColumnReader` decodes
+  it for the first page needing its values and keeps the result for the chunk. A
+  page in another encoding reads no dictionary, and neither does a page holding
+  only nulls. Before that first use, a flat column read without a row mask keeps
+  its dictionary undecoded in two cases: no surviving row reaches a
+  dictionary-encoded page of a column mixing encodings, or an output-only column
+  or a leaf of a later stage (section 6) has no surviving row in a row group or a
+  run of pages. A leaf of the first stage
+  decodes its pages in order and needs its dictionary. An output column with only
+  dictionary-encoded pages needs it too, in a row group with a surviving row. A
+  repeated column and a reader under a row mask load their pages to size their
+  windows. At a page boundary the scan can read one row alone, because a repeated
+  column defers the last row of its page or a column stands on a page with no
+  rows. An output column loads its page for that row, even when the row fails. A
+  loaded dictionary-encoded page holding a value decodes the dictionary, with or
+  without a surviving row. A corrupt dictionary page fails a read only when the
+  read reaches a page using it. An unreadable dictionary page header fails the
+  fetch, as does a header declaring a negative size or value count, or a payload
+  past the fetched bytes.
+- **A read decodes a dictionary ahead, on the fetch thread, once it has used a
+  dictionary of that column.** A row group fetched before that first use stays
+  lazy. A read has few decode workers, at most three ahead of the consumer by
+  default, and the fetch threads add parallelism on a long read. A
+  dictionary-encoded column of a long scan uses its dictionary in each row
+  group. Decoding it during the fetch costs no more CPU, and the reader finds it
+  ready. A short read of whole chunks has no earlier row group to learn from. Its
+  dictionaries stay lazy, and a file without a page index keeps the saving. A
+  dictionary fetched as its own prefix on a narrowed chunk decodes ahead when a
+  fetched page uses it, and that page counts as a use of the column. The thread
+  that read the bytes decompresses them faster than another core. A writer falls
+  back to PLAIN once a chunk outgrows its dictionary, and a fetch of pages after
+  the fallback leaves the dictionary undecoded. The fetch finds such a page by
+  reading the headers of the fetched pages. A header failing to parse counts as
+  no use, and a read reaching the page raises the failure. A dictionary decoded
+  ahead and left unused costs that decode and nothing more. The decode ahead
+  borrows its scratch from the pool, and a borrow never waits. It never fails the
+  fetch. When it fails, the page stays undecoded, and a read reaching a page using
+  it raises the failure.
+- **A narrowed fetch reads a dictionary page when a fetched page uses it.** The
+  dictionary page sits in the prefix of its chunk, the bytes before the first
+  data page. A fetch narrowed by a row mask leaves the prefix out when each
+  surviving page is known not to use it. Learned pages record the encoding of
+  each page, and their answer is exact. A declared page index records no
+  encoding. The `encoding_stats` of the chunk give the count of dictionary-encoded
+  pages, and a page at or past that count is taken to use no dictionary.
+  parquet-mr and Arrow fall back to PLAIN once per chunk, and the
+  dictionary-encoded pages come first. The format does not promise that order,
+  and the fetch checks it. The prefix keeps its room in the fetch buffer, and the
+  budget sees the same bytes, but the first request leaves the prefix unread.
+  Once the pages arrive, the fetch thread reads their headers from memory. A
+  dictionary-encoded page sends the prefix to one more request, into the room
+  already held. A wrong count therefore costs one request and never a row, and a
+  right count costs no request. A page header failing to parse on that check
+  fails the fetch, as it would fail the decode. A declared index without a
+  count reads the prefix with the pages. parquetry's writer records no
+  `encoding_stats`, and its files read this way. A chunk fetched whole holds its
+  dictionary page.
 
 **Memory contract.** Two budgets bound a read. `FetchBudget` caps the *off-heap*
 bytes held by column-chunk fetches, the current row group's and the prefetched
@@ -353,22 +423,33 @@ Decoding every surviving row's output columns and then dropping the non-matches
 is wasteful under a selective predicate. A filtered read therefore decodes each
 row group in **one pass that applies the predicate as it goes**: the filter
 columns decode, the predicate runs over them, and an output column materializes
-a value only where the predicate kept the row. One driver per row group, one
-walk over the bytes.
+a value only where the predicate kept the row. One reader per row group, one
+walk over the bytes. `ParallelDecodeCoordinator` chooses the reader of each row
+group. A row group needing the predicate takes `MaskedScanRowGroupReader`, and
+any other row group takes `BatchRowGroupReader`.
 
 ```mermaid
 flowchart TD
     outcome{"row group outcome"}
-    outcome -->|"MATCHED<br/>(statistics proved every row matches)"| classic["ClassicRowGroupDriver<br/>full decode, no predicate"]
+    outcome -->|"MATCHED<br/>(statistics proved every row matches)"| classic["BatchRowGroupReader<br/>full decode, no predicate"]
     outcome -->|"FULL / PARTIAL"| win
 
-    subgraph scan["MaskedScanRowGroupDriver -> MaskedScanRowGroupReader"]
-        win["next window: the rows every reader<br/>can serve from the page it stands on,<br/>capped by the batch size"]
-        filt["decode the FILTER columns<br/>over the whole window"]
-        eval["evaluate the predicate over the window<br/>(VectorizedPredicateEvaluator)<br/>-> the window's surviving rows"]
+    subgraph scan["MaskedScanRowGroupReader"]
+        win["next window: the rows served by the<br/>current page of each reader, capped by<br/>the batch size"]
+        filt["decode the FIRST stage's columns<br/>over the whole window"]
+        eval["evaluate the first stage over the window<br/>(VectorizedPredicateEvaluator)"]
+        rowsLeft{"rows left?"}
+        later["next LATER stage: decode its own columns<br/>over the whole window, evaluate the rows left"]
+        step["no row left: the remaining stages and the<br/>output columns step over the window"]
         out["OUTPUT-only columns: decode the value<br/>slots the survivors cover, step the page<br/>decoder over the rest"]
         gather["SHARED columns: gather the survivors<br/>out of the window already decoded"]
-        win --> filt --> eval --> out --> gather
+        win --> filt --> eval --> rowsLeft
+        rowsLeft -->|"yes, a stage remains"| later
+        later --> rowsLeft
+        rowsLeft -->|"none"| step
+        step --> win
+        rowsLeft -->|"yes, no stage remains"| out
+        out --> gather
     end
 
     gather --> batches["batch of surviving rows,<br/>dense and in row order"]
@@ -376,10 +457,23 @@ flowchart TD
     narrow --> batches
 ```
 
-- **A window is page-bounded, not row-group-bounded.** It is the run of rows every
-  scanned column can serve from the page it currently stands on, capped by the
-  read's batch size. A window whose rows all fail the predicate emits nothing and
-  materializes no output value at all.
+- **A window is page-bounded, not row-group-bounded.** It is the run of rows served
+  by the current page of each scanned column, capped by the read's batch size. A
+  window whose rows all fail the predicate emits nothing and materializes no output
+  value at all.
+- **A filter column waits for the conditions before it.** The conditions of an
+  `And` split into up to three stages (`ScanStages`). Conditions on fixed-width
+  columns run first, conditions on `BYTE_ARRAY` columns next, and per-row geometry
+  tests last. The file schema sets this order, and it holds for the whole read. A
+  condition on a repeated column or a row position joins the first stage, and a
+  predicate other than an `And` is one stage. A later stage reads its own columns
+  only for a window with rows left, and it evaluates those rows alone. With no row
+  left its columns step over the window, counting rows against the page header
+  (`ValueDecode.EAGER_ON_DEMAND`). A page of a later stage therefore decompresses
+  only for a window with rows left. A page with all its rows stepped over is
+  discarded unread, and `par explain --analyze --format json` counts it in
+  `pagesPruned`. Under a row mask a page loads at window sizing, because no header
+  states the rows of the mask.
 - **Output columns pay for survivors only.** An output-only leaf reads the value
   slots its surviving rows cover and steps its page decoder past the rest
   (`ValueDecode.WINDOWED_MASK`, survivor slots computed by `MaskedValues`).
@@ -388,12 +482,12 @@ flowchart TD
   column, and its surviving rows are gathered out of the window already in hand
   rather than through a second reader over the same pages.
 - **`MATCHED` row groups never reach the scan.** Statistics already proved every
-  row matches; there is nothing to evaluate. They take `ClassicRowGroupDriver`
+  row matches; there is nothing to evaluate. They take `BatchRowGroupReader`
   over the scan schema, and the batch pipeline narrows the result to the caller's
   projection - which is what keeps a predicate-only column out of the emitted
   shape.
 - **Unfiltered reads are untouched.** No predicate means no scan:
-  `ClassicRowGroupDriver` decodes the projection and nothing narrows.
+  `BatchRowGroupReader` decodes the projection and nothing narrows.
 - **Offset indexes are not required.** The scan walks pages as it meets them.
   Where the `COLUMN_INDEX` tier did produce a `RowMask`, the scan's readers take
   it and walk only the surviving rows; the two compose. Building that mask still
@@ -449,8 +543,6 @@ classDiagram
     class ParallelDecodeCoordinator
     class RowGroupPrefetcher
     class RowGroupFetcher
-    class ClassicRowGroupDriver
-    class MaskedScanRowGroupDriver
     class BatchRowGroupReader
     class MaskedScanRowGroupReader
     class BatchColumnReader
@@ -472,14 +564,12 @@ classDiagram
     ReadPlanner --> ParallelDecodeCoordinator : decodeUnplanned for unfiltered bounds
     ParallelDecodeCoordinator --> RowGroupPrefetcher : pulls fetched bytes
     RowGroupPrefetcher --> RowGroupFetcher : batch range reads
-    ParallelDecodeCoordinator --> ClassicRowGroupDriver : unfiltered or MATCHED
-    ParallelDecodeCoordinator --> MaskedScanRowGroupDriver : filtered row group
-    ClassicRowGroupDriver --> BatchRowGroupReader : full decode
-    MaskedScanRowGroupDriver --> MaskedScanRowGroupReader : one masked walk
+    ParallelDecodeCoordinator --> BatchRowGroupReader : unfiltered or MATCHED, full decode
+    ParallelDecodeCoordinator --> MaskedScanRowGroupReader : filtered row group, one masked walk
     BatchRowGroupReader --> BatchColumnReader : one per leaf
     MaskedScanRowGroupReader --> BatchColumnReader : one per scanned leaf
     MaskedScanRowGroupReader --> MaskedValues : survivor value slots
-    BatchColumnReader --> ValueDecode : eager or windowed-mask
+    BatchColumnReader --> ValueDecode : eager, eager-on-demand or windowed-mask
     ParquetFileReader --> BatchPipeline : rows / batches
     BatchPipeline --> Materializer : record shape
 ```
@@ -501,9 +591,10 @@ classDiagram
 | Metadata cache (footers + learned pages) | `data/FooterMetadataCache.java`, `data/ParquetCaches.java` |
 | Survivors + page-skip mask | `internal/read/RowGroupSurvivor.java`, `internal/read/RowMask.java`, `internal/read/page/PageSelection.java` |
 | Fetch | `internal/read/RowGroupFetcher.java`, `internal/read/RowGroupPrefetcher.java` |
+| Dictionary page of a fetch | `internal/read/DictionaryFetch.java`, `internal/read/DictionarySource.java`, `internal/read/ColumnChunkSlicer.java`, `internal/read/DictionaryPage.java` |
 | Parallel decode + budgets | `internal/read/ParallelDecodeCoordinator.java`, `internal/read/StreamingBatchSource.java`, `runtime/DecodeBudget.java`, `internal/read/BatchRowGroupReader.java` |
 | Column / page decode | `internal/read/BatchColumnReader.java`, `internal/read/page/PageCursor.java`, `internal/read/page/PageDecoder.java` |
-| Masked scan (filtered decode) | `internal/read/MaskedScanRowGroupReader.java`, `internal/read/MaskedScanRowGroupDriver.java`, `internal/read/MaskedValues.java`, `internal/read/ValueDecode.java` |
+| Masked scan (filtered decode) | `internal/read/MaskedScanRowGroupReader.java`, `internal/read/MaskedValues.java`, `internal/read/ScanStages.java`, `internal/read/ValueDecode.java` |
 | Materialize | `internal/read/BatchPipeline.java`, `materializer/Materializer.java` |
 | Counting (no materialization) | `data/ParquetFileReader.java` (`count`), `internal/read/BatchPipeline.java` (`countMatching`), `columnar/VectorizedPredicateEvaluator.java` |
 

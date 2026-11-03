@@ -44,7 +44,6 @@ import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
-import io.tileverse.parquetry.internal.read.page.Dictionary;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
@@ -436,7 +435,8 @@ class PageSplitRowReadTest {
     private static FetchedColumnChunk repeatedByteArrayChunk(byte[][] dictValues, byte[]... pages) {
         byte[] chunkBuffer = concat(pages);
         long totalValues = totalValuesOf(pages);
-        Dictionary.BinaryDict dictionary = new Dictionary.BinaryDict(toSegments(dictValues));
+        DictionaryPage dictionaryPage = BatchColumnReaderTest.dictionaryPageOf(
+                PrimitiveKind.BYTE_ARRAY, encodePlainByteArrays(dictValues), dictValues.length);
         MemorySegment segment = MemorySegment.ofArray(chunkBuffer).asReadOnly();
         return new FetchedColumnChunk(
                 ELEMENT,
@@ -445,7 +445,7 @@ class PageSplitRowReadTest {
                 MAX_REP,
                 MAX_DEF,
                 List.of(new DataPageRun(segment, 0)),
-                Optional.of(dictionary));
+                Optional.of(dictionaryPage));
     }
 
     private static FetchedColumnChunk flatInt32Chunk(ColumnPath path, int[]... pages) throws IOException {
@@ -601,12 +601,6 @@ class PageSplitRowReadTest {
             offset += array.length;
         }
         return out;
-    }
-
-    private static List<MemorySegment> toSegments(byte[][] values) {
-        return Arrays.stream(values)
-                .map(value -> MemorySegment.ofArray(value).asReadOnly())
-                .toList();
     }
 
     private static byte[] bytes(String text) {
