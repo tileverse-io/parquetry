@@ -39,8 +39,8 @@ import io.tileverse.parquetry.format.CompressionCodec;
  * not produce deprecated formats" rule -- nothing else. {@link Lzo} encodes and decodes both: the LZO wire codec is not
  * deprecated, just historically encumbered by C-library licensing.
  *
- * <p>Instances are stateless and safe to share across virtual threads; each compress/decompress call constructs its own
- * underlying compressor/decompressor so concurrent fan-out cannot race on internal scratch state.
+ * <p>Instances are stateless and safe to share across threads. The {@link Codec} engines keep concurrent calls from
+ * sharing scratch state.
  */
 public sealed interface Compression
         permits Compression.Uncompressed,
