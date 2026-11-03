@@ -122,7 +122,8 @@ public final class PageCursor {
      *
      * <p>The page comes back unresolved and stays so until {@link #decodePending} decompresses it or
      * {@link #discardPending} steps over it. The walk holds one unresolved page at a time, because a page's row count
-     * is what places the page after it.
+     * is what places the page after it. The header of each data page is checked on the way, whether the page is kept or
+     * stepped over.
      */
     public PendingDataPage peekNextDataPage(LevelMaxima maxLevels) {
         requireNoPendingPage();
@@ -139,14 +140,13 @@ public final class PageCursor {
             }
             int ordinal = dataPageOrdinal++;
             MemorySegment pagePayload = sliceAndAdvance(compressedSize);
+            requireValidDataPageHeader(header, maxLevels, ordinal);
             if (selection == null || selection.isSurviving(ordinal)) {
-                requireNonNegativeCounts(header, ordinal);
-                requireOneValuePerRow(header, maxLevels, ordinal);
-                requireAcceptedSize(header, ordinal);
                 pendingPage = new PendingDataPage(
                         header, pagePayload, ordinal, firstRowIndexOf(ordinal), statedRowCount(header, maxLevels));
                 return pendingPage;
             }
+            requireStatedRowsIndexed(header, maxLevels, ordinal);
             skippedDataPageCount++;
         }
         return null;
@@ -199,6 +199,7 @@ public final class PageCursor {
      */
     public void discardPending(PendingDataPage pending) {
         requireStatedRowCount(pending);
+        requireIndexedRowCount(pending.ordinal(), pending.statedRowCount());
         resolvePending(pending);
         skippedDataPageCount++;
         nextPageFirstRowIndex = pending.firstRowIndex() + pending.statedRowCount();
@@ -206,6 +207,17 @@ public final class PageCursor {
 
     private static boolean isDataPage(PageHeader header) {
         return header.type() == PageType.DATA_PAGE || header.type() == PageType.DATA_PAGE_V2;
+    }
+
+    /**
+     * Fails a data page header stating counts or a size that no page can hold. Each data page met by the walk is
+     * checked, decoded or stepped over. A corrupt header makes the file malformed whether or not a filter needs the
+     * page.
+     */
+    private void requireValidDataPageHeader(PageHeader header, LevelMaxima maxLevels, int ordinal) {
+        requireNonNegativeCounts(header, ordinal);
+        requireOneValuePerRow(header, maxLevels, ordinal);
+        requireAcceptedSize(header, ordinal);
     }
 
     /**
@@ -331,15 +343,45 @@ public final class PageCursor {
     /**
      * Records the row count the column reader counted in the page most recently decoded, through either
      * {@link #nextDataPage} or {@link #decodePending}, advancing the walk to the next page's first row. A header that
-     * states its own row count must agree with the counted one; a disagreement is a malformed file rather than a
-     * silently misaligned read.
+     * states its own row count must agree with the counted one. Under a {@link PageSelection}, the span of the page in
+     * the page index must agree too. A disagreement is a malformed file rather than a silently misaligned read.
      */
     public void recordCurrentPageRowCount(int rows) {
         if (currentPageStatedRowCount != UNSTATED_ROW_COUNT && currentPageStatedRowCount != rows) {
             throw new MalformedFileException("Column " + columnPath.dot() + " data page " + currentPageOrdinal
                     + " declares " + currentPageStatedRowCount + " rows but its levels hold " + rows);
         }
+        requireIndexedRowCount(currentPageOrdinal, rows);
         nextPageFirstRowIndex = currentPageFirstRowIndex + rows;
+    }
+
+    /**
+     * Fails a page holding other rows than its span in the page index. A walk under a {@link PageSelection} places the
+     * rows of each page at the first row given by the index, and a wrong span shifts the pages after it. The walk
+     * checks the pages it decodes, and the pages it steps over whose header states their rows. The first row of each
+     * page is then verified back to the start of its run. The first page of a run reached across pages never fetched
+     * starts where the index places it.
+     */
+    private void requireIndexedRowCount(int ordinal, int rows) {
+        if (selection == null) {
+            return;
+        }
+        long indexedRows = selection.rowCount(ordinal);
+        if (rows != indexedRows) {
+            throw new MalformedFileException("Column " + columnPath.dot() + " data page " + ordinal + " holds " + rows
+                    + " rows but the offset index gives it " + indexedRows);
+        }
+    }
+
+    /**
+     * Checks a page stepped over against its span, when its header states its rows; see
+     * {@link #requireIndexedRowCount}.
+     */
+    private void requireStatedRowsIndexed(PageHeader header, LevelMaxima maxLevels, int ordinal) {
+        int statedRows = statedRowCount(header, maxLevels);
+        if (statedRows != UNSTATED_ROW_COUNT) {
+            requireIndexedRowCount(ordinal, statedRows);
+        }
     }
 
     /**

@@ -27,11 +27,13 @@ public final class PageSelection {
 
     private final boolean[] surviving;
     private final long[] firstRowIndex;
+    private final long[] rowCount;
     private final int survivingPageCount;
 
-    private PageSelection(boolean[] surviving, long[] firstRowIndex, int survivingPageCount) {
+    private PageSelection(boolean[] surviving, long[] firstRowIndex, long[] rowCount, int survivingPageCount) {
         this.surviving = surviving;
         this.firstRowIndex = firstRowIndex;
+        this.rowCount = rowCount;
         this.survivingPageCount = survivingPageCount;
     }
 
@@ -44,16 +46,18 @@ public final class PageSelection {
         int pageCount = pages.pageCount();
         boolean[] survivingFlags = new boolean[pageCount];
         long[] firstRows = new long[pageCount];
+        long[] rowCounts = new long[pageCount];
         int kept = 0;
         for (int page = 0; page < pageCount; page++) {
             long first = pages.firstRow(page);
             firstRows[page] = first;
+            rowCounts[page] = pages.rows(page);
             survivingFlags[page] = overlapsAny(survivingRows, first, pages.lastRow(page));
             if (survivingFlags[page]) {
                 kept++;
             }
         }
-        return new PageSelection(survivingFlags, firstRows, kept);
+        return new PageSelection(survivingFlags, firstRows, rowCounts, kept);
     }
 
     public boolean isSurviving(int pageOrdinal) {
@@ -62,6 +66,11 @@ public final class PageSelection {
 
     public long firstRowIndex(int pageOrdinal) {
         return firstRowIndex[pageOrdinal];
+    }
+
+    /** The rows of a page in the page index, counted from its first row up to the first row of the next page. */
+    public long rowCount(int pageOrdinal) {
+        return rowCount[pageOrdinal];
     }
 
     public int pageCount() {

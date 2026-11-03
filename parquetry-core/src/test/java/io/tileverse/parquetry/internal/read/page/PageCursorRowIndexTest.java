@@ -30,14 +30,17 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.data.Compression;
+import io.tileverse.parquetry.filter.RowRanges;
 import io.tileverse.parquetry.format.MalformedFileException;
+import io.tileverse.parquetry.internal.filter.TestPageIndexes;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.LevelMaxima;
 
 /**
  * The page walk's row index without an offset index: each page's first row is the running sum of the row counts the
  * preceding pages reported, and a header-declared row count must agree with the count the levels produced. Header
- * counts are never negative, and only a page right after a decoded page holding values may open mid-row.
+ * counts are never negative, and only a page right after a decoded page holding values may open mid-row. Under a page
+ * selection, the rows of a page must agree with its span in the page index.
  */
 class PageCursorRowIndexTest {
 
@@ -69,6 +72,42 @@ class PageCursorRowIndexTest {
                     .hasMessageContaining("declares 5 rows")
                     .hasMessageContaining("levels hold 4");
         }
+    }
+
+    // The index starts the second page at row 6, where the first page holds rows 0 to 4.
+    @Test
+    void rowsOutsideIndexSpanFail() throws Exception {
+        PageSelection selection = PageSelection.forColumn(TestPageIndexes.pages(12, 0, 6), RowRanges.all(12));
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7), V, selection, PageSizeLimit.NONE);
+        try (Arena arena = Arena.ofConfined()) {
+            cursor.nextDataPage(FLAT, Compression.uncompressed(), arena);
+            assertThatThrownBy(() -> cursor.recordCurrentPageRowCount(5))
+                    .isInstanceOf(MalformedFileException.class)
+                    .hasMessageContaining("Column v data page 0 holds 5 rows but the offset index gives it 6");
+        }
+    }
+
+    // The index gives the first page 7 rows, and the second page of 7 rows would start at row 7 instead of 5.
+    @Test
+    void skippedRowsOutsideSpanFail() {
+        RowRanges secondPage = new RowRanges(List.of(new RowRanges.Range(7, 13)));
+        PageSelection selection = PageSelection.forColumn(TestPageIndexes.pages(16, 0, 7, 14), secondPage);
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7, 4), V, selection, PageSizeLimit.NONE);
+
+        assertThatThrownBy(() -> cursor.peekNextDataPage(FLAT))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("Column v data page 0 holds 5 rows but the offset index gives it 7");
+    }
+
+    @Test
+    void discardedRowsOutsideSpanFail() {
+        PageSelection selection = PageSelection.forColumn(TestPageIndexes.pages(16, 0, 7, 14), RowRanges.all(16));
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7, 4), V, selection, PageSizeLimit.NONE);
+        PageCursor.PendingDataPage firstPage = cursor.peekNextDataPage(FLAT);
+
+        assertThatThrownBy(() -> cursor.discardPending(firstPage))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("Column v data page 0 holds 5 rows but the offset index gives it 7");
     }
 
     @Test
