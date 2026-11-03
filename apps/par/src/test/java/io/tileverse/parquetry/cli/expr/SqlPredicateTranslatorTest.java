@@ -183,16 +183,100 @@ class SqlPredicateTranslatorTest {
         assertThat(eq.v()).isEqualTo(new Value.FloatVal(1.5f));
     }
 
+    // The float nearest to 16777217 is 16777216, and no cell of the column equals the literal.
     @Test
-    void floatComparisonComparesAsDouble() {
-        Predicate.Lt lt = (Predicate.Lt) parseNumeric("f32 < 1.5");
-        assertThat(lt.v()).isEqualTo(new Value.DoubleVal(1.5d));
+    void floatEqKeepsIntegerValue() {
+        Predicate.Eq eq = (Predicate.Eq) parseNumeric("f32 = 16777217");
+        assertThat(eq.v()).isEqualTo(new Value.DoubleVal(16777217d));
     }
 
     @Test
-    void floatNotEqualsComparesAsDouble() {
-        Predicate.NotEq notEq = (Predicate.NotEq) parseNumeric("f32 != 1.5");
-        assertThat(notEq.v()).isEqualTo(new Value.DoubleVal(1.5d));
+    void floatLtKeepsIntegerValue() {
+        Predicate.Lt lt = (Predicate.Lt) parseNumeric("f32 < 16777217");
+        assertThat(lt.v()).isEqualTo(new Value.DoubleVal(16777217d));
+    }
+
+    @Test
+    void floatInKeepsIntegerValue() {
+        Predicate.In in = (Predicate.In) parseNumeric("f32 IN (0.1, 16777217)");
+        assertThat(in.values()).containsExactly(new Value.FloatVal(0.1f), new Value.DoubleVal(16777217d));
+    }
+
+    // The nearest float prints as 0.1, not as the literal.
+    @Test
+    void floatEqKeepsExtraDigits() {
+        Predicate.Eq eq = (Predicate.Eq) parseNumeric("f32 = 0.1000000001");
+        assertThat(eq.v()).isEqualTo(new Value.DoubleVal(0.1000000001d));
+    }
+
+    @Test
+    void floatNotEqTakesPrintedFloat() {
+        Predicate.NotEq notEq = (Predicate.NotEq) parseNumeric("f32 != 0.1");
+        assertThat(notEq.v()).isEqualTo(new Value.FloatVal(0.1f));
+    }
+
+    @Test
+    void floatLtEqTakesPrintedFloat() {
+        Predicate.LtEq ltEq = (Predicate.LtEq) parseNumeric("f32 <= 0.1");
+        assertThat(ltEq.v()).isEqualTo(new Value.FloatVal(0.1f));
+    }
+
+    @Test
+    void floatBetweenTakesPrintedFloat() {
+        Predicate.And and = (Predicate.And) parseNumeric("f32 BETWEEN 0.1 AND 0.2");
+        Predicate.GtEq lower = (Predicate.GtEq) and.children().get(0);
+        Predicate.LtEq upper = (Predicate.LtEq) and.children().get(1);
+        assertThat(lower.v()).isEqualTo(new Value.FloatVal(0.1f));
+        assertThat(upper.v()).isEqualTo(new Value.FloatVal(0.2f));
+    }
+
+    // The literal and 0.1 round to the same double, but only 0.1 is the printed form of a float.
+    @Test
+    void floatEqKeepsDigitsPastDouble() {
+        Predicate.Eq eq = (Predicate.Eq) parseNumeric("f32 = 0.10000000000000000001");
+        assertThat(eq.v()).isEqualTo(new Value.DoubleVal(0.1d));
+    }
+
+    // Rounded to a double, the literal reads as 1.0E18. The nearest float prints that way but holds 999999984306749440.
+    @Test
+    void floatEqKeepsLargeInteger() {
+        Predicate.Eq eq = (Predicate.Eq) parseNumeric("f32 = 1000000000000000001");
+        assertThat(eq.v()).isEqualTo(new Value.DoubleVal(1.0E18));
+    }
+
+    // The nearest double is the float 2^53, one below the literal. The next double up equals no float.
+    @Test
+    void floatInMissesNearbyFloats() {
+        Predicate.In in = (Predicate.In) parseNumeric("f32 IN (9007199254740993, -9007199254740993)");
+        assertThat(in.values())
+                .containsExactly(new Value.DoubleVal(9007199254740994d), new Value.DoubleVal(-9007199254740994d));
+    }
+
+    // Rounded through a double, this literal would land on the next float up.
+    @Test
+    void floatEqRoundsLiteralOnce() {
+        Predicate.Eq eq = (Predicate.Eq) parseNumeric("f32 = 7.038531E-26");
+        assertThat(eq.v()).isEqualTo(new Value.FloatVal(7.038531E-26f));
+    }
+
+    // The literal lies beyond the largest double, and below an infinite cell.
+    @Test
+    void floatEqKeepsHugeLiteral() {
+        Predicate.Eq eq = (Predicate.Eq) parseNumeric("f32 = 1e309");
+        assertThat(eq.v()).isEqualTo(new Value.DoubleVal(Double.MAX_VALUE));
+    }
+
+    @Test
+    void floatEqIgnoresTrailingZero() {
+        Predicate.Eq eq = (Predicate.Eq) parseNumeric("f32 = 0.100");
+        assertThat(eq.v()).isEqualTo(new Value.FloatVal(0.1f));
+    }
+
+    // Widened to a double, the float 0.1 prints as this literal. Only 0.1 stands for the float.
+    @Test
+    void floatEqMissesWidenedFloat() {
+        Predicate.Eq eq = (Predicate.Eq) parseNumeric("f32 = 0.10000000149011612");
+        assertThat(eq.v()).isEqualTo(new Value.DoubleVal(Math.nextUp((double) 0.1f)));
     }
 
     @Test
