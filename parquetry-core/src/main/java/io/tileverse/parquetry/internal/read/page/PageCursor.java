@@ -172,8 +172,7 @@ public final class PageCursor {
         try {
             page = DataPageReader.forHeader(header).read(header, maxLevels, pending.payload(), codec, pageArena);
         } catch (ParquetFormatException e) {
-            throw e.withContext(
-                    "Column " + columnPath.dot() + " data page " + pending.ordinal() + ": " + e.getMessage());
+            throw e.withContext(dataPage(pending.ordinal()) + ": " + e.getMessage());
         } catch (IOException e) {
             throw rejectedByItsCodec(pending, e);
         }
@@ -187,9 +186,7 @@ public final class PageCursor {
      */
     private MalformedFileException rejectedByItsCodec(PendingDataPage pending, IOException failure) {
         return new MalformedFileException(
-                "Column " + columnPath.dot() + " data page " + pending.ordinal() + " cannot be decompressed: "
-                        + failure.getMessage(),
-                failure);
+                dataPage(pending.ordinal()) + " cannot be decompressed: " + failure.getMessage(), failure);
     }
 
     /**
@@ -241,8 +238,7 @@ public final class PageCursor {
 
     private void requireNonNegative(int count, String countedItems, int ordinal) {
         if (count < 0) {
-            throw new MalformedFileException(
-                    "Column " + columnPath.dot() + " data page " + ordinal + " declares " + count + " " + countedItems);
+            throw new MalformedFileException(dataPage(ordinal) + " declares " + count + " " + countedItems);
         }
     }
 
@@ -258,8 +254,8 @@ public final class PageCursor {
         }
         DataPageHeaderV2 counts = v2.orElseThrow();
         if (counts.numRows() != counts.numValues()) {
-            throw new MalformedFileException("Column " + columnPath.dot() + " V2 data page " + ordinal + " counts "
-                    + counts.numRows() + " rows and " + counts.numValues() + " values");
+            throw new MalformedFileException(column() + " V2 data page " + ordinal + " counts " + counts.numRows()
+                    + " rows and " + counts.numValues() + " values");
         }
     }
 
@@ -267,7 +263,7 @@ public final class PageCursor {
     private void requireAcceptedSize(PageHeader header, int ordinal) {
         int declared = header.uncompressedPageSize();
         if (!pageSizeLimit.accepts(declared)) {
-            throw pageSizeLimit.refusal("Column " + columnPath.dot() + " data page " + ordinal, declared);
+            throw pageSizeLimit.refusal(dataPage(ordinal), declared);
         }
     }
 
@@ -279,22 +275,21 @@ public final class PageCursor {
     /** Clears the page the walk holds unresolved, which {@code pending} must be, freeing the walk to peek again. */
     private void resolvePending(PendingDataPage pending) {
         if (pendingPage == null || pendingPage.ordinal() != pending.ordinal()) {
-            throw new IllegalStateException("Column " + columnPath.dot() + " data page " + pending.ordinal()
-                    + " is not the page the walk holds unresolved");
+            throw new IllegalStateException(dataPage(pending.ordinal()) + " is not the page the walk holds unresolved");
         }
         pendingPage = null;
     }
 
     private void requireNoPendingPage() {
         if (pendingPage != null) {
-            throw new IllegalStateException("Column " + columnPath.dot() + " holds data page " + pendingPage.ordinal()
+            throw new IllegalStateException(column() + " holds data page " + pendingPage.ordinal()
                     + " unresolved; decode or discard it before peeking the next");
         }
     }
 
     private void requireStatedRowCount(PendingDataPage pending) {
         if (!pending.statesRowCount()) {
-            throw new IllegalStateException("Column " + columnPath.dot() + " data page " + pending.ordinal()
+            throw new IllegalStateException(dataPage(pending.ordinal())
                     + " states no row count; its rows are known only from its decoded levels");
         }
     }
@@ -348,8 +343,8 @@ public final class PageCursor {
      */
     public void recordCurrentPageRowCount(int rows) {
         if (currentPageStatedRowCount != UNSTATED_ROW_COUNT && currentPageStatedRowCount != rows) {
-            throw new MalformedFileException("Column " + columnPath.dot() + " data page " + currentPageOrdinal
-                    + " declares " + currentPageStatedRowCount + " rows but its levels hold " + rows);
+            throw new MalformedFileException(dataPage(currentPageOrdinal) + " declares " + currentPageStatedRowCount
+                    + " rows but its levels hold " + rows);
         }
         requireIndexedRowCount(currentPageOrdinal, rows);
         nextPageFirstRowIndex = currentPageFirstRowIndex + rows;
@@ -368,8 +363,8 @@ public final class PageCursor {
         }
         long indexedRows = selection.rowCount(ordinal);
         if (rows != indexedRows) {
-            throw new MalformedFileException("Column " + columnPath.dot() + " data page " + ordinal + " holds " + rows
-                    + " rows but the offset index gives it " + indexedRows);
+            throw new MalformedFileException(
+                    dataPage(ordinal) + " holds " + rows + " rows but the offset index gives it " + indexedRows);
         }
     }
 
@@ -452,12 +447,22 @@ public final class PageCursor {
      */
     private MemorySegment sliceAndAdvance(int length) {
         if (runLimit - position < length) {
-            throw new MalformedFileException("Column " + columnPath.dot() + " page payload of " + length
-                    + " bytes overruns data page run " + runIndex + " (remaining=" + (runLimit - position) + ")");
+            throw new MalformedFileException(column() + " page payload of " + length + " bytes overruns data page run "
+                    + runIndex + " (remaining=" + (runLimit - position) + ")");
         }
         MemorySegment slice = runBytes.asSlice(position, length).asReadOnly();
         position += length;
         return slice;
+    }
+
+    /** The column of the walk, as named in a failure. */
+    private String column() {
+        return "Column " + columnPath.dot();
+    }
+
+    /** A data page of the walk, as named in a failure, such as "Column a data page 3". */
+    private String dataPage(int ordinal) {
+        return column() + " data page " + ordinal;
     }
 
     /**
