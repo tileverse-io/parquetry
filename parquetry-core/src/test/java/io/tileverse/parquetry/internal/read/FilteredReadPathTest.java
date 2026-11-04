@@ -38,6 +38,8 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.filter.explain.ExplainPlan;
+import io.tileverse.parquetry.filter.explain.RowGroupPlan;
 import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
@@ -60,6 +62,10 @@ class FilteredReadPathTest {
     private static final ColumnPath TAG = ColumnPath.of("tag");
 
     private static final int ROW_COUNT = 100;
+
+    private static final ColumnPath S = ColumnPath.of("s");
+
+    private static final int LONG_STRING_ROWS = 40;
 
     @TempDir
     Path tempDir;
@@ -169,6 +175,27 @@ class FilteredReadPathTest {
                 .hasSize(70);
     }
 
+    // The column index keeps 64 bytes of each page bound, and the values are longer.
+    @Test
+    void longStringPagesKeepTheirRows() throws Exception {
+        Path file = writeLongStrings();
+
+        for (int row = 0; row < LONG_STRING_ROWS; row++) {
+            Predicate predicate = col("s").eq(longString(row));
+            assertThat(readLongStrings(file, predicate)).containsExactly(longString(row));
+        }
+    }
+
+    @Test
+    void longStringBoundsPrunePages() throws Exception {
+        Path file = writeLongStrings();
+        Predicate predicate = col("s").eq(longString(25));
+
+        RowGroupPlan rowGroup = explain(file, predicate).rowGroups().getFirst();
+
+        assertThat(rowGroup.survivingRows().orElseThrow().totalRows()).isEqualTo(10L);
+    }
+
     // --- read + baseline helpers ---
 
     private List<Row> readRows(Path file, Predicate predicate, Projection projection, ReadOptions options) {
@@ -241,6 +268,21 @@ class FilteredReadPathTest {
 
     private record Row(Long id, Double v, String name, Integer tag) {}
 
+    private static List<String> readLongStrings(Path file, Predicate predicate) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            try (Stream<ParquetRecord> rows = reader.read(predicate, Projection.ALL, ReadOptions.DEFAULTS)) {
+                return rows.map(rec -> rec.getString(S)).toList();
+            }
+        }
+    }
+
+    private static ExplainPlan explain(Path file, Predicate predicate) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            return ParquetFileReader.open(source).explain(predicate, Projection.ALL, ReadOptions.DEFAULTS);
+        }
+    }
+
     // --- file writing ---
 
     private Path writeRows(WriteOptions.RowGroupSize rowGroupSize) throws Exception {
@@ -259,6 +301,28 @@ class FilteredReadPathTest {
             }
         }
         return file;
+    }
+
+    /** Ten values to a page, each page with values of its own first 100 bytes. */
+    private Path writeLongStrings() throws Exception {
+        Path file = tempDir.resolve("long-strings.parquet");
+        ParquetSchema schema = flatSchema(requiredLeaf("s", PrimitiveKind.BYTE_ARRAY));
+        WriteOptions options =
+                WriteOptions.builder().tempDir(tempDir).pageValueLimit(10).build();
+        List<Map<ColumnPath, Object>> rows = new ArrayList<>(LONG_STRING_ROWS);
+        for (int row = 0; row < LONG_STRING_ROWS; row++) {
+            rows.add(Map.of(S, longString(row).getBytes(StandardCharsets.UTF_8)));
+        }
+        try (ParquetFileWriter writer = ParquetFileWriter.create(Files.newOutputStream(file), schema, options)) {
+            writer.writeBatch(WriteFixtures.batch(schema, rows));
+        }
+        return file;
+    }
+
+    /** A letter of the page of the row, 100 times, then the row number. */
+    private static String longString(int row) {
+        char letter = (char) ('a' + row / 10);
+        return String.valueOf(letter).repeat(100) + "%04d".formatted(row);
     }
 
     private static Map<ColumnPath, Object> row(long id) {

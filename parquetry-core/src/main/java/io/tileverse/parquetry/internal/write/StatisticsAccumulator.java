@@ -63,6 +63,13 @@ import lombok.NonNull;
  */
 public final class StatisticsAccumulator {
 
+    /**
+     * The longest bound written in the footer. Each reader parses the whole footer when it opens a file, and a long
+     * string value would be copied whole into the statistics of its column chunk. Arrow C++ leaves a bound longer than
+     * 4 KiB out of the footer, and parquet-java leaves out a minimum and a maximum longer than 4 KiB together.
+     */
+    static final int MAX_FOOTER_BOUND_BYTES = 4096;
+
     /** The order key of {@code +0.0} in a floating-point column: its bits are zero, and their key too. */
     private static final long POSITIVE_ZERO_KEY = 0L;
 
@@ -396,22 +403,30 @@ public final class StatisticsAccumulator {
 
     /**
      * Returns the chunk-level {@link Statistics} for the current accumulation window. Subsequent typed update calls
-     * keep accumulating; {@link #reset()} starts a fresh window.
+     * keep accumulating; {@link #reset()} starts a fresh window. When a bound is longer than
+     * {@link #MAX_FOOTER_BOUND_BYTES}, the statistics hold neither bound.
      */
     public Statistics finishChunk() {
-        MemorySegment minSegment = encodedLowerBound();
-        MemorySegment maxSegment = encodedUpperBound();
+        MemorySegment lowerBound = encodedLowerBound();
+        MemorySegment upperBound = encodedUpperBound();
+        boolean boundsFit = fitsInFooter(lowerBound) && fitsInFooter(upperBound);
+        MemorySegment minSegment = boundsFit ? lowerBound : MemorySegment.NULL;
+        MemorySegment maxSegment = boundsFit ? upperBound : MemorySegment.NULL;
         return Statistics.builder()
                 .nullCount(OptionalLong.of(nullCount))
                 .distinctCount(OptionalLong.empty())
                 .minValue(minSegment)
                 .maxValue(maxSegment)
-                .isMinValueExact(lowerBoundIsExact())
-                .isMaxValueExact(upperBoundIsExact())
+                .isMinValueExact(boundsFit && lowerBoundIsExact())
+                .isMaxValueExact(boundsFit && upperBoundIsExact())
                 .min(legacyBound(minSegment))
                 .max(legacyBound(maxSegment))
                 .nanCount(recordedNaNCount())
                 .build();
+    }
+
+    private static boolean fitsInFooter(MemorySegment bound) {
+        return bound.byteSize() <= MAX_FOOTER_BOUND_BYTES;
     }
 
     /**

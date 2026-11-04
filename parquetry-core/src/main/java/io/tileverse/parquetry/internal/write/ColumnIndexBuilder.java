@@ -40,8 +40,16 @@ import lombok.NonNull;
  *
  * <p>A column with an {@link BoundsOrder#UNDEFINED undefined} order gets no column index: the format defines the page
  * bounds of a column index by the order of the column.
+ *
+ * <p>A page bound longer than {@link #MAX_COLUMN_INDEX_BOUND_BYTES} is cut by {@link BoundTruncator} in a column
+ * ordered by unsigned bytes. A filtered read fetches the column index of each filtered column, and a long string value
+ * would otherwise sit in it whole, as the minimum and the maximum of its page. A maximum that cannot be cut leaves its
+ * page without an upper bound, and the chunk without a column index.
  */
 public final class ColumnIndexBuilder {
+
+    /** The longest page bound kept whole, as in parquet-java. */
+    static final int MAX_COLUMN_INDEX_BOUND_BYTES = 64;
 
     private final BoundsOrder order;
 
@@ -59,12 +67,29 @@ public final class ColumnIndexBuilder {
     /** Appends one page entry from the accumulator's per-page snapshot. */
     public void appendPage(@NonNull PageStatistics pageStats) {
         nullPages.add(pageStats.isNullPage());
-        minValues.add(pageStats.min());
-        maxValues.add(pageStats.max());
+        minValues.add(lowerBound(pageStats.min()));
+        maxValues.add(upperBound(pageStats.max()));
         nullCounts.add(pageStats.nullCount());
         if (order.isFloatingPoint()) {
             nanCounts.add(requiredNaNCount(pageStats));
         }
+    }
+
+    private MemorySegment lowerBound(MemorySegment min) {
+        return cutsBounds() ? BoundTruncator.lowerBound(min, MAX_COLUMN_INDEX_BOUND_BYTES) : min;
+    }
+
+    private MemorySegment upperBound(MemorySegment max) {
+        return cutsBounds() ? BoundTruncator.upperBound(max, MAX_COLUMN_INDEX_BOUND_BYTES) : max;
+    }
+
+    /**
+     * Whether the bounds of a page may be cut. In unsigned byte order a prefix of a value orders before the value, as
+     * required by {@link BoundTruncator}. The bytes of a decimal in signed byte order are kept, because a cut would
+     * make them hold another number.
+     */
+    private boolean cutsBounds() {
+        return order == BoundsOrder.UNSIGNED_BYTES;
     }
 
     private static long requiredNaNCount(PageStatistics pageStats) {

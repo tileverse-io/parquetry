@@ -634,6 +634,29 @@ class ColumnChunkWriterTest {
                 .isEqualTo(2);
     }
 
+    // A value of 1 MiB is the maximum of its page and of its chunk.
+    @Test
+    void longValueBoundsStaySmall() throws Exception {
+        WriteOptions options = WriteOptions.builder()
+                .encodingPolicy("col", EncodingPolicy.FORCE_PLAIN)
+                .build();
+        byte[] longValue = "x".repeat(1 << 20).getBytes(StandardCharsets.UTF_8);
+
+        ColumnChunkResult result;
+        try (ColumnChunkWriter writer = new ColumnChunkWriter(options, requiredBinary("col"), tempFile)) {
+            writer.appendBinary(MemorySegment.ofArray(bytes("b")), 0, 0);
+            writer.appendBinary(MemorySegment.ofArray(longValue), 0, 0);
+            result = writer.finishChunk();
+        }
+
+        assertThat(result.chunkStatistics().maxValue()).isEqualTo(MemorySegment.NULL);
+        assertThat(result.columnIndex().maxValues().getFirst().byteSize())
+                .isEqualTo(ColumnIndexBuilder.MAX_COLUMN_INDEX_BOUND_BYTES);
+        assertThat(Files.size(tempFile))
+                .as("no uncompressed copy of the value in the pages")
+                .isLessThan(longValue.length / 2L);
+    }
+
     // --- helpers ---
 
     private static SchemaNode.Primitive requiredGeometry(String name) {

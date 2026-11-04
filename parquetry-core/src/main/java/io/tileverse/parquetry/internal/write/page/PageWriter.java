@@ -50,6 +50,13 @@ import io.tileverse.parquetry.internal.write.ColumnContext;
  */
 public final class PageWriter {
 
+    /**
+     * The longest bound written in a page header. A page holding one value of 9 MiB holds it as both its minimum and
+     * its maximum, and its header would take 18 MiB. Arrow C++ refuses a page header above 16 MiB, and it leaves a
+     * bound longer than 4 KiB out of a page header.
+     */
+    static final int MAX_PAGE_HEADER_BOUND_BYTES = 4096;
+
     private final ColumnContext column;
     private final Compression codec;
 
@@ -329,8 +336,9 @@ public final class PageWriter {
         if (pageStats == null) {
             return Optional.empty();
         }
-        MemorySegment min = pageStats.min();
-        MemorySegment max = pageStats.max();
+        boolean boundsFit = fitsInPageHeader(pageStats.min()) && fitsInPageHeader(pageStats.max());
+        MemorySegment min = boundsFit ? pageStats.min() : MemorySegment.NULL;
+        MemorySegment max = boundsFit ? pageStats.max() : MemorySegment.NULL;
         boolean hasMinMax = min != MemorySegment.NULL || max != MemorySegment.NULL;
         boolean hasNullCount = pageStats.nullCount() > 0L || pageStats.isNullPage();
         boolean hasNaNCount = pageStats.nanCount().isPresent();
@@ -342,10 +350,14 @@ public final class PageWriter {
                 .distinctCount(OptionalLong.empty())
                 .minValue(min)
                 .maxValue(max)
-                .isMinValueExact(pageStats.minExact())
-                .isMaxValueExact(pageStats.maxExact())
+                .isMinValueExact(boundsFit && pageStats.minExact())
+                .isMaxValueExact(boundsFit && pageStats.maxExact())
                 .nanCount(pageStats.nanCount())
                 .build();
         return Optional.of(statistics);
+    }
+
+    private static boolean fitsInPageHeader(MemorySegment bound) {
+        return bound.byteSize() <= MAX_PAGE_HEADER_BOUND_BYTES;
     }
 }

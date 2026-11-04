@@ -19,6 +19,7 @@ import static io.tileverse.parquetry.format.ParquetLayouts.DOUBLE;
 import static io.tileverse.parquetry.format.ParquetLayouts.FLOAT;
 import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
 import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
+import static io.tileverse.parquetry.internal.write.StatisticsAccumulator.MAX_FOOTER_BOUND_BYTES;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -432,6 +433,47 @@ class StatisticsAccumulatorTest {
         assertThat(page.nullCount()).isEqualTo(3L);
         assertThat(page.min()).isEqualTo(MemorySegment.NULL);
         assertThat(page.max()).isEqualTo(MemorySegment.NULL);
+    }
+
+    @Test
+    void longBoundsLeftOutOfFooter() {
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.BYTE_ARRAY, new LogicalType.StringType());
+        acc.updateBinary(segmentOf("b"));
+        acc.updateBinary(segmentOf("x".repeat(MAX_FOOTER_BOUND_BYTES + 1)));
+        acc.updateNull();
+
+        Statistics stats = acc.finishChunk();
+
+        assertThat(stats.nullCount()).hasValue(1L);
+        assertThat(stats.minValue()).isEqualTo(MemorySegment.NULL);
+        assertThat(stats.maxValue()).isEqualTo(MemorySegment.NULL);
+        assertThat(stats.isMinValueExact()).isFalse();
+        assertThat(stats.isMaxValueExact()).isFalse();
+    }
+
+    @Test
+    void boundsOf4KiBStayInFooter() {
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.BYTE_ARRAY, new LogicalType.StringType());
+        acc.updateBinary(segmentOf("b"));
+        acc.updateBinary(segmentOf("x".repeat(MAX_FOOTER_BOUND_BYTES)));
+
+        Statistics stats = acc.finishChunk();
+
+        assertThat(utf8(stats.minValue())).isEqualTo("b");
+        assertThat(stats.maxValue().byteSize()).isEqualTo(MAX_FOOTER_BOUND_BYTES);
+        assertThat(stats.isMaxValueExact()).isTrue();
+    }
+
+    // The column index cuts the bounds of a page from the whole value, and the page header drops them on its own.
+    @Test
+    void pageSnapshotKeepsLongBounds() {
+        StatisticsAccumulator acc = WriteFixtures.accumulator(PrimitiveKind.BYTE_ARRAY, new LogicalType.StringType());
+        acc.updateBinary(segmentOf("x".repeat(MAX_FOOTER_BOUND_BYTES + 1)));
+
+        PageStatistics page = acc.finishPage();
+
+        assertThat(page.min().byteSize()).isEqualTo(MAX_FOOTER_BOUND_BYTES + 1L);
+        assertThat(page.max().byteSize()).isEqualTo(MAX_FOOTER_BOUND_BYTES + 1L);
     }
 
     private static void assertSameStats(Statistics a, Statistics b) {
