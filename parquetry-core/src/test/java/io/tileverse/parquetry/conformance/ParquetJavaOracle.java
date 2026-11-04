@@ -78,13 +78,7 @@ final class ParquetJavaOracle {
 
     private static Object canonicalizeField(Group group, int field) {
         Type fieldType = group.getType().getType(field);
-        if (isList(fieldType)) {
-            return canonicalizeListField(group, field, fieldType.asGroupType());
-        }
-        if (isMap(fieldType)) {
-            return canonicalizeMapField(group, field, fieldType.asGroupType());
-        }
-        if (fieldType.isRepetition(Type.Repetition.REPEATED)) {
+        if (fieldType.isRepetition(Type.Repetition.REPEATED) && !isList(fieldType) && !isMap(fieldType)) {
             return canonicalizeRepeated(group, field, fieldType);
         }
         if (group.getFieldRepetitionCount(field) == 0) {
@@ -93,24 +87,33 @@ final class ParquetJavaOracle {
         return canonicalizeMember(group, field, 0, fieldType);
     }
 
-    // A standard LIST is an optional/required group holding one repeated child; the element is that child's lone field
-    // when the child is a group (three-level), or the repeated primitive itself (two-level).
-    private static Object canonicalizeListField(Group group, int field, GroupType listType) {
-        if (group.getFieldRepetitionCount(field) == 0) {
-            return null;
-        }
-        Group listGroup = group.getGroup(field, 0);
+    // A LIST is a group holding one repeated child. By the backward-compatibility rules of the format, the repeated
+    // child is the element when it is a primitive, a group of several fields, a group of one repeated field, or a
+    // group named "array" or "<list>_tuple"; otherwise it is a three-level wrapper around the element.
+    private static Object canonicalizeList(Group listGroup, GroupType listType) {
         Type repeated = listType.getType(0);
+        boolean repeatedIsElement = isListElement(repeated, listType.getName());
         int count = listGroup.getFieldRepetitionCount(0);
         List<Object> elements = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
-            if (repeated.isPrimitive()) {
+            if (repeatedIsElement) {
                 elements.add(canonicalizeMember(listGroup, 0, i, repeated));
             } else {
                 elements.add(threeLevelElement(listGroup.getGroup(0, i), repeated.asGroupType()));
             }
         }
         return elements;
+    }
+
+    private static boolean isListElement(Type repeated, String listName) {
+        if (repeated.isPrimitive()) {
+            return true;
+        }
+        GroupType group = repeated.asGroupType();
+        return group.getFieldCount() != 1
+                || group.getType(0).isRepetition(Type.Repetition.REPEATED)
+                || group.getName().equals("array")
+                || group.getName().equals(listName + "_tuple");
     }
 
     // In a three-level list the element sits inside a repeated wrapper group. When that element is optional and absent,
@@ -122,11 +125,7 @@ final class ParquetJavaOracle {
         return canonicalizeMember(wrapper, 0, 0, wrapperType.getType(0));
     }
 
-    private static Object canonicalizeMapField(Group group, int field, GroupType mapType) {
-        if (group.getFieldRepetitionCount(field) == 0) {
-            return null;
-        }
-        Group mapGroup = group.getGroup(field, 0);
+    private static Object canonicalizeMap(Group mapGroup, GroupType mapType) {
         GroupType keyValueType = mapType.getType(0).asGroupType();
         Type keyType = keyValueType.getType(0);
         Type valueType = keyValueType.getType(1);
@@ -157,7 +156,14 @@ final class ParquetJavaOracle {
             return primitiveValue(
                     group, field, index, memberType.asPrimitiveType().getPrimitiveTypeName());
         }
-        return canonicalize(group.getGroup(field, index));
+        Group member = group.getGroup(field, index);
+        if (isList(memberType)) {
+            return canonicalizeList(member, memberType.asGroupType());
+        }
+        if (isMap(memberType)) {
+            return canonicalizeMap(member, memberType.asGroupType());
+        }
+        return canonicalize(member);
     }
 
     private static Object primitiveValue(Group group, int field, int index, PrimitiveType.PrimitiveTypeName kind) {

@@ -63,6 +63,7 @@ import io.tileverse.parquetry.runtime.ComputeExecutor;
 import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.StandardLists;
 
 import lombok.NonNull;
 
@@ -71,6 +72,10 @@ import lombok.NonNull;
  * one or more row groups (each consolidated in turn into the caller's {@link ByteSink sink}), the column-index /
  * offset-index / bloom-filter blobs that follow every row group, the GeoParquet metadata when configured, and the
  * trailing {@code FileMetaData} footer, footer length, and tail {@code PAR1}.
+ *
+ * <p>The writer writes lists in the standard form only. A list given in the shape of an older writer is written in the
+ * standard form, as {@link StandardLists} reads it, and its per-column {@link WriteOptions} name its leaves by their
+ * standard paths.
  *
  * <p>The writer never closes the sink it is given; the caller owns the sink's lifecycle. On the success path the caller
  * commits by closing the sink after a successful {@link #close()}; on the failure path the caller does not close the
@@ -158,7 +163,7 @@ public final class ParquetFileWriter implements AutoCloseable {
             @NonNull ParquetRuntime runtime,
             long maxRowGroupBytesLimit) {
         GeoMetadataWriter geoWriter = new GeoMetadataWriter(options);
-        ParquetSchema logicalSchema = geoWriter.applyV2LogicalTypes(rawSchema);
+        ParquetSchema logicalSchema = geoWriter.applyV2LogicalTypes(StandardLists.of(rawSchema));
         BboxCoveringPlan covering = BboxCoveringPlan.resolve(options, logicalSchema, geoWriter);
         ParquetSchema writtenSchema = covering.writtenSchema();
         Path tempDir = WriterTempDirectory.createTempDir(options);

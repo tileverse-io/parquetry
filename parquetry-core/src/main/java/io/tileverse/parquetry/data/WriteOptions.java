@@ -43,6 +43,10 @@ import lombok.NonNull;
  * {@link EncodingPolicy}, {@link BloomFilterConfig}) are nested here to keep the {@code dataset} package surface
  * focused on the entry points. {@link Compression} stays at the package root because the read pipeline consumes it too.
  *
+ * <p>The per-column options name the leaves of the written schema by their dotted paths. The writer writes lists in the
+ * standard form: the leaf of a list given in the shape of an older writer is named by its standard path,
+ * {@code tags.list.element} for {@code tags.array}. An option naming no leaf of the written schema is ignored.
+ *
  * <p>Construct via {@link #defaults()} for the project defaults, or via {@link #builder()} to override individual
  * settings. The {@link Builder} returns an immutable record; subsequent mutations on the builder do not affect
  * previously built instances.

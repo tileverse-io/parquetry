@@ -97,15 +97,20 @@ class ParquetRecordBatchBuilderTest {
         return ParquetRecordBatchBuilder.forSchema(schema);
     }
 
+    // A repeated primitive outside a list is a list of its values, as the format reads it.
     @Test
-    void rejectsRepeatedLeaf() {
+    void repeatedLeafIsAList() {
         SchemaNode.Primitive repeated = new SchemaNode.Primitive(
-                "tags", Repetition.REPEATED, PrimitiveKind.BYTE_ARRAY, OptionalInt.empty(), Optional.empty(), -1);
+                "codes", Repetition.REPEATED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
         SchemaNode.Group root =
                 new SchemaNode.Group("schema", Repetition.REQUIRED, List.of(repeated), Optional.empty(), -1);
         ParquetSchema schema = new ParquetSchema(root);
 
-        assertThatThrownBy(() -> ParquetRecordBatchBuilder.forSchema(schema)).isInstanceOf(ParquetWriteException.class);
+        ParquetRecordBatchBuilder builder = ParquetRecordBatchBuilder.forSchema(schema);
+        builder.beginList("codes").addInt(1).addInt(2).endList().endRow();
+        ParquetRecordBatch batch = builder.build();
+
+        assertThat(batch.materialize(0).get(ColumnPath.of("codes"))).isEqualTo(List.of(1, 2));
     }
 
     @Test

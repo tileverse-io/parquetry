@@ -283,12 +283,8 @@ class DremelStriperTest {
 
     @Test
     void repeatedLeafBackedByNonListVectorIsRejected() {
-        SchemaNode.Primitive repeated = new SchemaNode.Primitive(
-                "tags", Repetition.REPEATED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
-        SchemaNode.Group list = new SchemaNode.Group(
-                "mylist", Repetition.OPTIONAL, List.of(repeated), Optional.of(new LogicalType.ListType()), -1);
-        ParquetSchema schema = schemaOf(list);
-        // the leaf is repeated but the batch supplies a flat IntVector rather than a ListVector
+        ParquetSchema schema = listOfOptionalInt();
+        // the column is a list, but the batch supplies a flat IntVector rather than a ListVector
         IntVector values = IntVector.materialized(new int[] {1}, Validity.allValid(1));
         ParquetRecordBatch batch = heapBatch(schema, Map.of(ColumnPath.of("mylist"), values), 1);
 

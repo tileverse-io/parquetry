@@ -26,6 +26,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.tileverse.parquetry.cli.Par;
 import io.tileverse.parquetry.cli.support.Fixtures;
+import io.tileverse.parquetry.testkit.TestCorpus;
 
 import picocli.CommandLine;
 
@@ -66,6 +67,20 @@ class StatsCmdTest {
         assertThat(code).isZero();
         String output = out.toString();
         assertThat(output).startsWith("[").contains("\"column\"").contains("\"type\"");
+    }
+
+    // A list stored by an older writer is named as par schema and --columns name it.
+    @Test
+    void namesListsInTheStandardForm(@TempDir Path dir) {
+        Path file = TestCorpus.extractFile("parquet-testing/data/repeated_primitive_no_list.parquet", dir);
+        StringWriter out = new StringWriter();
+        CommandLine cmd = Par.newCommandLine();
+        cmd.setOut(new PrintWriter(out));
+
+        int code = cmd.execute("stats", file.toString());
+
+        assertThat(code).isZero();
+        assertThat(out.toString()).contains("Int32_list.list.element").doesNotContain("Int32_list ");
     }
 
     @Test

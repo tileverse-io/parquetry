@@ -25,14 +25,6 @@ large_string_map.brotli.parquet            # column chunk over 2 GB
 
 # FOLLOW-UP parquetry read bugs: the parquet-java oracle reads these, parquetry does not yet match.
 map_no_value.parquet                       # FOLLOW-UP: parquetry read bug (oracle reads int32-keyed map; parquetry throws)
-nullable.impala.parquet                    # FOLLOW-UP: parquetry materializes an unannotated structural LIST/MAP group as a struct; oracle reads it as list/map
-nested_maps.snappy.parquet                 # FOLLOW-UP: parquetry materializes an unannotated structural MAP group as a struct; oracle reads it as a map
-repeated_no_annotation.parquet             # FOLLOW-UP: parquetry materializes a legacy repeated group with no LIST annotation as a struct; oracle reads it as a list
-repeated_primitive_no_list.parquet         # FOLLOW-UP: parquetry materializes a legacy repeated primitive with no LIST annotation as a scalar; oracle reads it as a list
-datapage_v2.snappy.parquet                 # FOLLOW-UP: parquetry materializes an unannotated structural LIST group as a struct ({list=[1,2,3]}); oracle reads it as a list
-nested_lists.snappy.parquet                # FOLLOW-UP: parquetry materializes an unannotated nested structural LIST group as a struct; oracle reads nested lists
-nonnullable.impala.parquet                 # FOLLOW-UP: parquetry materializes unannotated structural LIST/MAP groups as structs; oracle reads them as list/map
-old_list_structure.parquet                 # FOLLOW-UP: list-of-lists a=[[1,2],[3,4]] (pyarrow); both parquetry [1,2] and oracle [1,3] flatten it
 
 # BYTE_STREAM_SPLIT on FIXED_LEN_BYTE_ARRAY is a Parquet 2.x extension not in the current decoder table; future codec/encoding pass
 byte_stream_split_extended.gzip.parquet    # BYTE_STREAM_SPLIT + FIXED_LEN_BYTE_ARRAY

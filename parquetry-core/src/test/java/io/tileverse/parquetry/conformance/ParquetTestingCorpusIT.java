@@ -19,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -31,19 +32,25 @@ import java.util.TreeSet;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.data.ParquetFileReader;
+import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
+import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.SchemaBuilder;
+import io.tileverse.parquetry.schema.StandardLists;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
 
 /**
@@ -68,6 +75,9 @@ class ParquetTestingCorpusIT {
     private static final Path DATA_DIR = CorpusFixtures.parquetTestingData();
     private static final String EXCLUSIONS_RESOURCE = "/parquet-testing-exclusions.txt";
     private static final String ORACLE_EXCLUSIONS_RESOURCE = "/parquet-testing-oracle-exclusions.txt";
+
+    @TempDir
+    Path tempDir;
 
     @Test
     void submoduleIsCheckedOut() {
@@ -105,6 +115,34 @@ class ParquetTestingCorpusIT {
         assertThat(pool.stats().outstandingBorrows())
                 .as("pooled buffers must drain after %s", fixtureName)
                 .isZero();
+    }
+
+    // A copy writes the lists of older writers in the standard form, and parquet-java reads the same rows from it.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("legacyListFixtures")
+    void copyKeepsLegacyLists(String fixtureName) throws IOException {
+        Path fixture = DATA_DIR.resolve(fixtureName);
+        Path copy = tempDir.resolve(fixtureName);
+
+        copyThroughBatches(fixture, copy);
+
+        ParquetSchema stored = storedSchema(copy);
+        assertThat(StandardLists.of(stored))
+                .as("%s copy has standard lists", fixtureName)
+                .isSameAs(stored);
+        List<Map<String, Object>> expected = ParquetJavaOracle.read(fixture);
+        List<Map<String, Object>> actual = ParquetJavaOracle.read(copy);
+        assertThat(actual).as("%s copy row count", fixtureName).hasSameSizeAs(expected);
+        for (int i = 0; i < actual.size(); i++) {
+            assertThat(CanonicalRow.deepEquals(actual.get(i), expected.get(i)))
+                    .as("%s copy row %d: %s vs source %s", fixtureName, i, actual.get(i), expected.get(i))
+                    .isTrue();
+        }
+    }
+
+    static Stream<String> legacyListFixtures() {
+        return Stream.of(
+                "repeated_primitive_no_list.parquet", "repeated_no_annotation.parquet", "old_list_structure.parquet");
     }
 
     @ParameterizedTest(name = "{0}")
@@ -177,6 +215,31 @@ class ParquetTestingCorpusIT {
                 return records.map(parquetRecord -> CanonicalRow.fromParquetry(parquetRecord, schema))
                         .toList();
             }
+        }
+    }
+
+    /** Copies {@code from} batch by batch, as {@code par cp} does. */
+    private void copyThroughBatches(Path from, Path to) throws IOException {
+        WriteOptions options = WriteOptions.builder().tempDir(tempDir).build();
+        try (ByteRangeSource source = ByteRangeSource.ofFile(from);
+                OutputStream out = Files.newOutputStream(to)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            try (ParquetFileWriter writer = ParquetFileWriter.create(out, reader.schema(), options);
+                    Stream<ParquetRecordBatch> batches =
+                            reader.readBatches(Predicate.ALWAYS_TRUE, Projection.ALL, ReadOptions.DEFAULTS)) {
+                batches.forEach(batch -> {
+                    try (batch) {
+                        writer.writeBatch(batch);
+                    }
+                });
+            }
+        }
+    }
+
+    /** The schema as stored in the footer of {@code file}, before a reader rewrites its lists. */
+    private static ParquetSchema storedSchema(Path file) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            return SchemaBuilder.build(ParquetFormat.readFooter(source).schema());
         }
     }
 

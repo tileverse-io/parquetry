@@ -54,6 +54,7 @@ import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.runtime.ParquetRuntime;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.StandardLists;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
 
 import lombok.NonNull;
@@ -147,7 +148,10 @@ public final class ParquetFileReader {
                 .orElseGet(loader);
     }
 
-    /** Returns the file schema, with GeoParquet 1.x logical-type annotations folded in. */
+    /**
+     * Returns the file schema, with GeoParquet 1.x logical-type annotations folded in. Lists are in the standard form:
+     * a list stored in the shape of an older writer reads as {@link StandardLists} rewrites it.
+     */
     public ParquetSchema schema() {
         return footer.fileSchema();
     }
