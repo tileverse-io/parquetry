@@ -18,6 +18,7 @@ package io.tileverse.parquetry.internal.write;
 import static io.tileverse.parquetry.format.ParquetLayouts.FLOAT;
 import static io.tileverse.parquetry.format.ParquetLayouts.INT32;
 import static io.tileverse.parquetry.format.ParquetLayouts.INT64;
+import static io.tileverse.parquetry.internal.write.ColumnIndexBuilder.MAX_COLUMN_INDEX_BOUND_BYTES;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -27,6 +28,7 @@ import java.io.ByteArrayOutputStream;
 import java.lang.foreign.MemorySegment;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 import java.util.OptionalLong;
 
@@ -375,6 +377,45 @@ class ColumnIndexBuilderTest {
         assertThat(index.boundaryOrder()).isEqualTo(BoundaryOrder.ASCENDING);
     }
 
+    @Test
+    void longStringBoundsAreCut() {
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.UNSIGNED_BYTES);
+        builder.appendPage(page(bytes("a".repeat(100)), bytes("c".repeat(100)), 0L, false));
+        builder.appendPage(page(MemorySegment.NULL, MemorySegment.NULL, 3L, true));
+
+        ColumnIndex index = builder.finishChunk().orElseThrow();
+
+        assertThat(utf8(index.minValues().getFirst())).isEqualTo("a".repeat(MAX_COLUMN_INDEX_BOUND_BYTES));
+        assertThat(utf8(index.maxValues().getFirst())).isEqualTo("c".repeat(MAX_COLUMN_INDEX_BOUND_BYTES - 1) + "d");
+        assertThat(index.minValues().getLast()).isEqualTo(MemorySegment.NULL);
+        assertThat(index.maxValues().getLast()).isEqualTo(MemorySegment.NULL);
+    }
+
+    // A page holding values needs both bounds, and no short bound orders after 0xFF bytes.
+    @Test
+    void uncuttableMaxLeavesNoIndex() {
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.UNSIGNED_BYTES);
+        byte[] max = new byte[100];
+        Arrays.fill(max, (byte) 0xFF);
+        builder.appendPage(page(bytes("a"), MemorySegment.ofArray(max).asReadOnly(), 0L, false));
+
+        assertThat(builder.finishChunk()).isEmpty();
+    }
+
+    // Cut, the big-endian bytes of a decimal would hold another number.
+    @Test
+    void longDecimalBoundsStayWhole() {
+        ColumnIndexBuilder builder = new ColumnIndexBuilder(BoundsOrder.SIGNED_BYTES);
+        MemorySegment min = MemorySegment.ofArray(WriteFixtures.signedBytes(BigInteger.ZERO, 100));
+        MemorySegment max = MemorySegment.ofArray(WriteFixtures.signedBytes(BigInteger.ONE, 100));
+        builder.appendPage(page(min, max, 0L, false));
+
+        ColumnIndex index = builder.finishChunk().orElseThrow();
+
+        assertThat(index.minValues().getFirst().byteSize()).isEqualTo(100L);
+        assertThat(index.maxValues().getFirst().byteSize()).isEqualTo(100L);
+    }
+
     /** The statistics of a page of a FLOAT column holding no NaN cell and no null. */
     private static PageStatistics floatPage(float min, float max) {
         return floatPageWithNaNs(min, max, 0L);
@@ -434,5 +475,9 @@ class ColumnIndexBuilderTest {
 
     private static MemorySegment bytes(String s) {
         return MemorySegment.ofArray(s.getBytes(StandardCharsets.UTF_8)).asReadOnly();
+    }
+
+    private static String utf8(MemorySegment segment) {
+        return new String(segment.toArray(JAVA_BYTE), StandardCharsets.UTF_8);
     }
 }
