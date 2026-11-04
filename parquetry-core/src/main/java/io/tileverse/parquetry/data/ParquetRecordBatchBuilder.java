@@ -36,6 +36,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.StandardLists;
 import io.tileverse.parquetry.schema.UuidConverter;
 import io.tileverse.parquetry.variant.Variant;
 
@@ -51,7 +52,8 @@ import io.tileverse.parquetry.variant.Variant;
  * <p>Struct columns are handled through the {@link #beginStruct(ColumnPath)} / {@link #endStruct()} scope protocol.
  * Open a struct scope before setting its child fields; {@link #endStruct()} marks the struct present for the row. Call
  * {@link #setNull(ColumnPath)} on the struct path to null the entire struct (children are automatically nulled). A
- * {@link Repetition#REPEATED} leaf or group is rejected at construction.
+ * {@link Repetition#REPEATED} field outside a list is a list, authored through {@link #beginList(String)}, as
+ * {@link StandardLists} reads it.
  *
  * <p>Two terminal modes exist. A standalone builder ({@link #forSchema}) accumulates every authored row and produces
  * one heap-backed batch through {@link #build()}; the caller decides when to stop. A builder bound to a
@@ -126,8 +128,12 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
     // to trigger an auto-flush.
     private long approxBatchBytes;
 
+    /**
+     * A builder of batches for {@code schema}. A list given in the shape of an older writer is built in the standard
+     * form, as {@link StandardLists} reads it and as the writer writes it.
+     */
     public static ParquetRecordBatchBuilder forSchema(ParquetSchema schema) {
-        return new ParquetRecordBatchBuilder(schema, null, 0, DEFAULT_BATCH_BYTES);
+        return new ParquetRecordBatchBuilder(StandardLists.of(schema), null, 0, DEFAULT_BATCH_BYTES);
     }
 
     static ParquetRecordBatchBuilder boundTo(
@@ -236,17 +242,10 @@ public final class ParquetRecordBatchBuilder implements AutoCloseable {
         return this;
     }
 
-    /** The name of a list's element node ({@code element} in the standard three-level encoding). */
+    /** The name of a list's element node: the single child of its repeated group. */
     private String listElementNodeName(ColumnPath path) {
         SchemaNode.Group listGroup = requireGroup(path, "list");
-        SchemaNode repeated = listGroup.children().get(0);
-        if (repeated instanceof SchemaNode.Primitive) {
-            return repeated.name();
-        }
-        SchemaNode.Group repeatedGroup = (SchemaNode.Group) repeated;
-        if (repeatedGroup.repetition() != Repetition.REPEATED) {
-            return repeated.name();
-        }
+        SchemaNode.Group repeatedGroup = (SchemaNode.Group) listGroup.children().get(0);
         return repeatedGroup.children().get(0).name();
     }
 

@@ -42,7 +42,6 @@ import io.tileverse.parquetry.columnar.StructVector;
 import io.tileverse.parquetry.columnar.Validity;
 import io.tileverse.parquetry.columnar.VariantVector;
 import io.tileverse.parquetry.data.ParquetWriteException;
-import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.internal.variant.ShreddedVariantShredder;
 import io.tileverse.parquetry.internal.variant.ShreddedVariantShredder.VariantShred;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -50,6 +49,7 @@ import io.tileverse.parquetry.schema.GroupKind;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.StandardLists;
 import io.tileverse.parquetry.variant.ShreddedVariant;
 import io.tileverse.parquetry.variant.Variant;
 
@@ -126,10 +126,9 @@ public sealed interface ColumnAccumulator
     }
 
     /**
-     * Creates an accumulator for any schema node: a primitive leaf, a list group, a map group, or a plain struct group.
-     * List and map groups are recognized structurally (a {@link LogicalType.ListType}/{@link LogicalType.MapType}
-     * annotation, or a bare repeated group / repeated primitive forming a legacy two-level list), matching the read
-     * path's classification.
+     * Creates an accumulator for any schema node: a primitive leaf, a list group, a map group, or a plain struct group,
+     * classified by {@link GroupKind}. Lists are in the standard three-level form: the writer rewrites the schema it is
+     * given with {@link StandardLists}.
      */
     static ColumnAccumulator forNode(SchemaNode node) {
         return switch (node) {
@@ -197,8 +196,7 @@ public sealed interface ColumnAccumulator
     }
 
     private static ListAccumulator forList(SchemaNode.Group listGroup) {
-        SchemaNode element = listElementNode(listGroup);
-        ColumnAccumulator elementAccumulator = forElementNode(element);
+        ColumnAccumulator elementAccumulator = forNode(listElementNode(listGroup));
         rejectShreddedVariantElement(elementAccumulator, listGroup.name());
         boolean optional = listGroup.repetition() == Repetition.OPTIONAL;
         return new ListAccumulator(elementAccumulator, optional);
@@ -215,33 +213,9 @@ public sealed interface ColumnAccumulator
         }
     }
 
-    /**
-     * Builds the accumulator for a list or map element. A REPEATED primitive element is the legacy two-level encoding
-     * whose repetition belongs to the enclosing list, not the value; it accumulates as a scalar of its kind. Any other
-     * element follows the general {@link #forNode} classification.
-     */
-    private static ColumnAccumulator forElementNode(SchemaNode element) {
-        if (element instanceof SchemaNode.Primitive primitive && primitive.repetition() == Repetition.REPEATED) {
-            return forKind(primitive.kind(), primitive.typeLength().orElse(0));
-        }
-        return forNode(element);
-    }
-
-    /**
-     * The element type of a list. A bare repeated group or repeated primitive directly under the list group is the
-     * legacy two-level encoding, whose repeated node is the element. The standard three-level encoding wraps the
-     * element in a repeated group ({@code repeated group list { <element> }}); the element is that group's single
-     * child.
-     */
+    /** The element of a list: the single child of its repeated group ({@code repeated group list { <element> }}). */
     private static SchemaNode listElementNode(SchemaNode.Group listGroup) {
-        SchemaNode repeated = listGroup.children().get(0);
-        if (repeated instanceof SchemaNode.Primitive) {
-            return repeated;
-        }
-        SchemaNode.Group repeatedGroup = (SchemaNode.Group) repeated;
-        if (repeatedGroup.repetition() != Repetition.REPEATED) {
-            return repeated;
-        }
+        SchemaNode.Group repeatedGroup = (SchemaNode.Group) listGroup.children().get(0);
         return repeatedGroup.children().get(0);
     }
 

@@ -35,6 +35,7 @@ import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.SchemaBuilder;
+import io.tileverse.parquetry.schema.StandardLists;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeoParquetMetadata;
 import io.tileverse.parquetry.schema.geo.geoparquet.GeometryColumns;
 
@@ -80,16 +81,21 @@ record FooterMetadata(
      *
      * <p>The GeoParquet {@code "geo"} metadata is parsed once: the schema folds it into GeoParquet 1.x logical-type
      * annotations, and the reader keeps it.
+     *
+     * <p>The schema of the file holds its lists in the standard form, as read by the backward-compatibility rules of
+     * the format. The column chunks name their columns by the stored paths, and they are bound to the leaves through
+     * the stored schema. Both schemas hold the same leaves in the same order.
      */
     static FooterMetadata parse(ByteRangeSource source) {
         FileMetaData footer = ParquetFormat.readFooter(source);
         Map<String, String> kvMetadata = collapseKeyValueMetadata(footer.keyValueMetadata());
         Optional<GeoParquetMetadata> geoMetadata = SchemaBuilder.geoMetadata(kvMetadata);
-        ParquetSchema fileSchema = SchemaBuilder.build(footer.schema(), geoMetadata);
+        ParquetSchema storedSchema = SchemaBuilder.build(footer.schema(), geoMetadata);
+        ParquetSchema fileSchema = StandardLists.of(storedSchema);
         Optional<ColumnPath> primaryGeometry = GeometryColumns.primary(fileSchema, geoMetadata);
         List<RowGroupSummary> rowGroups = rowGroupView(footer);
         LeafIndex leafIndex = LeafIndex.of(fileSchema);
-        CompactFooter compactFooter = CompactFooter.encode(footer, leafIndex);
+        CompactFooter compactFooter = CompactFooter.encode(footer, LeafIndex.of(storedSchema));
         SpatialBoundsSource spatialBounds = SpatialBoundsSource.of(compactFooter, leafIndex, fileSchema, geoMetadata);
         long columnChunkBytes = columnChunkBytes(footer);
         boolean offsetIndexOnEachChunk = offsetIndexOnEachChunk(footer);

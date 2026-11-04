@@ -482,16 +482,11 @@ public final class DremelStriper {
     /**
      * Resolves the element node of a list or map group and advances {@code path} past the collapsed repeated child
      * group. For a list the element is the single descendant of the repeated child; for a map it is the key or value
-     * the leaf descends into. The legacy two-level list whose repeated child is itself the primitive element is handled
-     * by treating that primitive as the element.
+     * the leaf descends into.
      */
     private SchemaNode descendRepeated(SchemaNode.Group group, ColumnPath leafPath, List<String> path, int part) {
-        SchemaNode repeatedChild = group.children().get(0);
-        path.add(repeatedChild.name());
-        if (repeatedChild instanceof SchemaNode.Primitive) {
-            return repeatedChild;
-        }
-        SchemaNode.Group repeatedGroup = (SchemaNode.Group) repeatedChild;
+        SchemaNode.Group repeatedGroup = (SchemaNode.Group) group.children().get(0);
+        path.add(repeatedGroup.name());
         int elementPart = part + 1;
         String elementName = leafPath.part(elementPart);
         SchemaNode element = childOf(repeatedGroup, elementName);

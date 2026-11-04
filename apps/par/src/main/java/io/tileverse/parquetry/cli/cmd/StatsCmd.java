@@ -18,7 +18,9 @@ package io.tileverse.parquetry.cli.cmd;
 import java.io.PrintWriter;
 import java.lang.foreign.MemorySegment;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.concurrent.Callable;
@@ -35,6 +37,10 @@ import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.PhysicalType;
 import io.tileverse.parquetry.format.RowGroup;
 import io.tileverse.parquetry.format.Statistics;
+import io.tileverse.parquetry.schema.ColumnPath;
+import io.tileverse.parquetry.schema.ParquetSchema;
+import io.tileverse.parquetry.schema.SchemaBuilder;
+import io.tileverse.parquetry.schema.StandardLists;
 
 import picocli.CommandLine.ArgGroup;
 import picocli.CommandLine.Command;
@@ -71,6 +77,7 @@ public final class StatsCmd implements Callable<Integer> {
 
     private List<ColumnStats> collectStats(FileMetaData footer) {
         List<ColumnStats> result = new ArrayList<>();
+        Map<ColumnPath, ColumnPath> names = standardNames(footer);
         List<RowGroup> rowGroups = footer.rowGroups();
         for (int rgIndex = 0; rgIndex < rowGroups.size(); rgIndex++) {
             RowGroup rowGroup = rowGroups.get(rgIndex);
@@ -80,15 +87,31 @@ public final class StatsCmd implements Callable<Integer> {
                 if (meta.isEmpty()) {
                     continue;
                 }
-                ColumnStats entry = buildEntry(rgIndex, meta.get());
+                ColumnStats entry = buildEntry(rgIndex, meta.get(), names);
                 result.add(entry);
             }
         }
         return result;
     }
 
-    private ColumnStats buildEntry(int rgIndex, ColumnMetaData meta) {
-        String columnPath = String.join(".", meta.pathInSchema());
+    /**
+     * The name of each column, keyed by its stored path. A list stored in the shape of an older writer is named in the
+     * standard form, as the reader and {@code --columns} name it. Both schemas hold the same leaves in the same order.
+     */
+    private static Map<ColumnPath, ColumnPath> standardNames(FileMetaData footer) {
+        ParquetSchema storedSchema = SchemaBuilder.build(footer.schema());
+        List<ColumnPath> stored = storedSchema.leafColumns();
+        List<ColumnPath> standard = StandardLists.of(storedSchema).leafColumns();
+        Map<ColumnPath, ColumnPath> names = HashMap.newHashMap(stored.size());
+        for (int leaf = 0; leaf < stored.size(); leaf++) {
+            names.put(stored.get(leaf), standard.get(leaf));
+        }
+        return names;
+    }
+
+    private ColumnStats buildEntry(int rgIndex, ColumnMetaData meta, Map<ColumnPath, ColumnPath> names) {
+        ColumnPath storedPath = ColumnPath.of(meta.pathInSchema());
+        String columnPath = names.getOrDefault(storedPath, storedPath).dot();
         PhysicalType type = meta.type();
         long numValues = meta.numValues();
         OptionalLong nullCount = OptionalLong.empty();

@@ -127,11 +127,28 @@ class SchemaBuilderConvertedTypeTest {
         assertThat(logicalType).contains(new LogicalType.MapType());
     }
 
+    // Some writers used MAP_KEY_VALUE in place of MAP: the format reads such a group outside a map as a map.
     @Test
-    void mapKeyValueConvertedTypeStaysEmpty() {
+    void mapKeyValueOutsideAMapIsAMap() {
         Optional<LogicalType> logicalType = groupLogicalType(ConvertedType.MAP_KEY_VALUE);
 
-        assertThat(logicalType).isEmpty();
+        assertThat(logicalType).contains(new LogicalType.MapType());
+    }
+
+    @Test
+    void mapKeyValueInAMapStaysEmpty() {
+        SchemaElement root = groupElement("root", FieldRepetitionType.REQUIRED, Optional.empty());
+        SchemaElement map = groupElement("m", FieldRepetitionType.OPTIONAL, Optional.of(ConvertedType.MAP));
+        SchemaElement entries =
+                groupElement("map", FieldRepetitionType.REPEATED, Optional.of(ConvertedType.MAP_KEY_VALUE));
+        SchemaElement key = leaf(PhysicalType.BYTE_ARRAY, Optional.empty(), OptionalInt.empty(), OptionalInt.empty());
+
+        ParquetSchema schema = SchemaBuilder.build(List.of(root, map, entries, key));
+
+        SchemaNode.Group mapNode = (SchemaNode.Group) schema.root().children().get(0);
+        SchemaNode.Group entriesNode = (SchemaNode.Group) mapNode.children().get(0);
+        assertThat(mapNode.logicalType()).contains(new LogicalType.MapType());
+        assertThat(entriesNode.logicalType()).isEmpty();
     }
 
     @Test
@@ -184,32 +201,28 @@ class SchemaBuilderConvertedTypeTest {
      * child so it is a well-formed group; only the group's own annotation is asserted.
      */
     private static Optional<LogicalType> groupLogicalType(ConvertedType convertedType) {
-        SchemaElement root = new SchemaElement(
-                Optional.empty(),
-                OptionalInt.empty(),
-                Optional.of(FieldRepetitionType.REQUIRED),
-                "root",
-                OptionalInt.of(1),
-                Optional.empty(),
-                OptionalInt.empty(),
-                OptionalInt.empty(),
-                Optional.empty(),
-                OptionalInt.empty());
-        SchemaElement group = new SchemaElement(
-                Optional.empty(),
-                OptionalInt.empty(),
-                Optional.of(FieldRepetitionType.OPTIONAL),
-                "group",
-                OptionalInt.of(1),
-                Optional.of(convertedType),
-                OptionalInt.empty(),
-                OptionalInt.empty(),
-                Optional.empty(),
-                OptionalInt.empty());
+        SchemaElement root = groupElement("root", FieldRepetitionType.REQUIRED, Optional.empty());
+        SchemaElement group = groupElement("group", FieldRepetitionType.OPTIONAL, Optional.of(convertedType));
         SchemaElement child = leaf(PhysicalType.BYTE_ARRAY, Optional.empty(), OptionalInt.empty(), OptionalInt.empty());
         ParquetSchema schema = SchemaBuilder.build(List.of(root, group, child));
         SchemaNode.Group groupNode = (SchemaNode.Group) schema.root().children().get(0);
         return groupNode.logicalType();
+    }
+
+    /** A group element with one child, annotated with {@code convertedType}. */
+    private static SchemaElement groupElement(
+            String name, FieldRepetitionType repetition, Optional<ConvertedType> convertedType) {
+        return new SchemaElement(
+                Optional.empty(),
+                OptionalInt.empty(),
+                Optional.of(repetition),
+                name,
+                OptionalInt.of(1),
+                convertedType,
+                OptionalInt.empty(),
+                OptionalInt.empty(),
+                Optional.empty(),
+                OptionalInt.empty());
     }
 
     private static Optional<LogicalType> build(SchemaElement leaf) {

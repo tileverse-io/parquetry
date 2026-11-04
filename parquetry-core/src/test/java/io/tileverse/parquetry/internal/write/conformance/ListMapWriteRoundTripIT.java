@@ -36,12 +36,16 @@ import io.tileverse.parquetry.data.ParquetFileWriter;
 import io.tileverse.parquetry.data.ParquetRecordBatchBuilder;
 import io.tileverse.parquetry.data.WriteOptions;
 import io.tileverse.parquetry.format.LogicalType;
+import io.tileverse.parquetry.format.ParquetFormat;
+import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.Repetition;
+import io.tileverse.parquetry.schema.SchemaBuilder;
 import io.tileverse.parquetry.schema.SchemaNode;
+import io.tileverse.parquetry.schema.StandardLists;
 
 /**
  * Round-trip tests for LIST and MAP column write support: author rows via {@link ParquetRecordBatchBuilder#beginList} /
@@ -62,6 +66,7 @@ class ListMapWriteRoundTripIT {
     private static final ColumnPath NUMS = ColumnPath.of("nums");
     private static final ColumnPath TAGS = ColumnPath.of("tags");
     private static final ColumnPath ADDRESSES = ColumnPath.of("addresses");
+    private static final ColumnPath CODES = ColumnPath.of("codes");
 
     /**
      * Schema: {@code optional group nums (LIST) { repeated group list { optional int32 element; } }}.
@@ -151,8 +156,7 @@ class ListMapWriteRoundTripIT {
 
     /**
      * Legacy two-level list whose repeated child is itself the primitive element: {@code optional group nums (LIST) {
-     * repeated int32 element; }}. The leaf primitive's own repetition is REPEATED, the shape the row-group writer used
-     * to reject outright.
+     * repeated int32 element; }}. The writer writes it in the standard three-level form.
      *
      * <p>Row 0: [1, 2]. Row 1: empty list. Row 2: null list.
      */
@@ -179,6 +183,34 @@ class ListMapWriteRoundTripIT {
         assertThat(rows.get(2).get(NUMS))
                 .as("null two-level list reads as null")
                 .isNull();
+        assertThat(hasStandardLists(out)).isTrue();
+    }
+
+    /**
+     * A repeated primitive outside a list, {@code repeated int32 codes}, is a required list of required values. The
+     * writer writes it in the standard three-level form.
+     *
+     * <p>Row 0: [1, 2]. Row 1: empty list.
+     */
+    @Test
+    void repeatedValuesWrittenAsList() throws IOException {
+        SchemaNode.Primitive codes = new SchemaNode.Primitive(
+                "codes", Repetition.REPEATED, PrimitiveKind.INT32, OptionalInt.empty(), Optional.empty(), -1);
+        Path out = tempDir.resolve("repeated_int32.parquet");
+
+        WriteOptions opts = WriteOptions.builder().tempDir(tempDir).build();
+        try (ParquetFileWriter writer =
+                ParquetFileWriter.create(Files.newOutputStream(out), WriteConformanceSupport.rootOf(codes), opts)) {
+            ParquetRecordBatchBuilder appender = writer.appender();
+            appender.beginList("codes").addInt(1).addInt(2).endList().endRow();
+            appender.beginList("codes").endList().endRow();
+        }
+
+        List<ParquetRecord> rows = WriteConformanceSupport.readAll(out);
+        assertThat(rows).hasSize(2);
+        assertThat(asList(rows.get(0).get(CODES))).containsExactly(Integer.valueOf(1), Integer.valueOf(2));
+        assertThat(asList(rows.get(1).get(CODES))).isEmpty();
+        assertThat(hasStandardLists(out)).isTrue();
     }
 
     /**
@@ -233,6 +265,15 @@ class ListMapWriteRoundTripIT {
                 .as("empty list of structs reads as no elements")
                 .isEmpty();
         assertThat(rows.get(2).get(ADDRESSES)).as("null list reads as null").isNull();
+    }
+
+    /** Whether the footer of {@code file} stores its lists in the standard three-level form. */
+    private static boolean hasStandardLists(Path file) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetSchema stored =
+                    SchemaBuilder.build(ParquetFormat.readFooter(source).schema());
+            return StandardLists.of(stored) == stored;
+        }
     }
 
     // --- value extraction ---
