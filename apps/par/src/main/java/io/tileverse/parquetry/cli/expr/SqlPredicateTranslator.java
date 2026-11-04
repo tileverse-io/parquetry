@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.cli.expr;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -141,7 +142,7 @@ final class SqlPredicateTranslator {
             case BOOLEAN -> new Value.BoolVal(Literals.asBool(element));
             case INT32 -> int32Literal(element);
             case INT64 -> new Value.LongVal(Literals.asLong(element));
-            case FLOAT -> new Value.FloatVal((float) Literals.asDouble(element));
+            case FLOAT -> floatLiteral(element);
             case DOUBLE -> new Value.DoubleVal(Literals.asDouble(element));
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY ->
                 uuid ? new Value.UuidVal(asUuid(element)) : new Value.StringVal(Literals.asString(element));
@@ -166,7 +167,7 @@ final class SqlPredicateTranslator {
             case BOOLEAN -> ref.eq(Literals.asBool(value));
             case INT32 -> new Predicate.Eq(ref.path(), int32Literal(value));
             case INT64 -> ref.eq(Literals.asLong(value));
-            case FLOAT -> ref.eq((float) Literals.asDouble(value));
+            case FLOAT -> new Predicate.Eq(ref.path(), floatLiteral(value));
             case DOUBLE -> ref.eq(Literals.asDouble(value));
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> uuid ? ref.eq(asUuid(value)) : ref.eq(Literals.asString(value));
             default -> throw unsupportedKind(kind);
@@ -178,8 +179,8 @@ final class SqlPredicateTranslator {
             case BOOLEAN -> Pred.not(ref.eq(Literals.asBool(value)));
             case INT32 -> new Predicate.NotEq(ref.path(), int32Literal(value));
             case INT64 -> ref.notEq(Literals.asLong(value));
-            // Pred.ColumnRef has no float overload for ordering/notEq; compare FLOAT as double.
-            case FLOAT, DOUBLE -> ref.notEq(Literals.asDouble(value));
+            case FLOAT -> new Predicate.NotEq(ref.path(), floatLiteral(value));
+            case DOUBLE -> ref.notEq(Literals.asDouble(value));
             // Core has no notEq(UUID); a UUID column lowers to NOT(eq), mirroring the BOOLEAN arm.
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY ->
                 uuid ? Pred.not(ref.eq(asUuid(value))) : ref.notEq(Literals.asString(value));
@@ -217,12 +218,13 @@ final class SqlPredicateTranslator {
         return comparison.against(ref.path(), literal);
     }
 
-    /** The literal of an ordered comparison with a column of {@code kind}; a FLOAT column compares as double. */
+    /** The literal of an ordered comparison with a column of {@code kind}. */
     private Value orderedLiteral(PrimitiveKind kind, Expression value) {
         return switch (kind) {
             case INT32 -> int32Literal(value);
             case INT64 -> new Value.LongVal(Literals.asLong(value));
-            case FLOAT, DOUBLE -> new Value.DoubleVal(Literals.asDouble(value));
+            case FLOAT -> floatLiteral(value);
+            case DOUBLE -> new Value.DoubleVal(Literals.asDouble(value));
             default -> throw operatorNotSupported(kind);
         };
     }
@@ -237,6 +239,51 @@ final class SqlPredicateTranslator {
             return new Value.IntVal((int) value);
         }
         return new Value.LongVal(value);
+    }
+
+    /**
+     * The literal of a comparison with a FLOAT column. A literal written the way a float prints stands for that float.
+     * Any other literal keeps its own value.
+     *
+     * <p>A writer stores 0.1 as the float nearest to it, and {@code par cat} prints that float as 0.1. The literal 0.1
+     * therefore matches the cells holding that float. No float prints as 16777217, because the nearest float is
+     * 16777216. That literal keeps its value, and no cell equals it.
+     *
+     * <p>The comparison takes the literal as written, before any rounding. Rounded to a double first,
+     * 0.10000000000000000001 would become 0.1 and stand for the float 0.1.
+     */
+    private static Value floatLiteral(Expression literal) {
+        BigDecimal value = Literals.asDecimal(literal);
+        float nearest = value.floatValue();
+        if (printsAs(nearest, value)) {
+            return new Value.FloatVal(nearest);
+        }
+        return new Value.DoubleVal(doubleOrderedLike(value));
+    }
+
+    /** Whether the shortest decimal form of {@code number} has the value of {@code literal}. */
+    private static boolean printsAs(float number, BigDecimal literal) {
+        // An infinite float prints as Infinity, which has no decimal value.
+        return Float.isFinite(number) && new BigDecimal(Float.toString(number)).compareTo(literal) == 0;
+    }
+
+    /**
+     * A double on the same side of each float as {@code literal}. The nearest double serves when it equals the literal.
+     * It also serves when it is no float, because no float then lies between it and the literal. If the nearest double
+     * is a float other than the literal, a cell holding that float would equal the literal. The next double toward the
+     * literal is taken instead. It lies just past the literal and is no float.
+     */
+    // S2111: the comparison needs the exact value of the double; valueOf would read its shortest printed form.
+    @SuppressWarnings("java:S2111")
+    private static double doubleOrderedLike(BigDecimal literal) {
+        // A literal beyond the largest double would round to infinity, and an infinite cell would then equal it.
+        double nearest = Math.clamp(literal.doubleValue(), -Double.MAX_VALUE, Double.MAX_VALUE);
+        int side = literal.compareTo(new BigDecimal(nearest));
+        boolean nearestIsFloat = (float) nearest == nearest;
+        if (side == 0 || !nearestIsFloat) {
+            return nearest;
+        }
+        return side > 0 ? Math.nextUp(nearest) : Math.nextDown(nearest);
     }
 
     private Column requireColumnOnLeft(Expression left) {

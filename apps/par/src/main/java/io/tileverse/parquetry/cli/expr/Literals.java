@@ -15,6 +15,7 @@
  */
 package io.tileverse.parquetry.cli.expr;
 
+import java.math.BigDecimal;
 import java.math.BigInteger;
 
 import net.sf.jsqlparser.expression.BooleanValue;
@@ -67,6 +68,20 @@ final class Literals {
         };
     }
 
+    /**
+     * The number written by {@code value}, with all of its digits. A double keeps about seventeen significant digits,
+     * and two literals that differ beyond them read as the same double.
+     */
+    static BigDecimal asDecimal(Expression value) {
+        return switch (Parentheses.strip(value)) {
+            case LongValue longValue -> new BigDecimal(longValue.getBigIntegerValue());
+            // The node keeps the text as written. Its value is already rounded to a double.
+            case DoubleValue doubleValue -> new BigDecimal(doubleValue.toString());
+            case SignedExpression signed -> signedDecimal(signed);
+            default -> throw new FilterParseException("expected a numeric literal, got: " + value);
+        };
+    }
+
     static String asString(Expression value) {
         if (Parentheses.strip(value) instanceof StringValue stringValue) {
             return stringValue.getValue();
@@ -93,6 +108,11 @@ final class Literals {
     private static double signedDouble(SignedExpression signed) {
         double magnitude = asDouble(signed.getExpression());
         return isNegative(signed) ? -magnitude : magnitude;
+    }
+
+    private static BigDecimal signedDecimal(SignedExpression signed) {
+        BigDecimal magnitude = asDecimal(signed.getExpression());
+        return isNegative(signed) ? magnitude.negate() : magnitude;
     }
 
     private static boolean isNegative(SignedExpression signed) {
