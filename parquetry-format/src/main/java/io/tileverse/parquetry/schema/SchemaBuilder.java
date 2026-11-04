@@ -83,7 +83,7 @@ public final class SchemaBuilder {
         }
         Cursor cursor = new Cursor(elements, 0);
         int groupsAboveTheRoot = 0;
-        SchemaNode rootField = consumeNext(cursor, groupsAboveTheRoot);
+        SchemaNode rootField = consumeNext(cursor, groupsAboveTheRoot, false);
         if (!(rootField instanceof SchemaNode.Group rootGroup)) {
             throw new IllegalArgumentException("ParquetSchema root must be a group, got: "
                     + rootField.getClass().getSimpleName());
@@ -263,8 +263,9 @@ public final class SchemaBuilder {
      * at the consumed element.
      *
      * @param depth the groups above the element, the root group among them
+     * @param inMap whether the parent of the element is a map
      */
-    private static SchemaNode consumeNext(Cursor cursor, int depth) {
+    private static SchemaNode consumeNext(Cursor cursor, int depth, boolean inMap) {
         SchemaElement element = cursor.elements.get(cursor.position);
         cursor.position++;
 
@@ -272,22 +273,38 @@ public final class SchemaBuilder {
         int fieldId = element.fieldId().orElse(-1);
 
         if (element.numChildren().isPresent()) {
-            return consumeGroup(cursor, element, repetition, fieldId, depth);
+            return consumeGroup(cursor, element, repetition, fieldId, depth, inMap);
         }
         return consumePrimitive(element, repetition, fieldId);
     }
 
     private static SchemaNode.Group consumeGroup(
-            Cursor cursor, SchemaElement element, Repetition repetition, int fieldId, int depth) {
+            Cursor cursor, SchemaElement element, Repetition repetition, int fieldId, int depth, boolean inMap) {
         requireNestingWithinTheLimit(depth);
         int childCount = element.numChildren().getAsInt();
         requireChildrenWithinTheSchema(cursor, element, childCount);
+        Optional<LogicalType> logicalType = groupLogicalType(element, inMap);
+        boolean isMap = logicalType.orElse(null) instanceof LogicalType.MapType;
         List<SchemaNode> children = new ArrayList<>(childCount);
         for (int i = 0; i < childCount; i++) {
             requireAnElementLeft(cursor, element, childCount);
-            children.add(consumeNext(cursor, depth + 1));
+            children.add(consumeNext(cursor, depth + 1, isMap));
         }
-        return new SchemaNode.Group(element.name(), repetition, children, effectiveLogicalType(element), fieldId);
+        return new SchemaNode.Group(element.name(), repetition, children, logicalType, fieldId);
+    }
+
+    /**
+     * The logical type of a group. Some writers annotated a map with {@code MAP_KEY_VALUE} in place of {@code MAP}: by
+     * the backward-compatibility rules of the format, such a group outside a map is a map. In a map,
+     * {@code MAP_KEY_VALUE} annotates the group of its entries.
+     */
+    private static Optional<LogicalType> groupLogicalType(SchemaElement element, boolean inMap) {
+        Optional<LogicalType> logicalType = effectiveLogicalType(element);
+        boolean mapKeyValue = element.convertedType().orElse(null) == ConvertedType.MAP_KEY_VALUE;
+        if (logicalType.isEmpty() && mapKeyValue && !inMap) {
+            return Optional.of(new LogicalType.MapType());
+        }
+        return logicalType;
     }
 
     /** Refuses a group with more than {@value #DEEPEST_NESTING} groups above it. */
@@ -348,8 +365,9 @@ public final class SchemaBuilder {
      * <p>{@code LIST} and {@code MAP} are the structural group annotations the Dremel assembler classifies a group by;
      * a legacy writer (duckdb, older parquet-mr) records only the converted type, and without this backfill such a list
      * or map group is misread as a plain struct, collapsing its element wrapper and dropping every field past the
-     * first. {@code MAP_KEY_VALUE} annotates the inner {@code key_value} entry group, not the map itself, and
-     * {@code INTERVAL} has no logical-type equivalent; both are left without a backfilled annotation.
+     * first. {@code MAP_KEY_VALUE} annotates the entries of a map, and {@code INTERVAL} has no logical-type equivalent;
+     * both are left without a backfilled annotation here (see {@link #groupLogicalType} for a group annotated
+     * {@code MAP_KEY_VALUE} outside a map).
      */
     private static Optional<LogicalType> fromConvertedType(ConvertedType convertedType, SchemaElement element) {
         return switch (convertedType) {

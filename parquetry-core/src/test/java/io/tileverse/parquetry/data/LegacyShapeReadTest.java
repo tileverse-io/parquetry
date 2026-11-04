@@ -22,6 +22,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Stream;
@@ -45,14 +46,15 @@ import io.tileverse.parquetry.filter.MatchAction;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Value;
+import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.testsupport.CorpusFixtures;
 
 /**
- * Reads lists written in the shapes of older writers, by the backward-compatibility rules of the format. Three files
- * come from parquet-testing:
+ * Reads lists and maps written in the shapes of older writers, by the backward-compatibility rules of the format. Three
+ * files come from parquet-testing:
  *
  * <ul>
  *   <li>{@code repeated_primitive_no_list.parquet} holds repeated primitives outside a list: {@code repeated int32
@@ -63,7 +65,7 @@ import io.tileverse.parquetry.testsupport.CorpusFixtures;
  *       group array (LIST) { repeated int32 array } }}, one row {@code [[1, 2], [3, 4]]}.
  * </ul>
  *
- * <p>parquet-java writes the shape of parquet-thrift in the test.
+ * <p>parquet-java writes the shapes of parquet-thrift and of a map annotated {@code MAP_KEY_VALUE} in the test.
  */
 class LegacyShapeReadTest {
 
@@ -78,6 +80,8 @@ class LegacyShapeReadTest {
     private static final ColumnPath LISTS = ColumnPath.of("a");
     private static final ColumnPath LISTS_VALUE = ColumnPath.of("a", "list", "element", "list", "element");
     private static final ColumnPath TUPLE_FIELD = ColumnPath.of("a", "list", "element", "list", "element", "x");
+    private static final ColumnPath MAP = ColumnPath.of("mk");
+    private static final ColumnPath MAP_VALUE = ColumnPath.of("mk", "map", "value");
 
     private static final ReadOptions METADATA_PRUNING_OFF = ReadOptions.builder()
             .useStatsFilter(false)
@@ -133,6 +137,24 @@ class LegacyShapeReadTest {
 
         assertThat(readRows(file, row -> row.multiValue(TUPLE_FIELD))).containsExactly(List.of(1, 2, 3));
         assertThat(readRows(copyOf(file), row -> row.multiValue(TUPLE_FIELD))).containsExactly(List.of(1, 2, 3));
+    }
+
+    // Some writers annotated a map with MAP_KEY_VALUE in place of MAP.
+    @Test
+    void mapKeyValueReadsAsMap() throws IOException {
+        String schema = "message m { optional group mk (MAP_KEY_VALUE) {"
+                + " repeated group map { required binary key (UTF8); optional int32 value; } } }";
+        Path file = writeWithParquetJava("map.parquet", schema, row -> {
+            Group map = row.addGroup("mk");
+            map.addGroup("map").append("key", "a").append("value", 1);
+            map.addGroup("map").append("key", "b").append("value", 2);
+        });
+
+        assertThat(mapAnnotation(file)).contains(new LogicalType.MapType());
+        assertThat(readRows(file, row -> row.multiValue(MAP_VALUE))).containsExactly(List.of(1, 2));
+        Path copy = copyOf(file);
+        assertThat(mapAnnotation(copy)).contains(new LogicalType.MapType());
+        assertThat(readRows(copy, row -> row.multiValue(MAP_VALUE))).containsExactly(List.of(1, 2));
     }
 
     @Test
@@ -197,6 +219,13 @@ class LegacyShapeReadTest {
     private static long rowsReadInBatches(ParquetFileReader reader, Predicate filter) {
         try (Stream<ParquetRecordBatch> batches = reader.readBatches(filter, Projection.ALL, ReadOptions.DEFAULTS)) {
             return batches.mapToLong(ParquetRecordBatch::rowCount).sum();
+        }
+    }
+
+    private static Optional<LogicalType> mapAnnotation(Path file) {
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            return reader.schema().find(MAP).orElseThrow().logicalType();
         }
     }
 
