@@ -37,7 +37,22 @@ public interface ResourceLimits {
     /** The directory spill files are written under. */
     Path spillDir();
 
-    /** The process-wide default: reads the container limits and honors env/system-property overrides. */
+    /**
+     * The process-wide default, reading the running container. Each fact can be set instead, by a system property or
+     * else an environment variable, with a byte size such as {@code 512m} or {@code 2g}:
+     *
+     * <ul>
+     *   <li>{@code parquetry.io.maxOffHeap} ({@code PARQUETRY_IO_MAX_OFFHEAP}) sets {@link #availableMemoryBytes()}. It
+     *       is the memory the caps are computed from, not a cap: {@link IoLimits} gives a fifth of it to the fetches in
+     *       flight and half of it to the decode buffers. The default segment pool keeps idle up to half of the fetch
+     *       cap in small buffers and the whole fetch cap in large buffers, each within fixed bounds, and bounds its
+     *       footprint by the fetch and decode caps together.
+     *   <li>{@code parquetry.io.maxSpill} ({@code PARQUETRY_IO_MAX_SPILL}) sets {@link #usableDiskBytes}, of which
+     *       {@link IoLimits} gives half to spill files.
+     *   <li>{@code parquetry.io.spillDir} ({@code PARQUETRY_IO_SPILL_DIR}) sets {@link #spillDir()}, the temporary
+     *       directory by default.
+     * </ul>
+     */
     static ResourceLimits getDefault() {
         return DefaultResourceLimits.INSTANCE;
     }

@@ -45,10 +45,21 @@ public record IoLimits(long maxOffHeapBytes, long maxSpillBytes, long maxDecodeB
     /** Derives the caps from {@code limits}, applying the off-heap, spill, and decode fractions. */
     public static IoLimits from(ResourceLimits limits) {
         Path dir = limits.spillDir();
-        long offHeap = atLeastOneByte(limits.availableMemoryBytes() * OFF_HEAP_FRACTION);
         long spill = atLeastOneByte(limits.usableDiskBytes(dir) * SPILL_FRACTION);
-        long decode = atLeastOneByte(limits.availableMemoryBytes() * DECODE_FRACTION);
-        return new IoLimits(offHeap, spill, decode, dir);
+        return new IoLimits(offHeapCap(limits), spill, decodeCap(limits), dir);
+    }
+
+    /**
+     * Returns the off-heap cap of {@link #from}, without reading the disk. A memory pool needs the memory caps only,
+     * and must not fail on a missing spill directory.
+     */
+    public static long offHeapCap(ResourceLimits limits) {
+        return atLeastOneByte(limits.availableMemoryBytes() * OFF_HEAP_FRACTION);
+    }
+
+    /** Returns the decode cap of {@link #from}, without reading the disk. */
+    public static long decodeCap(ResourceLimits limits) {
+        return atLeastOneByte(limits.availableMemoryBytes() * DECODE_FRACTION);
     }
 
     private static long atLeastOneByte(double bytes) {

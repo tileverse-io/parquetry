@@ -17,7 +17,9 @@ package io.tileverse.parquetry.io;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -138,6 +140,16 @@ final class LockedFreeLists {
         }
     }
 
+    /** The number of distinct capacities held, for the tests. */
+    int groupCount() {
+        lock.lock();
+        try {
+            return lists.groupCount();
+        } finally {
+            lock.unlock();
+        }
+    }
+
     private Backing takeLocked(long capacity) {
         Backing taken = lists.takeFit(capacity);
         if (taken != null) {
@@ -185,21 +197,24 @@ final class LockedFreeLists {
      * <p>The groups sit in a map sorted by capacity: a borrow takes the head of the smallest capacity that fits and a
      * return pushes onto its group, a lookup in the map of distinct capacities either way, whatever the idle count.
      * Newest first keeps reuse on the recently returned backings. The oldest stay untouched at the tail of their group,
-     * and the idle sweep reaps them there. An emptied group stays in the map; the map holds at most one group per
-     * distinct capacity ever retained.
+     * and the idle sweep reaps them there. An emptied group leaves the map: the large class has no upper capacity, and
+     * the map would otherwise keep one group per distinct capacity ever retained.
      */
     private static final class FreeLists {
 
         private final TreeMap<Long, ArrayDeque<Retained>> groups = new TreeMap<>();
 
         Backing takeFit(long capacity) {
-            for (ArrayDeque<Retained> group : groups.tailMap(capacity, true).values()) {
-                Retained taken = group.pollFirst();
-                if (taken != null) {
-                    return taken.backing();
-                }
+            Map.Entry<Long, ArrayDeque<Retained>> fit = groups.ceilingEntry(capacity);
+            if (fit == null) {
+                return null;
             }
-            return null;
+            ArrayDeque<Retained> group = fit.getValue();
+            Retained taken = group.pollFirst();
+            if (group.isEmpty()) {
+                groups.remove(fit.getKey());
+            }
+            return taken.backing();
         }
 
         /**
@@ -214,9 +229,14 @@ final class LockedFreeLists {
         /** Removes and returns the backings idle for at least {@code thresholdNanos} as of {@code nowNanos}. */
         List<Backing> reapStale(long nowNanos, long thresholdNanos) {
             List<Backing> stale = new ArrayList<>();
-            for (ArrayDeque<Retained> group : groups.values()) {
+            Iterator<ArrayDeque<Retained>> groupIterator = groups.values().iterator();
+            while (groupIterator.hasNext()) {
+                ArrayDeque<Retained> group = groupIterator.next();
                 while (!group.isEmpty() && isStale(group.peekLast(), nowNanos, thresholdNanos)) {
                     stale.add(group.pollLast().backing());
+                }
+                if (group.isEmpty()) {
+                    groupIterator.remove();
                 }
             }
             return stale;
@@ -232,9 +252,13 @@ final class LockedFreeLists {
                 for (Retained retained : group) {
                     drained.add(retained.backing());
                 }
-                group.clear();
             }
+            groups.clear();
             return drained;
+        }
+
+        int groupCount() {
+            return groups.size();
         }
 
         /** A retained backing paired with the time it entered the free list, for idle reaping. */

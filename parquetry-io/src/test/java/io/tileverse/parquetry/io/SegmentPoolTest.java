@@ -526,6 +526,27 @@ class SegmentPoolTest {
                     .isTrue();
         }
 
+        // A pool without idle decay has no timer to free its backings
+        @Test
+        @SuppressWarnings("java:S2925") // waits for the Cleaner thread, with no condition to await on
+        void abandonedPoolFreesBackings() throws InterruptedException {
+            MemorySegment retained = segmentRetainedByAbandonedPool();
+            for (int attempt = 0; attempt < 200 && retained.scope().isAlive(); attempt++) {
+                System.gc();
+                Thread.sleep(10);
+            }
+            assertThat(retained.scope().isAlive()).isFalse();
+        }
+
+        private static MemorySegment segmentRetainedByAbandonedPool() {
+            DefaultSegmentPool pool = new DefaultSegmentPool(8192, 1 << 20, 1 << 20, 1024);
+            SegmentPool.Pooled pooled = pool.borrow(512);
+            MemorySegment segment = pooled.segment();
+            pooled.close();
+            assertThat(pool.stats().freeSegments()).isEqualTo(1);
+            return segment;
+        }
+
         private static WeakReference<SegmentPool> poolWithRunningReaper() {
             SegmentPool pool = SegmentPool.create(
                     new SegmentPool.Options(8192, 1 << 20, 1 << 20, TimeUnit.SECONDS.toNanos(60), 1024));

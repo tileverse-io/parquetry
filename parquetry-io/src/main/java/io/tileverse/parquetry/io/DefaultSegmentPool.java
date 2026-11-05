@@ -17,6 +17,7 @@ package io.tileverse.parquetry.io;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.lang.ref.Cleaner;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,11 +54,25 @@ import java.util.concurrent.atomic.LongAdder;
  *   <li><b>Idle decay.</b> With a positive {@code idleRetentionNanos}, a daemon timer frees backings idle past that
  *       window every {@link #SWEEP_INTERVAL_SECONDS} seconds. The timer holds the pool weakly, and a pool abandoned
  *       without {@link #close()} is still collected. {@link #close()} stops the timer and frees everything retained.
+ *   <li><b>Abandoned pools.</b> Once a pool dropped without {@link #close()} is collected, a {@link Cleaner} frees the
+ *       backings it retained and stops its timer.
  * </ul>
  */
 final class DefaultSegmentPool implements SegmentPool {
 
-    static final DefaultSegmentPool INSTANCE = fromOptions(SegmentPool.Options.elastic());
+    // One daemon thread for all pools, to free the backings retained by the pools dropped without close()
+    private static final Cleaner CLEANER = Cleaner.create();
+
+    /**
+     * Holds the default pool, built on first use. Its options read the machine limits, which fail on a malformed
+     * override: the pools built from explicit options must not depend on them.
+     */
+    static final class DefaultHolder {
+
+        static final DefaultSegmentPool INSTANCE = fromOptions(SegmentPool.Options.elastic());
+
+        private DefaultHolder() {}
+    }
 
     /**
      * How often the idle sweep runs. This is the reaping granularity, not a policy knob: a backing idle past
@@ -184,6 +199,7 @@ final class DefaultSegmentPool implements SegmentPool {
         this.largeBuffers = new LockedFreeLists(maxLargePooledBytes);
         this.idleSweep =
                 idleRetentionNanos > 0 ? Executors.newSingleThreadScheduledExecutor(reaperThreadFactory()) : null;
+        CLEANER.register(this, new AbandonedPoolCleanup(smallBuffers, largeBuffers, idleSweep));
     }
 
     @Override
@@ -363,6 +379,32 @@ final class DefaultSegmentPool implements SegmentPool {
                 pool.sweep();
             } catch (RuntimeException _) {
                 // A failed sweep must not stop the timer from trying again next interval.
+            }
+        }
+    }
+
+    /**
+     * Frees the backings retained by a pool once the pool is unreachable, and stops its timer. It references the free
+     * lists and the timer, never the pool. No borrow or return can run at that point, because a borrowed handle and a
+     * running sweep reference the pool and keep it reachable. A backing drained by {@link #close()} has left the free
+     * lists, and is never freed twice.
+     */
+    private record AbandonedPoolCleanup(
+            StripedFreeLists smallBuffers, LockedFreeLists largeBuffers, ScheduledExecutorService idleSweep)
+            implements Runnable {
+
+        @Override
+        public void run() {
+            if (idleSweep != null) {
+                idleSweep.shutdownNow();
+            }
+            closeAll(largeBuffers.drain());
+            closeAll(smallBuffers.drain());
+        }
+
+        private static void closeAll(List<Backing> backings) {
+            for (Backing backing : backings) {
+                backing.close();
             }
         }
     }
