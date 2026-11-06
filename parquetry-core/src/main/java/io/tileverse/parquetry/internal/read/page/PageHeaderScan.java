@@ -28,7 +28,6 @@ import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.PageType;
-import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.internal.filter.LearnedPages;
@@ -118,8 +117,8 @@ public final class PageHeaderScan {
         long boundBytes = 0;
         long offset = 0;
         while (offset < chunk.byteSize()) {
-            MemorySegmentInputStream stream = new MemorySegmentInputStream(chunk, offset, chunk.byteSize());
-            PageHeader header = ParquetFormat.readPageHeader(stream);
+            MemorySegmentInputStream stream = MemorySegmentInputStream.pageHeaderAt(chunk, offset, chunk.byteSize());
+            PageHeader header = stream.readPageHeader();
             int size = pageSize(chunk, offset, stream.position(), header.compressedPageSize());
             if (isDataPage(header)) {
                 DataPage page = DataPage.of(header, offset, size);

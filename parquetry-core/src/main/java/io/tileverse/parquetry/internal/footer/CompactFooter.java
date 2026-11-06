@@ -81,8 +81,9 @@ public final class CompactFooter {
     private static final int HEADER_ARENA = 32;
     private static final int HEADER_ENCODING_SECTION = 40;
 
-    private static final int ROW_GROUP_RECORD_BYTES = 8;
+    private static final int ROW_GROUP_RECORD_BYTES = 16;
     private static final int ROW_GROUP_NUM_ROWS = 0;
+    private static final int ROW_GROUP_UNCOMPRESSED_SIZE = 8;
 
     static final int CHUNK_RECORD_BYTES = 96;
     static final int CHUNK_DATA_PAGE_OFFSET = 0;
@@ -221,6 +222,15 @@ public final class CompactFooter {
     /** The row count of row group {@code rowGroup}. */
     public long numRows(int rowGroup) {
         return blob.get(INT64, rowGroupLaneBase(rowGroup) + ROW_GROUP_NUM_ROWS);
+    }
+
+    /**
+     * The uncompressed byte size of the column chunks of row group {@code rowGroup}. It is the larger of the total byte
+     * size stated for the row group and the sum of the uncompressed sizes stated for its chunks. Impala and old
+     * parquet-cpp releases state the compressed size of a row group as its total.
+     */
+    public long uncompressedSize(int rowGroup) {
+        return blob.get(INT64, rowGroupLaneBase(rowGroup) + ROW_GROUP_UNCOMPRESSED_SIZE);
     }
 
     /**
@@ -522,6 +532,17 @@ public final class CompactFooter {
         private void writeRowGroupLane(int rowGroupIndex, RowGroup rowGroup) {
             long base = rowGroupSectionOffset + (long) rowGroupIndex * ROW_GROUP_RECORD_BYTES;
             blob.set(INT64, base + ROW_GROUP_NUM_ROWS, rowGroup.numRows());
+            blob.set(INT64, base + ROW_GROUP_UNCOMPRESSED_SIZE, uncompressedSize(rowGroup));
+        }
+
+        private static long uncompressedSize(RowGroup rowGroup) {
+            long chunkSum = 0;
+            for (ColumnChunk chunk : rowGroup.columns()) {
+                chunkSum += chunk.metaData()
+                        .map(ColumnMetaData::totalUncompressedSize)
+                        .orElse(0L);
+            }
+            return Math.max(rowGroup.totalByteSize(), chunkSum);
         }
 
         /**

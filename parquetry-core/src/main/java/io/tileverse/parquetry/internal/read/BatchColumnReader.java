@@ -256,10 +256,10 @@ final class BatchColumnReader {
             requireFlatColumnForWindowedMask(chunk, valueDecode);
             this.survivingRows = survivingRows;
             PageSelection selection = PageSelection.forColumn(pageIndex, survivingRows);
-            this.pageCursor = new PageCursor(chunk.dataPageRuns(), columnPath, selection);
+            this.pageCursor = new PageCursor(chunk.dataPageRuns(), columnPath, selection, chunk.pageSizeLimit());
         } else {
             this.survivingRows = null;
-            this.pageCursor = new PageCursor(chunk.dataPageRuns(), columnPath, null);
+            this.pageCursor = new PageCursor(chunk.dataPageRuns(), columnPath, null, chunk.pageSizeLimit());
         }
     }
 

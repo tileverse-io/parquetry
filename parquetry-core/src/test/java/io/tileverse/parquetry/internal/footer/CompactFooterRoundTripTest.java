@@ -167,7 +167,7 @@ class CompactFooterRoundTripTest {
             long rowGroups = compact.rowGroupCount();
             long leaves = compact.leafCount();
             long expected = 48L
-                    + 8L * rowGroups
+                    + 16L * rowGroups
                     + 96L * rowGroups * leaves
                     + 64L * geoBboxCount(wire)
                     + 8L * mixedChunkCount(wire)
@@ -805,6 +805,39 @@ class CompactFooterRoundTripTest {
         assertThat(compact.geoExtentCount()).isZero();
     }
 
+    // Impala and old parquet-cpp releases state the compressed size of a row group as its total.
+    @Test
+    void sizeTakesTheLargerTotal() {
+        ColumnMetaData a = sizedChunk("a", 300L);
+        ColumnMetaData b = sizedChunk("b", 500L);
+        List<RowGroup> rowGroups = List.of(rowGroupOf(100L, a, b), rowGroupOf(1_000L, a, b));
+
+        CompactFooter compact = encodeInt32RowGroups(rowGroups, "a", "b");
+
+        assertThat(compact.uncompressedSize(0))
+                .as("a total below the sum of the chunks")
+                .isEqualTo(800L);
+        assertThat(compact.uncompressedSize(1)).as("a total above it").isEqualTo(1_000L);
+    }
+
+    private static ColumnMetaData sizedChunk(String column, long uncompressedSize) {
+        return ColumnMetaData.builder()
+                .type(PhysicalType.INT32)
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .pathInSchema(List.of(column))
+                .numValues(1L)
+                .totalUncompressedSize(uncompressedSize)
+                .totalCompressedSize(64L)
+                .dataPageOffset(1024L)
+                .build();
+    }
+
+    private static RowGroup rowGroupOf(long totalByteSize, ColumnMetaData... chunks) {
+        List<ColumnChunk> columns =
+                Stream.of(chunks).map(CompactFooterRoundTripTest::chunkOf).toList();
+        return RowGroup.builder().columns(columns).totalByteSize(totalByteSize).build();
+    }
+
     /** The only chunk of a footer with one row group and one leaf, recording {@code stats}. */
     private static ChunkMeta encodedChunk(OptionalLong dictionaryPageOffset, EncodingStats... stats) {
         ColumnMetaData meta = chunkWithStats("a", dictionaryPageOffset, stats);
@@ -823,8 +856,13 @@ class CompactFooterRoundTripTest {
                     chunks.stream().map(CompactFooterRoundTripTest::chunkOf).toList();
             groups.add(RowGroup.builder().columns(columns).build());
         }
+        return encodeInt32RowGroups(groups, leaves);
+    }
+
+    /** Encodes a footer of {@code rowGroups}, against a schema of the INT32 leaves named by {@code leaves}. */
+    private static CompactFooter encodeInt32RowGroups(List<RowGroup> rowGroups, String... leaves) {
         FileMetaData footer =
-                FileMetaData.builder().version(1).rowGroups(groups).build();
+                FileMetaData.builder().version(1).rowGroups(rowGroups).build();
         return CompactFooter.encode(footer, LeafIndex.of(int32Schema(leaves)));
     }
 
@@ -869,6 +907,18 @@ class CompactFooterRoundTripTest {
 
     private static void assertRowGroupMatchesWire(CompactFooter compact, int rg, RowGroup wireGroup) {
         assertThat(compact.numRows(rg)).as("row group %d numRows", rg).isEqualTo(wireGroup.numRows());
+        assertThat(compact.uncompressedSize(rg))
+                .as("row group %d uncompressedSize", rg)
+                .isEqualTo(expectedUncompressedSize(wireGroup));
+    }
+
+    private static long expectedUncompressedSize(RowGroup wireGroup) {
+        long chunkSum = 0;
+        for (ColumnChunk chunk : wireGroup.columns()) {
+            chunkSum +=
+                    chunk.metaData().map(ColumnMetaData::totalUncompressedSize).orElse(0L);
+        }
+        return Math.max(wireGroup.totalByteSize(), chunkSum);
     }
 
     private static void assertEveryLeafMatchesWire(
@@ -888,6 +938,9 @@ class CompactFooterRoundTripTest {
             }
             String where = "row group " + rg + " leaf " + path.dot();
             assertChunkMatchesWire(compact.chunk(rg, leaf), meta, chunkByPath.get(path), bounds, where);
+            assertThat(compact.chunk(rg, leaf).rowGroupUncompressedSize())
+                    .as("%s rowGroupUncompressedSize", where)
+                    .isEqualTo(expectedUncompressedSize(wireGroup));
         }
     }
 

@@ -17,12 +17,18 @@ package io.tileverse.parquetry.internal.read.page;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
 import io.tileverse.parquetry.data.Compression;
+import io.tileverse.parquetry.filter.RowRanges;
+import io.tileverse.parquetry.format.MalformedFileException;
+import io.tileverse.parquetry.internal.filter.TestPageIndexes;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.LevelMaxima;
 
@@ -39,7 +45,7 @@ class PageCursorPeekTest {
 
     @Test
     void aPageDiscardedUnreadCountsAsPrunedAndAdvancesTheRowWalk() throws Exception {
-        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7, 4), V, null);
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7, 4), V, null, PageSizeLimit.NONE);
         discardNextPage(cursor);
         discardNextPage(cursor);
 
@@ -67,7 +73,7 @@ class PageCursorPeekTest {
 
     @Test
     void peekingAPageDecodesNothing() {
-        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7), V, null);
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7), V, null, PageSizeLimit.NONE);
 
         PageCursor.PendingDataPage first = cursor.peekNextDataPage(FLAT);
 
@@ -79,7 +85,7 @@ class PageCursorPeekTest {
 
     @Test
     void aWalkHoldingAPeekedPageStillHasBytesToDecode() {
-        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5), V, null);
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5), V, null, PageSizeLimit.NONE);
 
         cursor.peekNextDataPage(FLAT);
 
@@ -90,7 +96,7 @@ class PageCursorPeekTest {
 
     @Test
     void aSecondPeekBeforeTheFirstIsResolvedIsRejected() {
-        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7), V, null);
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7), V, null, PageSizeLimit.NONE);
         cursor.peekNextDataPage(FLAT);
 
         assertThatIllegalStateException()
@@ -100,7 +106,7 @@ class PageCursorPeekTest {
 
     @Test
     void aPageStatingNoRowCountCannotBeDiscardedUnread() {
-        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5), V, null);
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5), V, null, PageSizeLimit.NONE);
 
         PageCursor.PendingDataPage pending = cursor.peekNextDataPage(REPEATED);
 
@@ -114,7 +120,7 @@ class PageCursorPeekTest {
 
     @Test
     void theWholePageReadWalksTheChunkAsBefore() throws Exception {
-        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7), V, null);
+        PageCursor cursor = new PageCursor(PageFixtures.v1FlatChunk(5, 7), V, null, PageSizeLimit.NONE);
 
         try (Arena arena = Arena.ofConfined()) {
             assertThat(cursor.nextDataPage(FLAT, Compression.uncompressed(), arena)
@@ -131,7 +137,71 @@ class PageCursorPeekTest {
         assertThat(cursor.decodedDataPageCount()).isEqualTo(2);
     }
 
+    // The decode of the page would allocate the declared bytes of native memory.
+    @Test
+    void oversizedPageIsRefused() {
+        int declared = 100 << 20;
+        PageSizeLimit limit = PageSizeLimit.ofRowGroup(1_000);
+        PageCursor cursor = new PageCursor(PageFixtures.v1PageDeclaringSize(declared), V, null, limit);
+
+        assertThatThrownBy(() -> cursor.peekNextDataPage(FLAT))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("Column v data page 0 declares " + declared + " uncompressed bytes");
+    }
+
+    // The selection keeps the second page, and the walk steps over the first.
+    @Test
+    void skippedOversizedPageIsRefused() {
+        int declared = 100 << 20;
+        MemorySegment chunk =
+                PageFixtures.concat(PageFixtures.v1PageDeclaringSize(declared), PageFixtures.v1FlatChunk(1));
+        PageCursor cursor = new PageCursor(chunk, V, secondOfTwoPages(), PageSizeLimit.ofRowGroup(1_000));
+
+        assertThatThrownBy(() -> cursor.peekNextDataPage(FLAT))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("Column v data page 0 declares " + declared + " uncompressed bytes");
+    }
+
+    @Test
+    void skippedNegativeCountIsRefused() {
+        MemorySegment chunk = PageFixtures.concat(PageFixtures.v1PageDeclaring(-3), PageFixtures.v1FlatChunk(1));
+        PageCursor cursor = new PageCursor(chunk, V, secondOfTwoPages(), PageSizeLimit.NONE);
+
+        assertThatThrownBy(() -> cursor.peekNextDataPage(FLAT))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("Column v data page 0 declares -3 values");
+    }
+
+    // Statistics are the only part of a header without a bounded size.
+    @Test
+    void longHeaderIsRefused() {
+        MemorySegment chunk = PageFixtures.v1PageWithMinValue((16 << 20) + 1);
+        PageCursor cursor = new PageCursor(chunk, V, null, PageSizeLimit.NONE);
+
+        assertThatThrownBy(() -> cursor.peekNextDataPage(FLAT))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("column v")
+                .hasMessageContaining("does not end within the 16777216 bytes");
+    }
+
+    @Test
+    void truncatedHeaderIsMalformed() {
+        MemorySegment chunk = PageFixtures.v1FlatChunk(5).asSlice(0, 3);
+        PageCursor cursor = new PageCursor(chunk, V, null, PageSizeLimit.NONE);
+
+        assertThatThrownBy(() -> cursor.peekNextDataPage(FLAT))
+                .isInstanceOf(MalformedFileException.class)
+                .hasMessageContaining("column v")
+                .hasMessageContaining("does not end within the 3 bytes");
+    }
+
     private static void discardNextPage(PageCursor cursor) {
         cursor.discardPending(cursor.peekNextDataPage(FLAT));
+    }
+
+    /** A selection of the second of two pages of one row each. */
+    private static PageSelection secondOfTwoPages() {
+        RowRanges secondRow = new RowRanges(List.of(new RowRanges.Range(1, 1)));
+        return PageSelection.forColumn(TestPageIndexes.pages(2, 0, 1), secondRow);
     }
 }

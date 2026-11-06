@@ -30,6 +30,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -609,6 +610,19 @@ class ColumnChunkWriterTest {
 
         assertThat(result.dictionaryPageOffset()).isZero();
         assertThat(result.encodings()).contains(Encoding.RLE_DICTIONARY);
+    }
+
+    // A page holding the value alone would get a header of 18 MiB if it kept the value as its bounds.
+    @Test
+    void nineMiBValueReadsBack() throws Exception {
+        byte[] large = new byte[9 << 20];
+        Arrays.fill(large, (byte) 'x');
+
+        byte[][] readBack = writeThenReadBinaryColumn(List.of(large, bytes("b")));
+
+        assertThat(readBack).hasNumberOfRows(2);
+        assertThat(readBack[0]).isEqualTo(large);
+        assertThat(readBack[1]).isEqualTo(bytes("b"));
     }
 
     @Test

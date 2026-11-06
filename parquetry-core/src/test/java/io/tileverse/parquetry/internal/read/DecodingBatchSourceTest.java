@@ -38,6 +38,7 @@ import io.tileverse.parquetry.columnar.IntVector;
 import io.tileverse.parquetry.columnar.ParquetRecordBatch;
 import io.tileverse.parquetry.format.CompressionCodec;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
+import io.tileverse.parquetry.internal.read.page.PageSizeLimit;
 import io.tileverse.parquetry.io.SegmentPool.Pooled;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
@@ -160,7 +161,8 @@ class DecodingBatchSourceTest {
                 /*maxRep*/ 0,
                 /*maxDef*/ 0,
                 List.of(new DataPageRun(segment, 0)),
-                Optional.empty());
+                Optional.empty(),
+                PageSizeLimit.NONE);
     }
 
     private static byte[] encodeInt32sLittleEndian(int[] values) {

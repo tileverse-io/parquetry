@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.data;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -34,6 +35,7 @@ import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -45,6 +47,7 @@ import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.filter.Value;
 import io.tileverse.parquetry.format.ColumnChunk;
 import io.tileverse.parquetry.format.FileMetaData;
+import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.OffsetIndex;
 import io.tileverse.parquetry.format.PageLocation;
 import io.tileverse.parquetry.format.ParquetFormat;
@@ -63,6 +66,9 @@ import io.tileverse.parquetry.schema.SchemaNode;
  * <p>The file has 300 rows in three pages of 100: an integer column holding the row number. Each case overwrites its
  * offset index in place. The first rows or the byte locations of the last two pages are swapped, or the first page is
  * moved into the magic bytes at the start of the file.
+ *
+ * <p>An index with its first rows in order but placed on the wrong rows passes these checks. The pages read under it
+ * disagree with their spans in the index, and the filtered read fails.
  */
 class InconsistentOffsetIndexReadTest {
 
@@ -127,6 +133,27 @@ class InconsistentOffsetIndexReadTest {
                 Arguments.of(edit, "v < 10", swap, new Predicate.Lt(V, new Value.LongVal(10L)), 10L),
                 Arguments.of(edit, "v IS NOT NULL", swap, new Predicate.IsNotNull(V), (long) ROWS),
                 Arguments.of(edit, "v IS NULL", swap, new Predicate.IsNull(V), 0L));
+    }
+
+    // The index starts the second page at row 150, and the read would place its values on the wrong rows.
+    @Test
+    void wrongFirstRowsFailTheRead() throws IOException {
+        overwriteOffsetIndex(file, InconsistentOffsetIndexReadTest::withTheSecondPageStartingLate);
+        Predicate middlePage = new Predicate.And(List.of(
+                new Predicate.GtEq(V, new Value.LongVal(100L)), new Predicate.LtEq(V, new Value.LongVal(199L))));
+        try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+
+            assertThatThrownBy(() -> rowsRead(reader, middlePage))
+                    .isInstanceOf(MalformedFileException.class)
+                    .hasMessageContaining("Column v data page 1");
+            assertThatThrownBy(() -> rowsReadInBatches(reader, middlePage))
+                    .isInstanceOf(MalformedFileException.class)
+                    .hasMessageContaining("Column v data page 1");
+            assertThatThrownBy(() -> reader.count(middlePage, ReadOptions.DEFAULTS))
+                    .isInstanceOf(MalformedFileException.class)
+                    .hasMessageContaining("Column v data page 1");
+        }
     }
 
     private static long rowsRead(ParquetFileReader reader, Predicate predicate) {
@@ -194,6 +221,14 @@ class InconsistentOffsetIndexReadTest {
         PageLocation third = pages.get(2);
         pages.set(1, new PageLocation(second.offset(), second.compressedPageSize(), third.firstRowIndex()));
         pages.set(2, new PageLocation(third.offset(), third.compressedPageSize(), second.firstRowIndex()));
+        return new OffsetIndex(pages, index.unencodedByteArrayDataBytes());
+    }
+
+    /** Moves the first row of the second page from 100 to 150, keeping the pages in row order. */
+    private static OffsetIndex withTheSecondPageStartingLate(OffsetIndex index) {
+        List<PageLocation> pages = new ArrayList<>(index.pageLocations());
+        PageLocation second = pages.get(1);
+        pages.set(1, new PageLocation(second.offset(), second.compressedPageSize(), 150L));
         return new OffsetIndex(pages, index.unencodedByteArrayDataBytes());
     }
 

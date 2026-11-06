@@ -69,6 +69,7 @@ import io.tileverse.parquetry.internal.filter.PageIndex;
 import io.tileverse.parquetry.internal.filter.TestPageIndexes;
 import io.tileverse.parquetry.internal.read.page.DataPageRun;
 import io.tileverse.parquetry.internal.read.page.PageCursor;
+import io.tileverse.parquetry.internal.read.page.PageSizeLimit;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.io.SegmentPool;
 import io.tileverse.parquetry.schema.ColumnPath;
@@ -1479,7 +1480,8 @@ class BatchColumnReaderTest {
                 chunk.maxRepetitionLevel(),
                 chunk.maxDefinitionLevel(),
                 chunk.dataPageRuns(),
-                Optional.of(dictionaryPageOf(kind, new byte[3], 64)));
+                Optional.of(dictionaryPageOf(kind, new byte[3], 64)),
+                PageSizeLimit.NONE);
     }
 
     /** One dictionary-encoded page of an optional column holding {@code rows} nulls. */
@@ -1676,7 +1678,8 @@ class BatchColumnReaderTest {
                 /*maxRep*/ 0,
                 /*maxDef*/ 1,
                 List.of(new DataPageRun(segment, 0)),
-                Optional.of(dictionaryPage));
+                Optional.of(dictionaryPage),
+                PageSizeLimit.NONE);
     }
 
     /**
@@ -1923,7 +1926,8 @@ class BatchColumnReaderTest {
                 maxRep,
                 maxDef,
                 List.of(new DataPageRun(segment, 0)),
-                Optional.empty());
+                Optional.empty(),
+                PageSizeLimit.NONE);
     }
 
     /**
@@ -1953,7 +1957,8 @@ class BatchColumnReaderTest {
                 /*maxRep*/ 0,
                 /*maxDef*/ 0,
                 List.of(new DataPageRun(segment, 0)),
-                Optional.of(dictionaryPage));
+                Optional.of(dictionaryPage),
+                PageSizeLimit.NONE);
     }
 
     /**

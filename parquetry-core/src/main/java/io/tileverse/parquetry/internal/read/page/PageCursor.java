@@ -27,7 +27,6 @@ import io.tileverse.parquetry.format.DataPageHeaderV2;
 import io.tileverse.parquetry.format.MalformedFileException;
 import io.tileverse.parquetry.format.PageHeader;
 import io.tileverse.parquetry.format.PageType;
-import io.tileverse.parquetry.format.ParquetFormat;
 import io.tileverse.parquetry.format.ParquetFormatException;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.LevelMaxima;
@@ -38,8 +37,8 @@ import io.tileverse.parquetry.schema.LevelMaxima;
  * <p>The chunk arrives as an ordered list of {@link DataPageRun}s - one run for a chunk fetched whole, several when the
  * fetch skipped the pages that cannot hold a surviving row. The cursor tracks a byte offset inside the current run's
  * {@link MemorySegment}, moves on to the next run when the current one is exhausted, and dispatches header reads
- * through {@link ParquetFormat#readPageHeader}. Non-data pages (e.g. a misplaced dictionary or index page) are skipped
- * silently; {@link #nextDataPage} returns {@code null} when the last run is exhausted.
+ * through {@link MemorySegmentInputStream#readPageHeader}. Non-data pages (e.g. a misplaced dictionary or index page)
+ * are skipped silently; {@link #nextDataPage} returns {@code null} when the last run is exhausted.
  *
  * <p>The same walk is also available in two steps for a reader that decides from a page's header whether the page is
  * worth decompressing: {@link #peekNextDataPage} yields the page's header and compressed bytes, and the reader then
@@ -54,6 +53,7 @@ public final class PageCursor {
     private final List<DataPageRun> runs;
     private final ColumnPath columnPath;
     private final PageSelection selection; // null = no page-skip (decode every data page)
+    private final PageSizeLimit pageSizeLimit;
     private int runIndex = -1;
     private MemorySegment runBytes;
     private long runLimit;
@@ -76,22 +76,26 @@ public final class PageCursor {
     private int skippedDataPageCount;
 
     /** Walks a chunk fetched whole: one run over {@code chunk}, whose first data page is ordinal zero. */
-    public PageCursor(MemorySegment chunk, ColumnPath columnPath, PageSelection selection) {
-        this(List.of(new DataPageRun(chunk, 0)), columnPath, selection);
+    public PageCursor(
+            MemorySegment chunk, ColumnPath columnPath, PageSelection selection, PageSizeLimit pageSizeLimit) {
+        this(List.of(new DataPageRun(chunk, 0)), columnPath, selection, pageSizeLimit);
     }
 
     /**
      * Walks {@code runs} in order. Each run's first data page takes the run's base ordinal - the offset index ordinal
      * the fetch planner recorded - which keeps {@link PageSelection#isSurviving(int)} and
-     * {@link PageSelection#firstRowIndex(int)} correct when the pages between runs were never fetched.
+     * {@link PageSelection#firstRowIndex(int)} correct when the pages between runs were never fetched. A data page
+     * above {@code pageSizeLimit} fails the walk before its payload is decompressed.
      */
-    public PageCursor(List<DataPageRun> runs, ColumnPath columnPath, PageSelection selection) {
+    public PageCursor(
+            List<DataPageRun> runs, ColumnPath columnPath, PageSelection selection, PageSizeLimit pageSizeLimit) {
         // An empty run yields no page, yet hasRemaining() counts any un-walked run as bytes left to decode. Keeping
         // one would make an all-empty run list look non-empty, breaking the empty-chunk contract
         // BatchColumnReader.hasMore() depends on.
         this.runs = runs.stream().filter(run -> run.segment().byteSize() > 0).toList();
         this.columnPath = columnPath;
         this.selection = selection;
+        this.pageSizeLimit = pageSizeLimit;
         if (this.runs.size() > 1 && selection == null) {
             throw new IllegalArgumentException("A multi-run walk needs a PageSelection to resolve run base "
                     + "ordinals to row indexes, column " + columnPath.dot());
@@ -118,7 +122,8 @@ public final class PageCursor {
      *
      * <p>The page comes back unresolved and stays so until {@link #decodePending} decompresses it or
      * {@link #discardPending} steps over it. The walk holds one unresolved page at a time, because a page's row count
-     * is what places the page after it.
+     * is what places the page after it. The header of each data page is checked on the way, whether the page is kept or
+     * stepped over.
      */
     public PendingDataPage peekNextDataPage(LevelMaxima maxLevels) {
         requireNoPendingPage();
@@ -135,13 +140,13 @@ public final class PageCursor {
             }
             int ordinal = dataPageOrdinal++;
             MemorySegment pagePayload = sliceAndAdvance(compressedSize);
+            requireValidDataPageHeader(header, maxLevels, ordinal);
             if (selection == null || selection.isSurviving(ordinal)) {
-                requireNonNegativeCounts(header, ordinal);
-                requireOneValuePerRow(header, maxLevels, ordinal);
                 pendingPage = new PendingDataPage(
                         header, pagePayload, ordinal, firstRowIndexOf(ordinal), statedRowCount(header, maxLevels));
                 return pendingPage;
             }
+            requireStatedRowsIndexed(header, maxLevels, ordinal);
             skippedDataPageCount++;
         }
         return null;
@@ -167,8 +172,7 @@ public final class PageCursor {
         try {
             page = DataPageReader.forHeader(header).read(header, maxLevels, pending.payload(), codec, pageArena);
         } catch (ParquetFormatException e) {
-            throw e.withContext(
-                    "Column " + columnPath.dot() + " data page " + pending.ordinal() + ": " + e.getMessage());
+            throw e.withContext(dataPage(pending.ordinal()) + ": " + e.getMessage());
         } catch (IOException e) {
             throw rejectedByItsCodec(pending, e);
         }
@@ -182,9 +186,7 @@ public final class PageCursor {
      */
     private MalformedFileException rejectedByItsCodec(PendingDataPage pending, IOException failure) {
         return new MalformedFileException(
-                "Column " + columnPath.dot() + " data page " + pending.ordinal() + " cannot be decompressed: "
-                        + failure.getMessage(),
-                failure);
+                dataPage(pending.ordinal()) + " cannot be decompressed: " + failure.getMessage(), failure);
     }
 
     /**
@@ -194,6 +196,7 @@ public final class PageCursor {
      */
     public void discardPending(PendingDataPage pending) {
         requireStatedRowCount(pending);
+        requireIndexedRowCount(pending.ordinal(), pending.statedRowCount());
         resolvePending(pending);
         skippedDataPageCount++;
         nextPageFirstRowIndex = pending.firstRowIndex() + pending.statedRowCount();
@@ -201,6 +204,17 @@ public final class PageCursor {
 
     private static boolean isDataPage(PageHeader header) {
         return header.type() == PageType.DATA_PAGE || header.type() == PageType.DATA_PAGE_V2;
+    }
+
+    /**
+     * Fails a data page header stating counts or a size that no page can hold. Each data page met by the walk is
+     * checked, decoded or stepped over. A corrupt header makes the file malformed whether or not a filter needs the
+     * page.
+     */
+    private void requireValidDataPageHeader(PageHeader header, LevelMaxima maxLevels, int ordinal) {
+        requireNonNegativeCounts(header, ordinal);
+        requireOneValuePerRow(header, maxLevels, ordinal);
+        requireAcceptedSize(header, ordinal);
     }
 
     /**
@@ -224,8 +238,7 @@ public final class PageCursor {
 
     private void requireNonNegative(int count, String countedItems, int ordinal) {
         if (count < 0) {
-            throw new MalformedFileException(
-                    "Column " + columnPath.dot() + " data page " + ordinal + " declares " + count + " " + countedItems);
+            throw new MalformedFileException(dataPage(ordinal) + " declares " + count + " " + countedItems);
         }
     }
 
@@ -241,8 +254,16 @@ public final class PageCursor {
         }
         DataPageHeaderV2 counts = v2.orElseThrow();
         if (counts.numRows() != counts.numValues()) {
-            throw new MalformedFileException("Column " + columnPath.dot() + " V2 data page " + ordinal + " counts "
-                    + counts.numRows() + " rows and " + counts.numValues() + " values");
+            throw new MalformedFileException(column() + " V2 data page " + ordinal + " counts " + counts.numRows()
+                    + " rows and " + counts.numValues() + " values");
+        }
+    }
+
+    /** Fails a data page above the size limit of its row group, because its decode allocates that much memory. */
+    private void requireAcceptedSize(PageHeader header, int ordinal) {
+        int declared = header.uncompressedPageSize();
+        if (!pageSizeLimit.accepts(declared)) {
+            throw pageSizeLimit.refusal(dataPage(ordinal), declared);
         }
     }
 
@@ -254,22 +275,21 @@ public final class PageCursor {
     /** Clears the page the walk holds unresolved, which {@code pending} must be, freeing the walk to peek again. */
     private void resolvePending(PendingDataPage pending) {
         if (pendingPage == null || pendingPage.ordinal() != pending.ordinal()) {
-            throw new IllegalStateException("Column " + columnPath.dot() + " data page " + pending.ordinal()
-                    + " is not the page the walk holds unresolved");
+            throw new IllegalStateException(dataPage(pending.ordinal()) + " is not the page the walk holds unresolved");
         }
         pendingPage = null;
     }
 
     private void requireNoPendingPage() {
         if (pendingPage != null) {
-            throw new IllegalStateException("Column " + columnPath.dot() + " holds data page " + pendingPage.ordinal()
+            throw new IllegalStateException(column() + " holds data page " + pendingPage.ordinal()
                     + " unresolved; decode or discard it before peeking the next");
         }
     }
 
     private void requireStatedRowCount(PendingDataPage pending) {
         if (!pending.statesRowCount()) {
-            throw new IllegalStateException("Column " + columnPath.dot() + " data page " + pending.ordinal()
+            throw new IllegalStateException(dataPage(pending.ordinal())
                     + " states no row count; its rows are known only from its decoded levels");
         }
     }
@@ -318,15 +338,45 @@ public final class PageCursor {
     /**
      * Records the row count the column reader counted in the page most recently decoded, through either
      * {@link #nextDataPage} or {@link #decodePending}, advancing the walk to the next page's first row. A header that
-     * states its own row count must agree with the counted one; a disagreement is a malformed file rather than a
-     * silently misaligned read.
+     * states its own row count must agree with the counted one. Under a {@link PageSelection}, the span of the page in
+     * the page index must agree too. A disagreement is a malformed file rather than a silently misaligned read.
      */
     public void recordCurrentPageRowCount(int rows) {
         if (currentPageStatedRowCount != UNSTATED_ROW_COUNT && currentPageStatedRowCount != rows) {
-            throw new MalformedFileException("Column " + columnPath.dot() + " data page " + currentPageOrdinal
-                    + " declares " + currentPageStatedRowCount + " rows but its levels hold " + rows);
+            throw new MalformedFileException(dataPage(currentPageOrdinal) + " declares " + currentPageStatedRowCount
+                    + " rows but its levels hold " + rows);
         }
+        requireIndexedRowCount(currentPageOrdinal, rows);
         nextPageFirstRowIndex = currentPageFirstRowIndex + rows;
+    }
+
+    /**
+     * Fails a page holding other rows than its span in the page index. A walk under a {@link PageSelection} places the
+     * rows of each page at the first row given by the index, and a wrong span shifts the pages after it. The walk
+     * checks the pages it decodes, and the pages it steps over whose header states their rows. The first row of each
+     * page is then verified back to the start of its run. The first page of a run reached across pages never fetched
+     * starts where the index places it.
+     */
+    private void requireIndexedRowCount(int ordinal, int rows) {
+        if (selection == null) {
+            return;
+        }
+        long indexedRows = selection.rowCount(ordinal);
+        if (rows != indexedRows) {
+            throw new MalformedFileException(
+                    dataPage(ordinal) + " holds " + rows + " rows but the offset index gives it " + indexedRows);
+        }
+    }
+
+    /**
+     * Checks a page stepped over against its span, when its header states its rows; see
+     * {@link #requireIndexedRowCount}.
+     */
+    private void requireStatedRowsIndexed(PageHeader header, LevelMaxima maxLevels, int ordinal) {
+        int statedRows = statedRowCount(header, maxLevels);
+        if (statedRows != UNSTATED_ROW_COUNT) {
+            requireIndexedRowCount(ordinal, statedRows);
+        }
     }
 
     /**
@@ -373,9 +423,9 @@ public final class PageCursor {
      * {@link ParquetFormatException} on premature end-of-stream or Thrift decode failure.
      */
     private PageHeader readNextPageHeader() {
-        MemorySegmentInputStream stream = new MemorySegmentInputStream(runBytes, position, runLimit);
+        MemorySegmentInputStream stream = MemorySegmentInputStream.pageHeaderAt(runBytes, position, runLimit);
         try {
-            PageHeader header = ParquetFormat.readPageHeader(stream);
+            PageHeader header = stream.readPageHeader();
             long consumed = stream.position() - position;
             if (consumed <= 0) {
                 throw new MalformedFileException("Page header read advanced the cursor by " + consumed
@@ -397,12 +447,22 @@ public final class PageCursor {
      */
     private MemorySegment sliceAndAdvance(int length) {
         if (runLimit - position < length) {
-            throw new MalformedFileException("Column " + columnPath.dot() + " page payload of " + length
-                    + " bytes overruns data page run " + runIndex + " (remaining=" + (runLimit - position) + ")");
+            throw new MalformedFileException(column() + " page payload of " + length + " bytes overruns data page run "
+                    + runIndex + " (remaining=" + (runLimit - position) + ")");
         }
         MemorySegment slice = runBytes.asSlice(position, length).asReadOnly();
         position += length;
         return slice;
+    }
+
+    /** The column of the walk, as named in a failure. */
+    private String column() {
+        return "Column " + columnPath.dot();
+    }
+
+    /** A data page of the walk, as named in a failure, such as "Column a data page 3". */
+    private String dataPage(int ordinal) {
+        return column() + " data page " + ordinal;
     }
 
     /**
