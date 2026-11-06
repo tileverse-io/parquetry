@@ -48,15 +48,15 @@ public sealed interface SegmentPool permits DefaultSegmentPool {
      * deterministically. Call this when a private pool is done; outstanding borrows are unaffected and must be closed
      * by their owners. The process-wide {@link #getDefault() default} lives for the JVM lifetime and is never closed.
      *
-     * <p>Intentionally not {@link AutoCloseable}: most pools are short-lived and their retained backings are reclaimed
-     * at process exit, and requiring try-with-resources on every borrow site would obscure the borrow/return contract
-     * that actually governs memory. Closing is idempotent.
+     * <p>Intentionally not {@link AutoCloseable}: most pools are short-lived, a pool dropped without closing frees its
+     * retained backings once it is garbage collected, and requiring try-with-resources on every borrow site would
+     * obscure the borrow/return contract that actually governs memory. Closing is idempotent.
      */
     void close();
 
     /** Process-wide shared default: a JDK-only pool with the {@link Options#elastic() elastic} retention policy. */
     static SegmentPool getDefault() {
-        return DefaultSegmentPool.INSTANCE;
+        return DefaultSegmentPool.DefaultHolder.INSTANCE;
     }
 
     /** A new private pool with the {@link Options#elastic() elastic} options, independent of {@link #getDefault()}. */
@@ -138,7 +138,7 @@ public sealed interface SegmentPool permits DefaultSegmentPool {
          * a small-buffer idle cap of half the off-heap allowance clamped to [16 MB, 512 MB], a large-buffer idle cap of
          * the whole allowance clamped to [64 MB, 1 GB], a retention ceiling on the pool's total equal to what the fetch
          * and off-heap decode budgets allow in flight, and a 60-second idle-retention window after which the background
-         * reaper returns idle buffers to the OS. Computed once; the limits probe reads container and filesystem facts.
+         * reaper returns idle buffers to the OS. Computed once; the limits probe reads the container memory.
          *
          * <p>The caps hold the working set of a loaded server: the fetch buffers of the row groups in flight in the
          * large class, their page and value buffers in the small class. A cap below that working set makes the pool map
@@ -153,11 +153,11 @@ public sealed interface SegmentPool permits DefaultSegmentPool {
             private static final Options OPTIONS = elasticOptions();
 
             private static Options elasticOptions() {
-                IoLimits limits = IoLimits.from(ResourceLimits.getDefault());
-                long maxOffHeapBytes = limits.maxOffHeapBytes();
+                ResourceLimits limits = ResourceLimits.getDefault();
+                long maxOffHeapBytes = IoLimits.offHeapCap(limits);
                 long maxPooledBytes = Math.clamp(maxOffHeapBytes / 2, 16L << 20, 512L << 20);
                 long maxLargePooledBytes = Math.clamp(maxOffHeapBytes, 64L << 20, 1024L << 20);
-                long maxTotalBytes = maxOffHeapBytes + limits.maxDecodeBytes();
+                long maxTotalBytes = maxOffHeapBytes + IoLimits.decodeCap(limits);
                 long idleRetentionNanos = TimeUnit.SECONDS.toNanos(60);
                 return new Options(
                         4L << 20, maxPooledBytes, maxLargePooledBytes, maxTotalBytes, idleRetentionNanos, 8192);

@@ -18,6 +18,8 @@ package io.tileverse.parquetry.io.limits;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
 
 import org.junit.jupiter.api.Test;
@@ -42,6 +44,34 @@ class IoLimitsTest {
         assertThat(ioLimits.maxDecodeBytes())
                 .as("decode ceiling is half of the memory beside the heap")
                 .isEqualTo(1_000_000_000L);
+    }
+
+    // A memory pool must not fail on a missing spill directory
+    @Test
+    void memoryCapsSkipTheDisk() {
+        ResourceLimits limits = new ResourceLimits() {
+            @Override
+            public long availableMemoryBytes() {
+                return 1000L;
+            }
+
+            @Override
+            public long usableDiskBytes(Path dir) {
+                throw new UncheckedIOException(new IOException("no spill directory"));
+            }
+
+            @Override
+            public int availableProcessors() {
+                return 1;
+            }
+
+            @Override
+            public Path spillDir() {
+                return DIR;
+            }
+        };
+        assertThat(IoLimits.offHeapCap(limits)).isEqualTo(200L);
+        assertThat(IoLimits.decodeCap(limits)).isEqualTo(500L);
     }
 
     @Test
