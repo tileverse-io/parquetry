@@ -374,7 +374,7 @@ class RowGroupFetcherTest {
         }
     }
 
-    // Page 0 abuts the prefix. A read joining the two would fetch the prefix, and the check would read it again.
+    // Page 0 abuts the prefix. The first call leaves the prefix out, and the second call reads it once.
     @Test
     void abuttingPrefixStaysUnread() throws IOException {
         try (CountingByteRangeSource source =
@@ -482,7 +482,7 @@ class RowGroupFetcherTest {
         }
     }
 
-    // A footer with overlapping chunks puts a prefix between two abutting runs, and one read would shift the second.
+    // Overlapping chunks put a prefix between two abutting runs. Each lands in its own target, even when joined below.
     @Test
     void roomOfAPrefixEndsARead() throws IOException {
         try (ByteRangeSource source = ByteRangeSource.ofFile(writeMixedFile())) {
@@ -504,7 +504,7 @@ class RowGroupFetcherTest {
         }
     }
 
-    // A footer with overlapping chunks makes two prefixes abut, and one read of both would overwrite the run between.
+    // A footer with overlapping chunks makes two prefixes abut. Each lands in its own target, even when joined below.
     @Test
     void abuttingPrefixesReadApart() throws IOException {
         try (ByteRangeSource source = ByteRangeSource.ofFile(writeMixedFile())) {

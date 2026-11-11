@@ -58,8 +58,8 @@ import io.tileverse.parquetry.schema.Repetition;
 import io.tileverse.parquetry.schema.SchemaNode;
 
 /**
- * How a row group reaches its byte source: the whole plan in one call, asking for its bytes and no others, what that
- * call cost reported back, and the several calls issued for a plan too wide for one of them.
+ * How a row group reaches its byte source: the whole plan in one call, one range per planned unit, asking for its bytes
+ * and no others, and what that call cost reported back.
  */
 class RowGroupBatchFetchTest {
 
@@ -73,8 +73,8 @@ class RowGroupBatchFetchTest {
 
     private static final int ROW_COUNT = 256;
 
-    /** The largest number of ranges accepted by one call, mirroring the cap enforced by the fetch. */
-    private static final int RANGES_PER_CALL = 256;
+    /** A plan with more units than this is wide: hundreds of ranges for one call. */
+    private static final int WIDE_PLAN_UNITS = 256;
 
     /** Rows per page of the wide fixture, small enough to leave every column with hundreds of pages. */
     private static final int WIDE_PAGE_VALUE_LIMIT = 10;
@@ -104,8 +104,12 @@ class RowGroupBatchFetchTest {
                     .as("one batch call takes the whole row group")
                     .isEqualTo(1);
             assertThat(counting.lengths())
-                    .as("three abutting chunks merge into one request for exactly the bytes of the plan")
-                    .containsExactly(Long.valueOf(plan.requestedBytes()));
+                    .as("one range per chunk, in the order of the plan")
+                    .hasSize(3)
+                    .containsExactlyElementsOf(unitLengthsOf(plan));
+            assertThat(totalOf(counting.lengths()))
+                    .as("exactly the bytes of the plan")
+                    .isEqualTo(plan.requestedBytes());
         }
     }
 
@@ -123,9 +127,7 @@ class RowGroupBatchFetchTest {
             try (RowGroupFetch _ = fetcher.fetch(survivor, plan, BudgetReservation.NONE)) {
                 FetchStats stats = accumulator.snapshot();
                 assertThat(stats.pageBytes()).isEqualTo(plan.requestedBytes());
-                assertThat(stats.requestCount())
-                        .as("one range asked for, the three abutting chunks merged")
-                        .isEqualTo(1);
+                assertThat(stats.requestCount()).as("one range per chunk").isEqualTo(3);
                 assertThat(stats.backendFetches()).isEqualTo(REPORTED_FETCHES);
                 assertThat(stats.bytesTransferred()).isEqualTo(REPORTED_TRANSFERRED);
                 assertThat(stats.bytesFromCache()).isEqualTo(REPORTED_FROM_CACHE);
@@ -134,7 +136,7 @@ class RowGroupBatchFetchTest {
     }
 
     @Test
-    void aPlanTooWideForOneCallGoesOutAsSeveral() throws Exception {
+    void aWidePlanGoesOutInOneCall() throws Exception {
         Path file = writeThreeColumnsOfManyPages();
         ParquetSchema schema = threeIntColumns();
         try (ByteRangeSource source = ByteRangeSource.ofFile(file)) {
@@ -144,24 +146,28 @@ class RowGroupBatchFetchTest {
                     TestFetchers.over(counting, schema, schema, SegmentPool.getDefault(), FetchAccumulator.NONE);
             FetchPlan plan = fetcher.planFor(survivor, Optional.of(everyOtherPageOf(survivor)));
             assertThat(plan.units())
-                    .as("the fixture must plan more ranges than one call takes")
-                    .hasSizeGreaterThan(RANGES_PER_CALL);
+                    .as("the fixture must plan a wide row group")
+                    .hasSizeGreaterThan(WIDE_PLAN_UNITS);
 
             try (RowGroupFetch fetch = fetcher.fetch(survivor, plan, BudgetReservation.NONE)) {
                 assertThat(fetch.columns()).hasSize(3);
             }
 
             assertThat(counting.rangesPerCall())
-                    .as("a plan beyond the cap goes out as several calls, none of them over it")
-                    .hasSizeGreaterThan(1)
-                    .allSatisfy(ranges -> assertThat(ranges).isLessThanOrEqualTo(RANGES_PER_CALL));
-            assertThat(counting.rangesPerCall().getFirst())
-                    .as("a call is filled to the cap before the next one starts")
-                    .isEqualTo(RANGES_PER_CALL);
+                    .as("the whole plan goes out in one call, one range per unit")
+                    .containsExactly(Integer.valueOf(plan.units().size()));
             assertThat(totalOf(counting.lengths()))
-                    .as("the calls together ask for the plan's bytes, none left out and none asked for twice")
+                    .as("the call asks for the plan's bytes, none left out and none asked for twice")
                     .isEqualTo(plan.requestedBytes());
         }
+    }
+
+    private static List<Long> unitLengthsOf(FetchPlan plan) {
+        List<Long> lengths = new ArrayList<>(plan.units().size());
+        for (FetchUnit unit : plan.units()) {
+            lengths.add(Long.valueOf(unit.length()));
+        }
+        return lengths;
     }
 
     private static long totalOf(List<Long> lengths) {

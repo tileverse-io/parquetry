@@ -76,7 +76,10 @@ import io.tileverse.parquetry.schema.PrimitiveKind;
 import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
+import io.tileverse.cache.CacheBudgets;
 import io.tileverse.cache.CacheManager;
+import io.tileverse.cache.CachePool;
+import io.tileverse.cache.CacheSettings;
 import io.tileverse.cache.CaffeineCacheManager;
 
 /**
@@ -86,7 +89,8 @@ import io.tileverse.cache.CaffeineCacheManager;
  * up no other file, and a failed load that leaves nothing behind.
  *
  * <p>The learned page indexes held beside the footers are covered as well. The first entry learned for a chunk stays,
- * an entry is charged its bytes, a clear drops it, and a footer lookup never reads one.
+ * an entry is charged its bytes, a clear drops it, and a footer lookup never reads one. An invalid metadata budget
+ * fails the open.
  */
 class FooterMetadataCacheTest {
 
@@ -111,8 +115,11 @@ class FooterMetadataCacheTest {
         throw new AssertionError("A caller joining a load in flight must not begin a load of its own");
     };
 
-    /** The size of a small learned entry, far below any heap share. */
+    /** The size of a small learned entry, far below any metadata budget. */
     private static final int SMALL_ENTRY_BYTES = 256;
+
+    /** The metadata budget of the manager built by the eviction check, small enough for two entries to outweigh it. */
+    private static final int METADATA_BUDGET_BYTES = 4 << 20;
 
     /** The annotation of the learned entries built here. A decimal keeps its bounds whole, at any length. */
     private static final Optional<LogicalType> DECIMAL = Optional.of(new LogicalType.Decimal(0, 38));
@@ -488,36 +495,26 @@ class FooterMetadataCacheTest {
                 .isGreaterThan(floor);
     }
 
+    // The shared manager has its metadata pool already. A fresh manager reads the budget at the first open.
     @Test
-    void anUnsetHeapShareFallsBackToTheDefault() {
-        assertThat(System.getProperty(FooterMetadataCache.MAX_HEAP_PERCENT_PROPERTY))
-                .as("the heap share property must start unset for this check")
-                .isNull();
-
-        assertThat(FooterMetadataCache.configuredMaxHeapPercent()).isEqualTo(10);
-    }
-
-    @ParameterizedTest
-    @MethodSource
-    void theHeapSharePropertyIsHonoredWithinBounds(String configured, int expected) {
-        System.setProperty(FooterMetadataCache.MAX_HEAP_PERCENT_PROPERTY, configured);
+    void badBudgetFailsTheOpen() {
+        CacheManager shared = CacheManager.getDefault();
+        ParseCountingLoader loader = new ParseCountingLoader();
+        System.setProperty(CacheSettings.METADATA_MAX_SIZE, "lots");
         try {
-            assertThat(FooterMetadataCache.configuredMaxHeapPercent()).isEqualTo(expected);
-        } finally {
-            System.clearProperty(FooterMetadataCache.MAX_HEAP_PERCENT_PROPERTY);
-        }
-    }
+            CacheManager.setDefault(new CaffeineCacheManager());
 
-    static Stream<Arguments> theHeapSharePropertyIsHonoredWithinBounds() {
-        return Stream.of(
-                Arguments.of("25", 25),
-                Arguments.of("  7  ", 7),
-                Arguments.of("0", 0),
-                Arguments.of("100", 100),
-                Arguments.of("101", 10),
-                Arguments.of("-1", 10),
-                Arguments.of("", 10),
-                Arguments.of("a tenth", 10));
+            assertThatThrownBy(() -> FooterMetadataCache.get("mem://bad-budget.parquet", FILE_LENGTH, loader))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("io.tileverse.cache.metadata.max-size")
+                    .hasMessageContaining("'lots'");
+            assertThat(loader.invocations())
+                    .as("footer loads run under an invalid budget")
+                    .isZero();
+        } finally {
+            System.clearProperty(CacheSettings.METADATA_MAX_SIZE);
+            CacheManager.setDefault(shared);
+        }
     }
 
     @Test
@@ -552,17 +549,14 @@ class FooterMetadataCacheTest {
                 .containsSame(first);
     }
 
-    // Two entries above half the heap share cannot both stay. The cache may evict either one.
+    // Two entries above half the metadata budget cannot both stay. The pool may evict either one.
     @Test
     void learnedEntriesWeighTheirBytes() {
         CacheManager shared = CacheManager.getDefault();
-        CaffeineCacheManager isolated = new CaffeineCacheManager();
+        CaffeineCacheManager isolated = new CaffeineCacheManager(new CacheBudgets(0, METADATA_BUDGET_BYTES));
         try {
-            System.setProperty(FooterMetadataCache.MAX_HEAP_PERCENT_PROPERTY, "1");
-            // A cache is built once per manager. The shared manager built its own under the default share.
             CacheManager.setDefault(isolated);
-            long heapShare = Runtime.getRuntime().maxMemory() / 100;
-            int entryBytes = Math.toIntExact(heapShare * 3 / 5);
+            int entryBytes = METADATA_BUDGET_BYTES * 3 / 5;
             LearnedPages first = learnedPagesOf(entryBytes);
             LearnedPages second = learnedPagesOf(entryBytes);
 
@@ -577,11 +571,10 @@ class FooterMetadataCacheTest {
                     FooterMetadataCache.learnedPages("mem://large.parquet", FILE_LENGTH, 0, 0),
                     FooterMetadataCache.learnedPages("mem://large.parquet", FILE_LENGTH, 0, 1));
             assertThat(lookups)
-                    .as("Two entries outweigh the heap share together. The cache keeps one of them.")
+                    .as("Two entries outweigh the metadata budget together. The pool keeps one of them.")
                     .filteredOn(Optional::isPresent)
                     .hasSize(1);
         } finally {
-            System.clearProperty(FooterMetadataCache.MAX_HEAP_PERCENT_PROPERTY);
             CacheManager.setDefault(shared);
         }
     }
@@ -721,18 +714,18 @@ class FooterMetadataCacheTest {
     }
 
     /**
-     * Runs the evictions pending in the metadata cache of {@code manager} now, on this thread. The cache would run them
-     * later on a pool thread.
+     * Runs the evictions pending in the metadata pool of {@code manager} now, on this thread. The pool would run them
+     * later on a thread of its executor. A partition has no native cache of its own, and these helpers read the pool's.
      */
     private static void runPendingEvictions(CaffeineCacheManager manager) {
-        Cache<Object, Object> entries = manager.getNativeCache(FooterMetadataCache.CACHE_NAME);
+        Cache<Object, Object> entries = manager.getNativeCache(CachePool.METADATA.cacheName());
         entries.cleanUp();
     }
 
-    /** The weight of the entries kept by the metadata cache of {@code manager}, once its pending evictions have run. */
+    /** The weight of the entries kept by the metadata pool of {@code manager}, once its pending evictions have run. */
     private static long weightedSize(CaffeineCacheManager manager) {
         runPendingEvictions(manager);
-        Cache<Object, Object> entries = manager.getNativeCache(FooterMetadataCache.CACHE_NAME);
+        Cache<Object, Object> entries = manager.getNativeCache(CachePool.METADATA.cacheName());
         Policy<Object, Object> policy = entries.policy();
         Policy.Eviction<Object, Object> eviction = policy.eviction().orElseThrow();
         return eviction.weightedSize().orElseThrow();

@@ -39,6 +39,7 @@ import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
 
+import io.tileverse.cache.CacheSettings;
 import lombok.NonNull;
 
 /**
@@ -90,11 +91,11 @@ class CachedPageIndexesTest {
     @Test
     void cacheTurnedOffLearnsNothing() {
         ByteRangeSource named = new SizedSource(Optional.of(FILE_NAME), FILE_LENGTH);
-        System.setProperty(FooterMetadataCache.MAX_HEAP_PERCENT_PROPERTY, "0");
+        System.setProperty(CacheSettings.METADATA_MAX_SIZE, "0");
         try {
             assertThat(CachedPageIndexes.of(named, unindexed, false)).isSameAs(LearnedPageIndexes.NONE);
         } finally {
-            System.clearProperty(FooterMetadataCache.MAX_HEAP_PERCENT_PROPERTY);
+            System.clearProperty(CacheSettings.METADATA_MAX_SIZE);
         }
     }
 

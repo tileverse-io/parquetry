@@ -64,30 +64,38 @@ rule: a batch over that budget spills to disk, or waits for room when spilling
 is off. The counters behind this are `FetchBudget.waitStats()` and
 `DiskBudget.stats()`.
 
-### The metadata cache
+### The caches
 
-Beside the budgets of the reads, the process keeps file metadata in one cache
-on the heap. `FooterMetadataCache` holds parsed footers and the page indexes
-learned from page headers ([The read path](read-path.md#without-a-page-index)).
-The cache knows a file by the name of its source and by its length. An open
-over an unnamed source, and an open given a decryption key, never reach it. A
-source opened from a listing or a stat lookup adds the version of the object to
-its name. A file rewritten under the same name at the same length, and opened by
-path or by key alone, is served its old entries until they expire or
-`ParquetCaches.clearAll()` drops them.
+Beside the budgets of the reads, the process keeps cached data on the heap, in
+the two pools of the shared tileverse cache manager. The tileverse guide
+[Configure for performance](https://tileverse.io/storage/how-to/configure/#caching-layers)
+describes the pools, their settings and how the caches key the data of a file.
 
-Both kinds share one budget, 10% of `Runtime.maxMemory()` by default, set as a
-whole percentage with the system property
-`io.tileverse.parquetry.metadatacache.maxheappercent`. The cache sizes itself
-from the property once, at its first use. Set the property before the process
-opens its first file. A share of 0 keeps neither kind, and reads then learn no
-pages. An entry unused for ten minutes expires. A learned page index weighs
-about 18 bytes a page, plus the bounds of its pages and a fixed 288 bytes.
-`ParquetCaches.clearAll()` drops both kinds, together with the byte ranges
-cached by the storage layer. `FooterMetadataCache.clear()` drops the two kinds
-alone. The hit and miss counts of the cache, named `parquetry-footer-metadata`,
-cover both kinds alike. On files without a page index, the lookups of learned
-pages dominate the hit rate.
+parquetry keeps two caches in the metadata pool, 10% of the heap by default
+(`io.tileverse.cache.metadata.max-size`): the parsed footers
+(`parquetry-footer-metadata`) and the page indexes learned from page headers
+(`parquetry-learned-pages`, see [The read path](read-path.md#without-a-page-index)).
+A learned page index weighs about 18 bytes a page, plus the bounds of its pages
+and a fixed 288 bytes. An entry unused for ten minutes expires. A metadata
+budget of 0 keeps neither kind, and reads then learn no pages. An open over an
+unnamed source, and an open given a decryption key, never reach the cache.
+
+The byte-range cache keeps the ranges read from remote storage in the data pool,
+20% of the heap by default (`io.tileverse.cache.data.max-size`), when the
+storage properties set `storage.caching.enabled=true`. Local files have no
+byte-range cache.
+
+The metadata of a file is keyed by its name, with the version of the object when
+the reader knows one, and by its length. Files opened through `FileSource` have
+a version, from the listing or the stat lookup that found them. STAC assets, the
+data files of an Iceberg table and some `par` commands open their files by key
+alone. Without a version, a file rewritten under the same name at the same
+length is served its old entries until they expire. Iceberg never rewrites a
+data file in place.
+
+`ParquetCaches.clearAll()` clears both pools, and `FooterMetadataCache.clear()`
+drops the footers and the learned page indexes alone. The learned cache counts
+two misses and one load per learned chunk: its hit rate reads low by design.
 
 ---
 
@@ -153,10 +161,10 @@ the buffers on malloc, at a higher read rate.
 - The on-heap `DecodeBudget` is inside `-Xmx` and does not add to the formula; it
   bounds how much of the heap speculative decode-ahead may occupy.
 - The heap scratch retained by parquetry's tileverse `ByteBufferPool` provider
-  (the merge scratch of batched reads, a PMTiles reader's buffers) is also inside
-  `-Xmx`: at most 32 MiB between borrows, released after 30 s idle.
-- [The metadata cache](#the-metadata-cache) is inside `-Xmx` too. Its footers
-  and learned page indexes take up to 10% of it by default.
+  (a PMTiles reader's buffers) is also inside `-Xmx`: at most 32 MiB between
+  borrows, released after 30 s idle. A row-group fetch borrows none.
+- [The caches](#the-caches) are inside `-Xmx` too: by default, up to 20% of it
+  for the data pool and up to 10% for the metadata pool.
 
 A read that cannot fit one row group's working set inside `-Xmx` still fails
 with an `OutOfMemoryError`: the budgets bound speculative work and native

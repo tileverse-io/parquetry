@@ -247,7 +247,7 @@ failing them gets no learning pass. A full scan learns nothing.
   INT96 columns keep page locations and null counts, without bounds.
 - **One page view.** The kept entries go into the metadata cache of the
   process, beside the parsed footers
-  ([Memory and tuning](memory-and-tuning.md#the-metadata-cache)). A later read
+  ([Memory and tuning](memory-and-tuning.md#the-caches)). A later read
   of the row group takes them as it takes a declared page index. The
   COLUMN_INDEX tier and the `RowMask` do not tell the two sources apart. The
   fetch of the surviving pages differs in one point, because learned pages record
@@ -256,10 +256,9 @@ failing them gets no learning pass. A full scan learns nothing.
   shows the decisions of the next one.
 - **Turning it off.** `ReadOptions.builder().useColumnIndexFilter(false)` turns
   the COLUMN_INDEX tier off for a read, and with it both the learning and the
-  use of learned pages. A heap share of 0 for the metadata cache turns learning
-  off for the process
-  ([Memory and tuning](memory-and-tuning.md#the-metadata-cache)). A source
-  without a name (`ByteRangeSource.sourceIdentifier()` is empty) and an
+  use of learned pages. A metadata pool with a budget of 0 turns learning off
+  for the process ([Memory and tuning](memory-and-tuning.md#the-caches)). A
+  source without a name (`ByteRangeSource.sourceIdentifier()` is empty) and an
   encrypted file learn nothing. A file with an offset index on each chunk learns
   nothing and looks nothing up.
 
@@ -316,9 +315,12 @@ flowchart TD
 
 What each piece guarantees:
 
-- **`RowGroupFetcher`** issues batch range reads over the whole row group, not
-  one read per column, and hands out zero-copy `FetchedColumnChunk` views into
-  pooled buffers. A plan above the per-call range cap goes out as several calls.
+- **`RowGroupFetcher`** asks for the ranges of a row group's plan in one batch
+  call, each as its own range, and hands out zero-copy `FetchedColumnChunk` views
+  into pooled buffers. The storage layer joins nearby ranges into fewer fetches
+  ([batched reads](https://tileverse.io/storage/how-to/configure/#batched-reads)),
+  and serves the cached ones from memory when the byte-range cache is on
+  ([Memory and tuning](memory-and-tuning.md#the-caches)).
 - **`RowGroupPrefetcher`** fetches upcoming row groups ahead of consumption on a
   per-read virtual-thread pool, bounded by a process-wide `FetchBudget` that caps
   the off-heap bytes held by column-chunk fetches. A prefetch is refused when the
@@ -385,13 +387,13 @@ What each piece guarantees:
   parquet-mr and Arrow fall back to PLAIN once per chunk, and the
   dictionary-encoded pages come first. The format does not promise that order,
   and the fetch checks it. The prefix keeps its room in the fetch buffer, and the
-  budget sees the same bytes, but the first request leaves the prefix unread.
-  Once the pages arrive, the fetch thread reads their headers from memory. A
-  dictionary-encoded page sends the prefix to one more request, into the room
-  already held. A wrong count therefore costs one request and never a row, and a
-  right count costs no request. A page header failing to parse on that check
-  fails the fetch, as it would fail the decode. A declared index without a
-  count reads the prefix with the pages. parquetry's writer records no
+  budget sees the same bytes, but the first call leaves the prefix unread. Once
+  the pages arrive, the fetch thread reads their headers from memory. When a
+  fetched page is dictionary-encoded, the fetch reads the prefix in one more
+  call, into the room already held. A wrong count therefore costs one call and
+  never a row, and a right count costs no call. A page header failing to parse
+  on that check fails the fetch, as it would fail the decode. A declared index
+  without a count reads the prefix with the pages. parquetry's writer records no
   `encoding_stats`, and its files read this way. A chunk fetched whole holds its
   dictionary page.
 

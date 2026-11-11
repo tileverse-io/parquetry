@@ -35,13 +35,13 @@ import io.tileverse.io.ByteBufferPool;
  * is soft: an over-budget borrow still returns a usable buffer and holds no reservation to release. Closing the handle
  * returns the segment and releases the reservation.
  *
- * <p><strong>Heap borrows</strong> serve the merge scratch of batched reads and the header, directory and tile buffers
- * of a PMTiles reader. They come from a heap-only pool built with tileverse's own {@link ByteBufferPool#builder()},
- * with block-aligned reuse, idle release and leak detection as in the built-in pool, retaining at most
- * {@link #HEAP_RETAINED_BUFFERS} buffers and {@link #HEAP_RETAINED_BYTES} bytes between borrows. A borrow above the
- * retention quota is still served and is released, not retained, when closed. Heap borrows are never charged to the
- * {@link FetchBudget}, which governs off-heap fetch memory: a heap charge there would push parquetry's own mandatory
- * fetches onto the spill store.
+ * <p><strong>Heap borrows</strong> serve the scratch of a batched read fetching overlapping or repeated ranges, and the
+ * header, directory and tile buffers of a PMTiles reader. They come from a heap-only pool built with tileverse's own
+ * {@link ByteBufferPool#builder()}, with block-aligned reuse, idle release and leak detection as in the built-in pool,
+ * retaining at most {@link #HEAP_RETAINED_BUFFERS} buffers and {@link #HEAP_RETAINED_BYTES} bytes between borrows. A
+ * borrow above the retention quota is still served and is released, not retained, when closed. Heap borrows are never
+ * charged to the {@link FetchBudget}, which governs off-heap fetch memory: a heap charge there would push parquetry's
+ * own mandatory fetches onto the spill store.
  *
  * <p>Both pools are resolved on first borrow, never in the constructor: {@code ServiceLoader} instantiates this class
  * from inside the built-in pool's own class initialization, and the runtime's resources must not be built there either.
@@ -60,7 +60,7 @@ public final class ParquetryByteBufferPool implements ByteBufferPool {
     /** Heap buffers retained between borrows: tileverse's own default. */
     static final int HEAP_RETAINED_BUFFERS = ByteBufferPool.DEFAULT_MAX_HEAP_BUFFERS;
 
-    /** Heap bytes retained between borrows: tileverse's own default, one merged fetch at the 32 MiB fetch cap. */
+    /** Heap bytes retained between borrows: tileverse's own default. */
     static final long HEAP_RETAINED_BYTES = ByteBufferPool.DEFAULT_MAX_HEAP_BYTES;
 
     /** Public no-argument constructor for {@link java.util.ServiceLoader} discovery. */

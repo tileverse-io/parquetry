@@ -21,11 +21,10 @@ container's memory limit, are invisible to `-Xmx`, and the kernel kills the
 process before the JVM can throw `OutOfMemoryError`. This document is about that
 off-heap term.
 
-A read fetches each row group's projected column chunks as batch range reads into
-a single native segment borrowed from a `SegmentPool`. That segment holds the
-bytes requested by the plan and nothing between them, and a plan wider than the
-per-call range cap goes out as several calls. Peak native fetch memory is
-approximately:
+A read fetches each row group's projected column chunks as one batch range read
+into a single native segment borrowed from a `SegmentPool`. That segment holds
+the bytes requested by the plan and nothing between them. Peak native fetch
+memory is approximately:
 
 ```
 concurrency  x  (current row group's requested bytes)  +  speculative prefetch

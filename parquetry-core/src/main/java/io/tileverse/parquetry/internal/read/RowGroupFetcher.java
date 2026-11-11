@@ -16,6 +16,7 @@
 package io.tileverse.parquetry.internal.read;
 
 import java.lang.foreign.MemorySegment;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -48,10 +49,10 @@ import lombok.NonNull;
 
 /**
  * Plans and fetches one row group's projected column chunks as the exact byte ranges of its plan. The fetch asks for no
- * byte outside them, joins two of them only where they abut, reads them into one pooled buffer, and hands out zero-copy
- * {@link FetchedColumnChunk} views into it. A fetch planned without a mask reads whole chunks. It hands them to the
- * {@link PageIndexLearner} of the read when the learner may learn their row group, before it returns and while the
- * buffer still holds them.
+ * byte outside the plan's ranges and asks for each of them as its own range. It reads them into one pooled buffer, and
+ * hands out zero-copy {@link FetchedColumnChunk} views into it. A fetch planned without a mask reads whole chunks. It
+ * hands them to the {@link PageIndexLearner} of the read when the learner may learn their row group, before it returns
+ * and while the buffer still holds them.
  *
  * <p>A narrowed fetch leaves the dictionary page of a column out when each fetched page is known not to use it; see
  * {@link DictionaryFetch}. A prefix read on demand keeps its room in the buffer, and the fetch checks the headers of
@@ -59,18 +60,6 @@ import lombok.NonNull;
  * for a second fetch buffer.
  */
 public final class RowGroupFetcher {
-
-    /**
-     * Longest single read. A read's length is an int at the byte-source seam, and a run of abutting units longer than
-     * this becomes more than one read.
-     */
-    private static final long MAX_MERGED_READ_BYTES = Integer.MAX_VALUE;
-
-    /**
-     * Ranges per batch call. A plan wider than this is issued as several calls, which bounds both the fan-out put in
-     * flight by an implementation and the scratch memory held by one call.
-     */
-    private static final int MAX_REQUESTS_PER_CALL = 256;
 
     private final ByteRangeSource source;
     private final ParquetSchema projectedSchema;
@@ -204,10 +193,9 @@ public final class RowGroupFetcher {
         Pooled buffer = acquireRangeBuffer(plan.requestedBytes(), speculative);
         try {
             List<PlacedUnit> placed = placeUnits(plan, buffer.segment());
-            readPlacedUnits(unitsReadAtOnce(placed), buffer.segment());
+            readPlacedUnits(unitsReadAtOnce(placed));
             Map<ColumnPath, List<PlacedUnit>> placedByColumn = byColumn(placed);
-            Set<ColumnPath> dictionariesLeftOut =
-                    settleOnDemandPrefixes(plan, placed, placedByColumn, buffer.segment());
+            Set<ColumnPath> dictionariesLeftOut = settleOnDemandPrefixes(plan, placed, placedByColumn);
             List<FetchedColumnChunk> columns = sliceColumns(placedByColumn, survivor.chunks(), dictionariesLeftOut);
             long fetchNanos = wantsTimings ? System.nanoTime() - startNanos : 0L;
             learnFrom(survivor, plan, placed);
@@ -235,16 +223,13 @@ public final class RowGroupFetcher {
         List<PlacedUnit> placed = new ArrayList<>(plan.units().size());
         long bufferOffset = 0;
         for (FetchUnit unit : plan.units()) {
-            placed.add(new PlacedUnit(unit, bufferOffset, buffer.asSlice(bufferOffset, unit.length())));
+            placed.add(new PlacedUnit(unit, buffer.asSlice(bufferOffset, unit.length())));
             bufferOffset += unit.length();
         }
         return placed;
     }
 
-    /**
-     * The units of the first read. An on-demand prefix stays out, also from the merge of abutting ranges: it abuts the
-     * first run when page 0 survives, and joining them would read the prefix anyway.
-     */
+    /** The units of the first read. An on-demand prefix stays out. */
     private static List<PlacedUnit> unitsReadAtOnce(List<PlacedUnit> placed) {
         List<PlacedUnit> readAtOnce = new ArrayList<>(placed.size());
         for (PlacedUnit placedUnit : placed) {
@@ -255,34 +240,28 @@ public final class RowGroupFetcher {
         return readAtOnce;
     }
 
-    /** One unit, where its bytes begin in the fetch buffer, and the view of the buffer holding them. */
-    private record PlacedUnit(FetchUnit unit, long bufferOffset, MemorySegment bytes) {}
+    /** One unit and the view of the fetch buffer holding its bytes. */
+    private record PlacedUnit(FetchUnit unit, MemorySegment bytes) {}
 
-    /** One contiguous read: the file offset to read from and the stretch of the fetch buffer to fill. */
-    private record MergedRead(long fileOffset, MemorySegment target) {
-
-        int length() {
-            return Math.toIntExact(target.byteSize());
+    /** Asks for the units of {@code placed} in one call to the byte source, each as its own range. */
+    private void readPlacedUnits(List<PlacedUnit> placed) {
+        // A settle pass with no prefix in use must not reach the source or count a call in the fetch statistics.
+        if (placed.isEmpty()) {
+            return;
         }
+        List<RangeRequest> requests = new ArrayList<>(placed.size());
+        for (PlacedUnit placedUnit : placed) {
+            FetchUnit unit = placedUnit.unit();
+            ByteBuffer target = placedUnit.bytes().asByteBuffer();
+            requests.add(RangeRequest.of(unit.fileOffset(), unit.length(), target));
+        }
+        issue(requests);
     }
 
-    /** Issues the reads of {@code placed} as batch calls of at most {@link #MAX_REQUESTS_PER_CALL} ranges each. */
-    private void readPlacedUnits(List<PlacedUnit> placed, MemorySegment buffer) {
-        List<MergedRead> reads = mergeAbutting(placed, buffer);
-        for (int from = 0; from < reads.size(); from += MAX_REQUESTS_PER_CALL) {
-            int to = Math.min(from + MAX_REQUESTS_PER_CALL, reads.size());
-            issue(reads.subList(from, to));
-        }
-    }
-
-    private void issue(List<MergedRead> reads) {
-        List<RangeRequest> requests = new ArrayList<>(reads.size());
+    private void issue(List<RangeRequest> requests) {
         long bytes = 0;
-        for (MergedRead read : reads) {
-            int length = read.length();
-            requests.add(
-                    RangeRequest.of(read.fileOffset(), length, read.target().asByteBuffer()));
-            bytes += length;
+        for (RangeRequest request : requests) {
+            bytes += request.range().length();
         }
         BatchReadResult result = source.readFully(requests);
         accumulator.add(
@@ -292,55 +271,6 @@ public final class RowGroupFetcher {
                 result.fetches(),
                 result.bytesTransferred(),
                 result.bytesFromCache());
-    }
-
-    /**
-     * One read per maximal run of units touching byte for byte, in the file and in the fetch buffer. Joining those
-     * costs no unrequested byte and keeps a whole-chunk row group at a single read; a hole between two runs always ends
-     * a read.
-     */
-    private static List<MergedRead> mergeAbutting(List<PlacedUnit> placed, MemorySegment buffer) {
-        List<MergedRead> reads = new ArrayList<>(placed.size());
-        int runStart = 0;
-        for (int index = 1; index <= placed.size(); index++) {
-            if (index < placed.size() && continuesRun(placed, runStart, index)) {
-                continue;
-            }
-            reads.add(readOver(placed.subList(runStart, index), buffer));
-            runStart = index;
-        }
-        return reads;
-    }
-
-    private static boolean continuesRun(List<PlacedUnit> placed, int runStart, int index) {
-        PlacedUnit previous = placed.get(index - 1);
-        PlacedUnit next = placed.get(index);
-        if (!abuts(previous, next)) {
-            return false;
-        }
-        long runStartOffset = placed.get(runStart).unit().fileOffset();
-        long runLength = next.unit().fileOffset() + next.unit().length() - runStartOffset;
-        return runLength <= MAX_MERGED_READ_BYTES;
-    }
-
-    /**
-     * Whether {@code next} starts where {@code previous} ends, in the file and in the fetch buffer. One read fills one
-     * stretch of the buffer. A read may skip a unit placed between two of its units, and joining those two would
-     * overwrite the skipped unit and shift the bytes of the second. The two can abut in the file only under a footer
-     * with overlapping chunks.
-     */
-    private static boolean abuts(PlacedUnit previous, PlacedUnit next) {
-        int length = previous.unit().length();
-        boolean inTheFile = previous.unit().fileOffset() + length == next.unit().fileOffset();
-        boolean inTheBuffer = previous.bufferOffset() + length == next.bufferOffset();
-        return inTheFile && inTheBuffer;
-    }
-
-    private static MergedRead readOver(List<PlacedUnit> run, MemorySegment buffer) {
-        PlacedUnit first = run.get(0);
-        PlacedUnit last = run.get(run.size() - 1);
-        long length = last.bufferOffset() + last.unit().length() - first.bufferOffset();
-        return new MergedRead(first.unit().fileOffset(), buffer.asSlice(first.bufferOffset(), length));
     }
 
     /** The placed units of each column, in the plan's file order, which for data pages is page-ordinal order. */
@@ -360,10 +290,7 @@ public final class RowGroupFetcher {
      * buffer, because a fetch holding a fetch buffer never asks for another.
      */
     private Set<ColumnPath> settleOnDemandPrefixes(
-            FetchPlan plan,
-            List<PlacedUnit> placed,
-            Map<ColumnPath, List<PlacedUnit>> placedByColumn,
-            MemorySegment buffer) {
+            FetchPlan plan, List<PlacedUnit> placed, Map<ColumnPath, List<PlacedUnit>> placedByColumn) {
         Set<ColumnPath> leftOut = new HashSet<>(plan.dictionariesLeftOut());
         List<PlacedUnit> inUse = new ArrayList<>();
         for (PlacedUnit placedUnit : placed) {
@@ -376,7 +303,7 @@ public final class RowGroupFetcher {
                 }
             }
         }
-        readPlacedUnits(inUse, buffer);
+        readPlacedUnits(inUse);
         return leftOut;
     }
 

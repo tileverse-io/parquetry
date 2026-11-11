@@ -85,8 +85,8 @@ import io.tileverse.parquetry.testsupport.CorpusFixtures;
  * {@code PLAIN}). A {@value #PAGE_BYTE_LIMIT}-byte page limit and no compression split each long column into many small
  * pages per row group, which lets an {@code id} range name the pages that must survive.
  *
- * <p>A fetch asks for the ranges of its plan and joins two of them only where they abut, which makes every byte
- * assertion below exact: a page dropped by the selection is a page covered by no read.
+ * <p>A fetch asks for the ranges of its plan and for no other byte, which makes the byte assertions below exact: a page
+ * dropped by the selection is a page covered by no read.
  */
 class PageNarrowedFetchReadTest {
 

@@ -57,8 +57,8 @@ public record FetchPlan(
     }
 
     /**
-     * First to last requested byte, holes included: the ceiling on the scratch memory held by a byte source while it
-     * serves the plan, and the amount reserved against the fetch budget by a speculative prefetch.
+     * The bytes from the first to the last requested byte, holes included. A speculative prefetch reserves this many
+     * bytes against the fetch budget.
      */
     public long spanBytes() {
         if (units.isEmpty()) {

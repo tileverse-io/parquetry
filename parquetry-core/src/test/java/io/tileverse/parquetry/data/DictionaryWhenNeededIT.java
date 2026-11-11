@@ -342,7 +342,7 @@ class DictionaryWhenNeededIT {
         assertThat(counted.requests()).isEqualTo(fetched.requests());
     }
 
-    // The footer counts no dictionary-encoded page. In the true file, page 0 and the prefix share one request.
+    // The true file reads the prefix in the first call, the wrong one in a second. Both ask for the same ranges.
     @Test
     void aWrongCountStillReadsEachRow() throws IOException {
         Path wrong = rewritten(declaredFile, statsCounting(0));
@@ -353,10 +353,10 @@ class DictionaryWhenNeededIT {
         assertThat(claimed.labels()).isEqualTo(firstLabels());
         assertThat(claimed.labels()).isEqualTo(truth.labels());
         assertThat(claimed.bytes()).isEqualTo(truth.bytes());
-        assertThat(claimed.requests()).isEqualTo(truth.requests() + 1);
+        assertThat(claimed.requests()).isEqualTo(truth.requests());
     }
 
-    // No surviving page abuts the prefix, and the true file reads it in a request of its own.
+    // Each unit is its own request in both files, whichever call reads the prefix.
     @Test
     void aWrongCountPastTheFirstPage() throws IOException {
         Path wrong = rewritten(declaredFile, statsCounting(2));

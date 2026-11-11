@@ -61,9 +61,8 @@ public final class RecordingByteRangeSource implements ByteRangeSource {
     /**
      * Records every request's range, forwards the whole batch to the delegate in one call, and returns the cost
      * reported by the delegate. Without this override the batch would fall back to the interface default's
-     * one-range-at-a-time loop, and a test counting calls would measure the decorator rather than the read path.
-     * Recording the requests rather than the reads issued for them records the same bytes: a read joins two ranges only
-     * where they touch byte for byte.
+     * one-range-at-a-time loop, and a test counting calls would measure the decorator rather than the read path. The
+     * delegate decides how the ranges are read. Recording the requests records the plan's bytes either way.
      */
     @Override
     public BatchReadResult readFully(List<RangeRequest> requests) {
