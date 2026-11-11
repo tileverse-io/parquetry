@@ -20,10 +20,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileTime;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -54,6 +58,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Policy;
 
+import io.tileverse.parquetry.data.WriteOptions.EncodingPolicy;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.MalformedFileException;
@@ -61,22 +66,31 @@ import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.internal.filter.LearnedPages;
 import io.tileverse.parquetry.internal.filter.spatial.EmptyBoundsSource;
 import io.tileverse.parquetry.internal.read.DecryptionKeyRetriever;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.FileEntry;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.runtime.ParquetRuntime;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
+import io.tileverse.cache.CacheBudgets;
 import io.tileverse.cache.CacheManager;
+import io.tileverse.cache.CachePool;
+import io.tileverse.cache.CacheSettings;
 import io.tileverse.cache.CaffeineCacheManager;
 
 /**
  * Covers the identity and the bypass rules of the shared footer cache: what is reused by a repeat open of the same
- * file, what is dropped by a changed length or a {@link FooterMetadataCache#clear()}, and which opens never touch the
- * cache at all. Concurrent opens are covered too: one load per file, a load in flight that holds up no other file, and
- * a failed load that leaves nothing behind.
+ * file, what is dropped by a changed length, a changed version or a {@link FooterMetadataCache#clear()}, and which
+ * opens never touch the cache at all. Concurrent opens are covered too: one load per file, a load in flight that holds
+ * up no other file, and a failed load that leaves nothing behind.
  *
  * <p>The learned page indexes held beside the footers are covered as well. The first entry learned for a chunk stays,
- * an entry is charged its bytes, a clear drops it, and a footer lookup never reads one.
+ * an entry is charged its bytes, a clear drops it, and a footer lookup never reads one. An invalid metadata budget
+ * fails the open.
  */
 class FooterMetadataCacheTest {
 
@@ -101,11 +115,20 @@ class FooterMetadataCacheTest {
         throw new AssertionError("A caller joining a load in flight must not begin a load of its own");
     };
 
-    /** The size of a small learned entry, far below any heap share. */
+    /** The size of a small learned entry, far below any metadata budget. */
     private static final int SMALL_ENTRY_BYTES = 256;
+
+    /** The metadata budget of the manager built by the eviction check, small enough for two entries to outweigh it. */
+    private static final int METADATA_BUDGET_BYTES = 4 << 20;
 
     /** The annotation of the learned entries built here. A decimal keeps its bounds whole, at any length. */
     private static final Optional<LogicalType> DECIMAL = Optional.of(new LogicalType.Decimal(0, 38));
+
+    /** The key/value entry naming the revision of the rewritten file. */
+    private static final String REVISION = "revision";
+
+    /** The row count of one revision of the rewritten file. */
+    private static final int REVISION_ROWS = 100;
 
     @TempDir
     Path tempDir;
@@ -139,6 +162,26 @@ class FooterMetadataCacheTest {
 
         assertThat(atAnother).isNotSameAs(atOneLength);
         assertThat(loader.invocations()).isEqualTo(2);
+    }
+
+    // The rewrite keeps the name and the length of the file. Only its version tells the two contents apart.
+    @Test
+    void sameLengthRewriteRereads() throws IOException {
+        Path first = writeRevision("revision-1.parquet", "1");
+        Path second = writeRevision("revision-2.parquet", "2");
+        assertThat(Files.size(second)).as("the length of the second revision").isEqualTo(Files.size(first));
+        Path rewritten = tempDir.resolve("t.parquet");
+        Files.copy(first, rewritten);
+        assertThat(revisionOf(rewritten))
+                .as("the revision read before the rewrite")
+                .isEqualTo("1");
+
+        Files.copy(second, rewritten, StandardCopyOption.REPLACE_EXISTING);
+        moveModificationTimeAhead(rewritten);
+
+        assertThat(revisionOf(rewritten))
+                .as("the revision read after the rewrite")
+                .isEqualTo("2");
     }
 
     @Test
@@ -452,36 +495,26 @@ class FooterMetadataCacheTest {
                 .isGreaterThan(floor);
     }
 
+    // The shared manager has its metadata pool already. A fresh manager reads the budget at the first open.
     @Test
-    void anUnsetHeapShareFallsBackToTheDefault() {
-        assertThat(System.getProperty(FooterMetadataCache.MAX_HEAP_PERCENT_PROPERTY))
-                .as("the heap share property must start unset for this check")
-                .isNull();
-
-        assertThat(FooterMetadataCache.configuredMaxHeapPercent()).isEqualTo(10);
-    }
-
-    @ParameterizedTest
-    @MethodSource
-    void theHeapSharePropertyIsHonoredWithinBounds(String configured, int expected) {
-        System.setProperty(FooterMetadataCache.MAX_HEAP_PERCENT_PROPERTY, configured);
+    void badBudgetFailsTheOpen() {
+        CacheManager shared = CacheManager.getDefault();
+        ParseCountingLoader loader = new ParseCountingLoader();
+        System.setProperty(CacheSettings.METADATA_MAX_SIZE, "lots");
         try {
-            assertThat(FooterMetadataCache.configuredMaxHeapPercent()).isEqualTo(expected);
-        } finally {
-            System.clearProperty(FooterMetadataCache.MAX_HEAP_PERCENT_PROPERTY);
-        }
-    }
+            CacheManager.setDefault(new CaffeineCacheManager());
 
-    static Stream<Arguments> theHeapSharePropertyIsHonoredWithinBounds() {
-        return Stream.of(
-                Arguments.of("25", 25),
-                Arguments.of("  7  ", 7),
-                Arguments.of("0", 0),
-                Arguments.of("100", 100),
-                Arguments.of("101", 10),
-                Arguments.of("-1", 10),
-                Arguments.of("", 10),
-                Arguments.of("a tenth", 10));
+            assertThatThrownBy(() -> FooterMetadataCache.get("mem://bad-budget.parquet", FILE_LENGTH, loader))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("io.tileverse.cache.metadata.max-size")
+                    .hasMessageContaining("'lots'");
+            assertThat(loader.invocations())
+                    .as("footer loads run under an invalid budget")
+                    .isZero();
+        } finally {
+            System.clearProperty(CacheSettings.METADATA_MAX_SIZE);
+            CacheManager.setDefault(shared);
+        }
     }
 
     @Test
@@ -516,17 +549,14 @@ class FooterMetadataCacheTest {
                 .containsSame(first);
     }
 
-    // Two entries above half the heap share cannot both stay. The cache may evict either one.
+    // Two entries above half the metadata budget cannot both stay. The pool may evict either one.
     @Test
     void learnedEntriesWeighTheirBytes() {
         CacheManager shared = CacheManager.getDefault();
-        CaffeineCacheManager isolated = new CaffeineCacheManager();
+        CaffeineCacheManager isolated = new CaffeineCacheManager(new CacheBudgets(0, METADATA_BUDGET_BYTES));
         try {
-            System.setProperty(FooterMetadataCache.MAX_HEAP_PERCENT_PROPERTY, "1");
-            // A cache is built once per manager. The shared manager built its own under the default share.
             CacheManager.setDefault(isolated);
-            long heapShare = Runtime.getRuntime().maxMemory() / 100;
-            int entryBytes = Math.toIntExact(heapShare * 3 / 5);
+            int entryBytes = METADATA_BUDGET_BYTES * 3 / 5;
             LearnedPages first = learnedPagesOf(entryBytes);
             LearnedPages second = learnedPagesOf(entryBytes);
 
@@ -541,11 +571,10 @@ class FooterMetadataCacheTest {
                     FooterMetadataCache.learnedPages("mem://large.parquet", FILE_LENGTH, 0, 0),
                     FooterMetadataCache.learnedPages("mem://large.parquet", FILE_LENGTH, 0, 1));
             assertThat(lookups)
-                    .as("Two entries outweigh the heap share together. The cache keeps one of them.")
+                    .as("Two entries outweigh the metadata budget together. The pool keeps one of them.")
                     .filteredOn(Optional::isPresent)
                     .hasSize(1);
         } finally {
-            System.clearProperty(FooterMetadataCache.MAX_HEAP_PERCENT_PROPERTY);
             CacheManager.setDefault(shared);
         }
     }
@@ -614,6 +643,58 @@ class FooterMetadataCacheTest {
         return ParquetFileReader.open(source, ParquetRuntime.defaultRuntime(), Optional.of(ANY_KEY));
     }
 
+    /**
+     * Writes {@link #REVISION_ROWS} values of one INT64 column, uncompressed and PLAIN encoded, with {@code revision}
+     * as the value of the key/value entry {@link #REVISION}. Revisions of one character give files of the same length.
+     */
+    private Path writeRevision(String fileName, String revision) throws IOException {
+        Path file = tempDir.resolve(fileName);
+        SchemaNode.Primitive id = WriteFixtures.requiredLeaf("id", PrimitiveKind.INT64);
+        ParquetSchema schema = WriteFixtures.schemaOf(id);
+        WriteOptions options = WriteOptions.builder()
+                .tempDir(tempDir)
+                .defaultCompression(Compression.uncompressed())
+                .encodingPolicy("id", EncodingPolicy.FORCE_PLAIN)
+                .keyValueMetadata(REVISION, revision)
+                .build();
+        try (OutputStream out = Files.newOutputStream(file);
+                ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender();
+            for (long value = 0; value < REVISION_ROWS; value++) {
+                appender.setLong(0, value);
+                appender.endRow();
+            }
+        }
+        return file;
+    }
+
+    /** The value of the entry {@link #REVISION} in {@code file}, read through a new source over the file. */
+    private static String revisionOf(Path file) {
+        try (FileSource files = FileSource.file(file);
+                ByteRangeSource source = onlyEntry(files).open()) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            return reader.keyValueMetadata().get(REVISION);
+        }
+    }
+
+    private static FileEntry onlyEntry(FileSource files) {
+        try (Stream<FileEntry> entries = files.list()) {
+            List<FileEntry> listed = entries.toList();
+            assertThat(listed).as("the entries listed for one file").hasSize(1);
+            return listed.getFirst();
+        }
+    }
+
+    /**
+     * Moves the modification time of {@code file} two seconds ahead. The version of a local file comes from its size
+     * and its modification time, and two copies made within one tick of the file system clock could share a version.
+     */
+    private static void moveModificationTimeAhead(Path file) throws IOException {
+        FileTime modified = Files.getLastModifiedTime(file);
+        Instant twoSecondsLater = modified.toInstant().plusSeconds(2);
+        Files.setLastModifiedTime(file, FileTime.from(twoSecondsLater));
+    }
+
     /** The fixture's footer metadata, derived afresh: two calls give two instances of equal content. */
     private FooterMetadata parseFixture() {
         return FooterMetadata.parse(CountingSource.anonymous(fixtureBytes));
@@ -633,18 +714,18 @@ class FooterMetadataCacheTest {
     }
 
     /**
-     * Runs the evictions pending in the metadata cache of {@code manager} now, on this thread. The cache would run them
-     * later on a pool thread.
+     * Runs the evictions pending in the metadata pool of {@code manager} now, on this thread. The pool would run them
+     * later on a thread of its executor. A partition has no native cache of its own, and these helpers read the pool's.
      */
     private static void runPendingEvictions(CaffeineCacheManager manager) {
-        Cache<Object, Object> entries = manager.getNativeCache(FooterMetadataCache.CACHE_NAME);
+        Cache<Object, Object> entries = manager.getNativeCache(CachePool.METADATA.cacheName());
         entries.cleanUp();
     }
 
-    /** The weight of the entries kept by the metadata cache of {@code manager}, once its pending evictions have run. */
+    /** The weight of the entries kept by the metadata pool of {@code manager}, once its pending evictions have run. */
     private static long weightedSize(CaffeineCacheManager manager) {
         runPendingEvictions(manager);
-        Cache<Object, Object> entries = manager.getNativeCache(FooterMetadataCache.CACHE_NAME);
+        Cache<Object, Object> entries = manager.getNativeCache(CachePool.METADATA.cacheName());
         Policy<Object, Object> policy = entries.policy();
         Policy.Eviction<Object, Object> eviction = policy.eviction().orElseThrow();
         return eviction.weightedSize().orElseThrow();

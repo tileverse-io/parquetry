@@ -118,12 +118,15 @@ final class RangeReaderByteRangeSource implements ByteRangeSource {
     }
 
     /**
-     * The reader's own source identifier, typically the object's URI. A reader that declines to name its source leaves
-     * this adapter unnamed rather than failing the read.
+     * The reader's content identifier. It is the reader's source identifier, typically the URI of the object, followed
+     * by the version of the object when the reader was opened from a listing or stat entry. A reader opened by key
+     * alone has no version. A reader naming no source leaves this adapter unnamed, even when the reader knows a
+     * version.
      */
     @Override
     public Optional<String> sourceIdentifier() {
-        return Optional.ofNullable(reader.getSourceIdentifier());
+        Optional<String> sourceName = Optional.ofNullable(reader.getSourceIdentifier());
+        return sourceName.map(_ -> reader.contentIdentifier());
     }
 
     @Override

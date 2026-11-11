@@ -16,46 +16,44 @@
 package io.tileverse.parquetry.data;
 
 import java.time.Duration;
+import java.util.Collection;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentMap;
 import java.util.function.Supplier;
-
-import com.github.benmanes.caffeine.cache.AsyncCache;
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
-import com.github.benmanes.caffeine.cache.Scheduler;
-import com.github.benmanes.caffeine.cache.Weigher;
 
 import io.tileverse.parquetry.internal.filter.LearnedPages;
 import io.tileverse.parquetry.internal.footer.CompactFooter;
 
+import io.tileverse.cache.Cache;
+import io.tileverse.cache.CacheBudgets;
 import io.tileverse.cache.CacheManager;
-import io.tileverse.cache.CaffeineCache;
+import io.tileverse.cache.CachePool;
+import io.tileverse.cache.CaffeineCacheManager;
+import io.tileverse.cache.PartitionSpec;
 import lombok.NonNull;
 
 /**
- * The process-wide cache of the metadata read from Parquet files. It holds two kinds of entry under one budget, both
- * keyed by the name and the length of a file.
+ * The process-wide cache of the metadata read from Parquet files. It is made of two partitions of the metadata pool of
+ * the shared tileverse {@link CacheManager}. The keys of both hold the identity of a file: the name of its source and
+ * its length.
  *
- * <p>A footer entry holds the {@link FooterMetadata} of a file. A server that reopens the same files across requests -
- * a dataset of several hundred Parquet files answering one map request after another - reads and parses each footer
- * once instead of once per open.
+ * <p>The partition {@code parquetry-footer-metadata} holds the {@link FooterMetadata} of each file. A server that
+ * reopens the same files across requests - a dataset of several hundred Parquet files answering one map request after
+ * another - reads and parses each footer once instead of once per open.
  *
- * <p>A learned entry holds the {@link LearnedPages} of one column chunk, and its key adds the row group and the column
- * of the chunk. A filtered read of a file without a page index fetches the chunks whole, and it may learn these entries
- * from their page headers. A later read of the same row group prunes pages with them.
+ * <p>The partition {@code parquetry-learned-pages} holds the {@link LearnedPages} of column chunks, and its key adds
+ * the row group and the column of the chunk. A filtered read of a file without a page index fetches the chunks whole,
+ * and it may learn these entries from their page headers. A later read of the same row group prunes pages with them.
  *
  * <p>The weight of a footer entry counts its packed planning footer, its key/value metadata, its schema and the spatial
- * bounds of the file's geometry columns. The weight of a learned entry counts the bytes of its packed pages. The two
- * kinds share a budget of 10% of the heap by default, set with the {@value #MAX_HEAP_PERCENT_PROPERTY} system property.
- * A share of 0 keeps nothing. The cache registers with the shared tileverse {@link CacheManager}, alongside the storage
- * layer's range cache.
+ * bounds of the file's geometry columns. The weight of a learned entry counts the bytes of its packed pages. Both
+ * partitions draw on the budget of the metadata pool, and they share it with the PMTiles directories and the VersaTiles
+ * tile indexes of the process. The budget is set with {@code io.tileverse.cache.metadata.max-size}, as a share of the
+ * heap or as a size such as {@code 512M}. It is 10% of the heap by default, and a budget of 0 keeps nothing.
  *
- * <p>The statistics of the cache count the hits, the misses and the entries of both kinds together. A filtered read of
- * a file without a page index looks up the learned entries of its column chunks, and these lookups dominate the hit
- * rate seen by an operator.
+ * <p>The statistics of a {@link CaffeineCacheManager}, the default of tileverse, report the hits, the misses and the
+ * entries of each partition apart, under the name of the partition. Another manager registers only the pool, and its
+ * statistics report the totals of the pool.
  *
  * <p>An entry unused for ten minutes expires. The memory of an expired or evicted entry returns once no open reader
  * over that file still holds the forms derived from it. The per-file statistics kept by a catalog are copies and hold
@@ -66,12 +64,9 @@ import lombok.NonNull;
  */
 public final class FooterMetadataCache {
 
-    /** System property setting the maximum share of the heap available to the cache, as a whole percentage. */
-    public static final String MAX_HEAP_PERCENT_PROPERTY = "io.tileverse.parquetry.metadatacache.maxheappercent";
-
     static final String CACHE_NAME = "parquetry-footer-metadata";
 
-    private static final int DEFAULT_MAX_HEAP_PERCENT = 10;
+    static final String LEARNED_PAGES_NAME = "parquetry-learned-pages";
 
     private static final Duration EXPIRE_AFTER_ACCESS = Duration.ofMinutes(10);
 
@@ -105,16 +100,16 @@ public final class FooterMetadataCache {
      */
     private static final int LEARNED_ENTRY_OVERHEAD_BYTES = 288;
 
-    /** The entry size assumed when sizing the hash table, in the range of a many-column file's packed footer. */
-    private static final int EXPECTED_ENTRY_BYTES = 64 * 1024;
-
     /**
-     * Charged to the outcome of a load that threw, an entry dropped by its own thread before that outcome is published.
+     * How the footer partition weighs and expires its entries. It is a constant because the pool compares the spec of a
+     * partition registered again by equality, and its weigher by identity.
      */
-    private static final int FAILED_LOAD_BYTES = 64;
+    private static final PartitionSpec<FooterKey, FooterMetadata> FOOTERS =
+            new PartitionSpec<>((_, metadata) -> weigh(metadata), EXPIRE_AFTER_ACCESS);
 
-    /** Ceiling on the size hint for the hash table, short of the largest table that the cache can allocate. */
-    private static final int MAX_INITIAL_CAPACITY = 1_000_000_000;
+    /** How the learned partition weighs and expires its entries. It is a constant, as the spec of the footers is. */
+    private static final PartitionSpec<LearnedPagesKey, LearnedPages> LEARNED_PAGES =
+            new PartitionSpec<>((_, pages) -> weigh(pages), EXPIRE_AFTER_ACCESS);
 
     private FooterMetadataCache() {}
 
@@ -122,92 +117,18 @@ public final class FooterMetadataCache {
      * The metadata cached for the file named {@code sourceId} at {@code fileLength} bytes, obtained from {@code loader}
      * on a miss. Concurrent callers for one key share a single load; the rest wait for its result.
      *
-     * <p>The cache's own lock covers no more than the installation of an empty slot. The caller that installs one reads
-     * and parses the footer on its own thread outside that lock, which leaves every other file of the same hash bin
-     * free to load meanwhile.
+     * <p>The lock of the pool covers no more than the claim of the key. The caller holding the claim reads and parses
+     * the footer on its own thread outside that lock, and the other files of the same hash bin load meanwhile.
      *
-     * <p>Every caller of a load that threw receives the throwable of the loading thread itself, stack trace of that
+     * <p>The callers of a load that threw receive the throwable of the loading thread itself, stack trace of that
      * thread included, and the next open of the file loads it again.
+     *
+     * @throws IllegalArgumentException if this call creates the metadata pool and a budget setting holds an invalid
+     *     size
      */
     static FooterMetadata get(String sourceId, long fileLength, Supplier<FooterMetadata> loader) {
         FooterKey key = new FooterKey(sourceId, fileLength);
-        AsyncCache<MetadataKey, CacheValue> entries = cache().asyncCache();
-        CompletableFuture<CacheValue> claim = new CompletableFuture<>();
-        CompletableFuture<CacheValue> entry = entries.get(key, (_, _) -> claim);
-        boolean loadFallsToThisCaller = entry == claim;
-        CacheValue result;
-        if (loadFallsToThisCaller) {
-            result = runLoad(entries, key, claim, loader);
-        } else {
-            result = entry.join();
-        }
-        return metadataOf(result);
-    }
-
-    /** Runs {@code loader} on the calling thread and publishes its outcome to the callers waiting on {@code claim}. */
-    private static CacheValue runLoad(
-            AsyncCache<MetadataKey, CacheValue> entries,
-            FooterKey key,
-            CompletableFuture<CacheValue> claim,
-            Supplier<FooterMetadata> loader) {
-        CacheValue result = load(loader);
-        publishOutcome(entries, key, claim, result);
-        return result;
-    }
-
-    /** The outcome of one run of {@code loader}: what it returned, or the throwable thrown by it. */
-    // java:S1181 - an error on the loading thread is an outcome of that load like any other; a claim that no outcome
-    // reaches would strand every caller waiting on it.
-    @SuppressWarnings("java:S1181")
-    private static CacheValue load(Supplier<FooterMetadata> loader) {
-        try {
-            return new CacheValue.Loaded(loader.get());
-        } catch (RuntimeException failure) {
-            return new CacheValue.Failed(failure);
-        } catch (Error fatal) {
-            return new CacheValue.Fatal(fatal);
-        }
-    }
-
-    /**
-     * Hands {@code result} to the callers waiting on {@code claim}. The entry of a load that threw is dropped first and
-     * the outcome published second: no caller arriving after the drop picks that failure up, and the next open of the
-     * file loads it again. The publish stands even when the drop itself fails, which leaves nobody waiting on a claim
-     * that no outcome reaches.
-     */
-    private static void publishOutcome(
-            AsyncCache<MetadataKey, CacheValue> entries,
-            FooterKey key,
-            CompletableFuture<CacheValue> claim,
-            CacheValue result) {
-        boolean loadCompleted = result instanceof CacheValue.Loaded;
-        try {
-            if (!loadCompleted) {
-                dropEntry(entries, key, claim);
-            }
-        } finally {
-            claim.complete(result);
-        }
-    }
-
-    /** Drops the entry for {@code key} if it still holds {@code claim}, leaving a later claim on it untouched. */
-    private static void dropEntry(
-            AsyncCache<MetadataKey, CacheValue> entries, FooterKey key, CompletableFuture<CacheValue> claim) {
-        ConcurrentMap<MetadataKey, CompletableFuture<CacheValue>> byKey = entries.asMap();
-        byKey.remove(key, claim);
-    }
-
-    /**
-     * The metadata of a load that completed. A load that threw has the throwable of its loader rethrown here. A footer
-     * key never holds a learned entry, because the two kinds of entry have keys of different types.
-     */
-    private static FooterMetadata metadataOf(CacheValue result) {
-        return switch (result) {
-            case CacheValue.Loaded(FooterMetadata metadata) -> metadata;
-            case CacheValue.Failed(RuntimeException failure) -> throw failure;
-            case CacheValue.Fatal(Error failure) -> throw failure;
-            case CacheValue.Learned _ -> throw new IllegalStateException("A footer key holds a learned page index");
-        };
+        return footerPartition().get(key, _ -> loader.get());
     }
 
     /**
@@ -217,11 +138,8 @@ public final class FooterMetadataCache {
      */
     static Optional<LearnedPages> learnedPages(String sourceId, long fileLength, int rowGroup, int column) {
         LearnedPagesKey key = new LearnedPagesKey(sourceId, fileLength, rowGroup, column);
-        CacheValue value = synchronousEntries().getIfPresent(key);
-        if (value instanceof CacheValue.Learned(LearnedPages pages)) {
-            return Optional.of(pages);
-        }
-        return Optional.empty();
+        LearnedPages pages = learnedPagesPartition().getIfPresent(key);
+        return Optional.ofNullable(pages);
     }
 
     /**
@@ -229,32 +147,40 @@ public final class FooterMetadataCache {
      * {@code rowGroup} of the file named {@code sourceId} at {@code fileLength} bytes. An entry already kept for the
      * chunk stays, and {@code pages} is dropped. Reads learning one chunk at once build equal entries, and the first
      * one kept serves them all.
+     *
+     * <p>The partition stores the entry through a load. Its statistics count that store as a miss and a load.
      */
-    static void learnedPagesIfAbsent(String sourceId, long fileLength, int rowGroup, int column, LearnedPages pages) {
+    static void learnedPagesIfAbsent(
+            String sourceId, long fileLength, int rowGroup, int column, @NonNull LearnedPages pages) {
         LearnedPagesKey key = new LearnedPagesKey(sourceId, fileLength, rowGroup, column);
-        ConcurrentMap<MetadataKey, CacheValue> entries = synchronousEntries().asMap();
-        entries.putIfAbsent(key, new CacheValue.Learned(pages));
-    }
-
-    /** The number of learned entries held by the cache, over all files. */
-    static long learnedEntryCount() {
-        AsyncCache<MetadataKey, CacheValue> entries = cache().asyncCache();
-        long count = 0;
-        for (MetadataKey key : entries.asMap().keySet()) {
-            if (key instanceof LearnedPagesKey) {
-                count++;
-            }
-        }
-        return count;
+        learnedPagesPartition().get(key, _ -> pages);
     }
 
     /**
-     * The synchronous view of the cache, for storing and reading learned entries. A learned entry is complete when it
-     * is stored, and no claim precedes it.
+     * The number of footer entries held by the cache, over all files. It counts the keys of the partition, because the
+     * entry count in the statistics of a partition follows removals through the executor of the pool. That count lags
+     * behind a clear for a moment.
      */
-    private static Cache<MetadataKey, CacheValue> synchronousEntries() {
-        AsyncCache<MetadataKey, CacheValue> entries = cache().asyncCache();
-        return entries.synchronous();
+    static long footerEntryCount() {
+        Collection<FooterKey> keys = footerPartition().keys();
+        return keys.size();
+    }
+
+    /** The number of learned entries held by the cache, over all files, counted as in {@link #footerEntryCount()}. */
+    static long learnedEntryCount() {
+        Collection<LearnedPagesKey> keys = learnedPagesPartition().keys();
+        return keys.size();
+    }
+
+    /**
+     * Whether the metadata pool keeps nothing, because the settings of the process give it a budget of 0. The default
+     * manager reads the same settings when it creates the pool.
+     *
+     * @throws IllegalArgumentException if a budget setting holds an invalid size
+     */
+    static boolean keepsNothing() {
+        CacheBudgets budgets = CacheBudgets.fromSettings();
+        return budgets.of(CachePool.METADATA) == 0;
     }
 
     /**
@@ -264,57 +190,24 @@ public final class FooterMetadataCache {
      * it.
      */
     public static void clear() {
-        cache().invalidateAll();
-    }
-
-    private static AsyncMetadataCache cache() {
-        return CacheManager.getDefault().getCache(CACHE_NAME, FooterMetadataCache::buildCache);
-    }
-
-    private static AsyncMetadataCache buildCache() {
-        long maximumWeight = maximumWeightBytes(configuredMaxHeapPercent());
-        Weigher<MetadataKey, CacheValue> weigher = (_, value) -> weigh(value);
-        AsyncCache<MetadataKey, CacheValue> entries = Caffeine.newBuilder()
-                .weigher(weigher)
-                .maximumWeight(maximumWeight)
-                .initialCapacity(initialCapacity(maximumWeight))
-                .expireAfterAccess(EXPIRE_AFTER_ACCESS)
-                // An idle process evicts expired entries only when something touches the cache; the scheduler returns
-                // that memory on time instead.
-                .scheduler(Scheduler.systemScheduler())
-                .recordStats()
-                .buildAsync();
-        return new AsyncMetadataCache(entries);
-    }
-
-    /** The bytes of a share of {@code maxHeapPercent} percent of the heap. */
-    private static long maximumWeightBytes(int maxHeapPercent) {
-        long heapBytes = Runtime.getRuntime().maxMemory();
-        return (long) (heapBytes * (maxHeapPercent / 100d));
+        footerPartition().invalidateAll();
+        learnedPagesPartition().invalidateAll();
     }
 
     /**
-     * The size hint for the cache's hash table: the entries admitted by the budget, at four fifths of that count. A
-     * table sized well below its eventual population pays repeated resizing and the allocation churn behind it, and one
-     * sized above it holds slots for entries that the budget never admits.
+     * The footer partition in the metadata pool of the shared manager. Each call looks the partition up again, and a
+     * default manager replaced in the meantime takes effect at the next call. The lookup of a known partition takes no
+     * lock.
      */
-    private static int initialCapacity(long maximumWeightBytes) {
-        long entriesWithinBudget = maximumWeightBytes / EXPECTED_ENTRY_BYTES;
-        long sizeHint = entriesWithinBudget * 4 / 5;
-        return (int) Math.min(sizeHint, MAX_INITIAL_CAPACITY);
+    private static Cache<FooterKey, FooterMetadata> footerPartition() {
+        CacheManager manager = CacheManager.getDefault();
+        return manager.partition(CachePool.METADATA, CACHE_NAME, FOOTERS);
     }
 
-    /**
-     * What one entry costs the heap. A footer entry costs what its metadata retains. A learned entry costs the bytes of
-     * its pages. The outcome of a load that threw costs a token charge, because it is about to be dropped.
-     */
-    private static int weigh(CacheValue value) {
-        return switch (value) {
-            case CacheValue.Loaded(FooterMetadata metadata) -> weigh(metadata);
-            case CacheValue.Failed _ -> FAILED_LOAD_BYTES;
-            case CacheValue.Fatal _ -> FAILED_LOAD_BYTES;
-            case CacheValue.Learned(LearnedPages pages) -> weigh(pages);
-        };
+    /** The learned partition in the metadata pool of the shared manager, looked up as in {@link #footerPartition()}. */
+    private static Cache<LearnedPagesKey, LearnedPages> learnedPagesPartition() {
+        CacheManager manager = CacheManager.getDefault();
+        return manager.partition(CachePool.METADATA, LEARNED_PAGES_NAME, LEARNED_PAGES);
     }
 
     /**
@@ -360,84 +253,14 @@ public final class FooterMetadataCache {
     }
 
     /**
-     * The heap share set by {@value #MAX_HEAP_PERCENT_PROPERTY}, falling back to the default of
-     * {@value #DEFAULT_MAX_HEAP_PERCENT} for an absent value and for one that is not a whole percentage. The cache
-     * reads it once, when it is built at its first use. Setting the property later changes nothing until the default
-     * {@link CacheManager} is replaced. A new manager builds a new cache, and that cache reads the property again.
-     */
-    static int configuredMaxHeapPercent() {
-        String configured = System.getProperty(MAX_HEAP_PERCENT_PROPERTY);
-        if (configured == null) {
-            return DEFAULT_MAX_HEAP_PERCENT;
-        }
-        try {
-            int percent = Integer.parseInt(configured.trim());
-            return (percent >= 0 && percent <= 100) ? percent : DEFAULT_MAX_HEAP_PERCENT;
-        } catch (NumberFormatException _) {
-            return DEFAULT_MAX_HEAP_PERCENT;
-        }
-    }
-
-    /**
-     * The key of an entry. Each kind of entry has its own type of key, and a key of one kind never finds an entry of
-     * the other.
-     */
-    private sealed interface MetadataKey permits FooterKey, LearnedPagesKey {}
-
-    /**
      * The identity of a file's footer: what the source calls itself and how long the file is. A file rewritten to a
      * different length under the same name misses, and the rewritten footer is read.
      */
-    private record FooterKey(@NonNull String sourceId, long fileLength) implements MetadataKey {}
+    private record FooterKey(@NonNull String sourceId, long fileLength) {}
 
     /**
      * The identity of one column chunk. It adds the ordinal of the row group and the leaf ordinal of the column to the
      * identity of the file's footer.
      */
-    private record LearnedPagesKey(@NonNull String sourceId, long fileLength, int rowGroup, int column)
-            implements MetadataKey {}
-
-    /**
-     * The value of an entry. A footer entry holds the outcome of one footer load, claimed under its key. That outcome
-     * is the file's metadata when the loader returned, and the throwable of the loading thread when the loader threw.
-     * The throwable is an exception or an error, since a {@link Supplier} declares no checked exception. A learned
-     * entry holds the page index learned for one column chunk.
-     */
-    private sealed interface CacheValue {
-
-        /** The metadata of a load that completed. */
-        record Loaded(FooterMetadata metadata) implements CacheValue {}
-
-        /** The exception thrown by a loader, held for every caller of that load. */
-        record Failed(RuntimeException failure) implements CacheValue {}
-
-        /** The error thrown by a loader, held for every caller of that load. */
-        record Fatal(Error failure) implements CacheValue {}
-
-        /** The page index learned for one column chunk. */
-        record Learned(@NonNull LearnedPages pages) implements CacheValue {}
-    }
-
-    /**
-     * The form of the cache registered with the shared {@link CacheManager}. The manager sees the synchronous view of
-     * the asynchronous cache held here. A footer is claimed in the asynchronous cache before it is loaded, and a
-     * learned entry is stored through the synchronous view.
-     */
-    private static final class AsyncMetadataCache extends CaffeineCache<MetadataKey, CacheValue> {
-
-        private final AsyncCache<MetadataKey, CacheValue> asyncCache;
-
-        AsyncMetadataCache(AsyncCache<MetadataKey, CacheValue> asyncCache) {
-            super(asyncCache.synchronous());
-            this.asyncCache = asyncCache;
-        }
-
-        /**
-         * The asynchronous cache holding both kinds of entry. Footers are loaded through it, one claim per key. Learned
-         * entries go through its synchronous view.
-         */
-        AsyncCache<MetadataKey, CacheValue> asyncCache() {
-            return asyncCache;
-        }
-    }
+    private record LearnedPagesKey(@NonNull String sourceId, long fileLength, int rowGroup, int column) {}
 }

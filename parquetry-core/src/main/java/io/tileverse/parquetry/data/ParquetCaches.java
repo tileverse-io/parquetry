@@ -26,12 +26,13 @@ public final class ParquetCaches {
     private ParquetCaches() {}
 
     /**
-     * Discards every cache registered with the shared tileverse {@link CacheManager}. These include the Parquet footer
-     * metadata and the learned page indexes held by {@link FooterMetadataCache}, and the object byte ranges held by the
-     * storage layer. The effect is process-wide, and reaches every reader in the process rather than the readers of one
-     * dataset. A reader opened afterwards reads and parses its footer again.
+     * Discards every cache registered with the shared tileverse {@link CacheManager}, its two pools included. The
+     * metadata pool holds the Parquet footers and the learned page indexes of {@link FooterMetadataCache}, beside the
+     * indexes of other tileverse formats such as PMTiles directories. The data pool holds the object byte ranges read
+     * by the storage layer. The effect is process-wide, and reaches every reader in the process rather than the readers
+     * of one dataset. A reader opened afterwards reads and parses its footer again.
      *
-     * <p>Exists for host lifecycle hooks that reset a running process without restarting it. Both caches have to go: a
+     * <p>Exists for host lifecycle hooks that reset a running process without restarting it. Both pools have to go: a
      * remote object rewritten under the same name and at the same length would otherwise have its stale footer rebuilt
      * out of the byte ranges still held for its previous content.
      */

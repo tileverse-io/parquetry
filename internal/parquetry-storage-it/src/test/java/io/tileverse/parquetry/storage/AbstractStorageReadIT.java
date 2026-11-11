@@ -22,6 +22,7 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -34,6 +35,7 @@ import org.junit.jupiter.api.Test;
 
 import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.Storage;
+import io.tileverse.storage.StorageEntry;
 import io.tileverse.storage.StorageFactory;
 import io.tileverse.storage.WriteOptions;
 
@@ -42,6 +44,8 @@ import io.tileverse.parquetry.data.ReadOptions;
 import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.FileEntry;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
 import io.tileverse.parquetry.testkit.TestCorpus;
@@ -106,6 +110,19 @@ abstract class AbstractStorageReadIT {
         }
     }
 
+    // The GeoTools stores turn the byte-range cache on. The version must reach the source through the caching readers.
+    @Test
+    void cachedOpenNamesTheVersion() throws IOException {
+        try (Storage storage = StorageFactory.open(container(), cachingProperties())) {
+            String expected = contentIdentifierOf(storage);
+
+            Optional<String> actual = sourceIdentifierOf(storage);
+
+            assertThat(actual).hasValue(expected);
+            assertThat(expected).as("the name holds the version").contains("@");
+        }
+    }
+
     /** Extracts the fixture into {@code directory}, named {@link #KEY}. */
     protected static Path extractFixture(Path directory) {
         return TestCorpus.extractFile("parquet-testing/data/" + KEY, directory);
@@ -149,6 +166,33 @@ abstract class AbstractStorageReadIT {
         assertThat(actual).as("row count").hasSameSizeAs(expected);
         for (int row = 0; row < expected.size(); row++) {
             assertThat(actual.get(row)).as("row %d", row).isEqualTo(expected.get(row));
+        }
+    }
+
+    /** The properties of {@link #storageProperties()} with the byte-range cache on. */
+    private Properties cachingProperties() {
+        Properties properties = new Properties();
+        properties.putAll(storageProperties());
+        properties.setProperty("storage.caching.enabled", "true");
+        return properties;
+    }
+
+    /** The content identifier of a reader opened from the entry of the fixture. */
+    private static String contentIdentifierOf(Storage storage) throws IOException {
+        StorageEntry.File entry = storage.stat(KEY).orElseThrow();
+        try (RangeReader reader = storage.openRangeReader(entry)) {
+            return reader.contentIdentifier();
+        }
+    }
+
+    /** The name of the source opened over the fixture through {@link FileSource#object}. */
+    private static Optional<String> sourceIdentifierOf(Storage storage) {
+        try (FileSource files = FileSource.object(storage, KEY);
+                Stream<FileEntry> entries = files.list()) {
+            FileEntry entry = entries.findFirst().orElseThrow();
+            try (ByteRangeSource source = entry.open()) {
+                return source.sourceIdentifier();
+            }
         }
     }
 }

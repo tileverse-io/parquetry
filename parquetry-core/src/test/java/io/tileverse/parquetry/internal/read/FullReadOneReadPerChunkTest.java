@@ -41,15 +41,14 @@ import io.tileverse.parquetry.runtime.ParquetRuntime;
  *
  * <ol>
  *   <li>A full read returns the correct number of records (parity with the written data).
- *   <li>The number of {@link ByteRangeSource#read} calls during data-page fetching is far below one call per column per
- *       row group: a row group goes out as one batch call, and the column chunks inside it lie back to back, hence the
- *       call holds a single range.
+ *   <li>The data-page fetching makes one {@link ByteRangeSource#read} call per column chunk: a row group goes out as
+ *       one batch call holding one range per chunk, and the default batch read reads each range on its own.
  * </ol>
  */
-class FullReadOneRangePerRowGroupTest {
+class FullReadOneReadPerChunkTest {
 
     @Test
-    void fullReadIsCorrectAndReadsOneRangePerRowGroup(@TempDir Path tmp) throws Exception {
+    void fullReadReadsEachChunkOnce(@TempDir Path tmp) throws Exception {
         int rows = 4_000;
         Path file = TestParquetFiles.writeFlatThreeColumnFileMultiRowGroup(tmp, rows);
         int rowGroups = TestParquetFiles.rowGroupCount(file);
@@ -75,11 +74,8 @@ class FullReadOneRangePerRowGroupTest {
         assertThat(records).hasSize(rows);
         assertThat(rowGroups).as("fixture must span multiple row groups").isGreaterThan(1);
         assertThat(dataReads)
-                .as(
-                        "each row group's columns arrive as about one range read, far below %d cols x %d row groups",
-                        columns, rowGroups)
-                .isLessThanOrEqualTo(rowGroups)
-                .isLessThan(columns * rowGroups);
+                .as("one read per column chunk, %d cols x %d row groups", columns, rowGroups)
+                .isEqualTo(columns * rowGroups);
         assertThat(pool.stats().outstandingBorrows()).isZero();
     }
 }

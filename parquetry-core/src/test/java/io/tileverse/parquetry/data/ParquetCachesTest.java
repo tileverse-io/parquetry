@@ -20,8 +20,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.function.Supplier;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -34,6 +39,7 @@ import io.tileverse.parquetry.testkit.TestCorpus;
 
 import io.tileverse.cache.Cache;
 import io.tileverse.cache.CacheManager;
+import io.tileverse.cache.CacheStats;
 import io.tileverse.cache.CaffeineCache;
 
 /**
@@ -41,6 +47,9 @@ import io.tileverse.cache.CaffeineCache;
  * that one together with every other cache of the shared manager, the storage layer's range cache among them. A
  * local-file read opens no range cache, and a cache registered by the test takes its place. The learned page indexes
  * held by the metadata cache go with its footers.
+ *
+ * <p>A host may set a manager of its own as the default. Such a manager holds the metadata pool as one more named
+ * cache, and the reset drains the footers through it.
  */
 class ParquetCachesTest {
 
@@ -89,6 +98,27 @@ class ParquetCachesTest {
                 .isEmpty();
     }
 
+    @Test
+    void foreignManagerClears() {
+        CacheManager shared = CacheManager.getDefault();
+        MapCacheManager foreign = new MapCacheManager();
+        try {
+            CacheManager.setDefault(foreign);
+            openAReaderOverALocalFile();
+
+            assertThat(FooterMetadataCache.footerEntryCount())
+                    .as("the open of a named local file fills the footer partition")
+                    .isPositive();
+            assertThat(foreign.getCacheNames()).contains("tileverse-cache-metadata");
+
+            ParquetCaches.clearAll();
+
+            assertThat(FooterMetadataCache.footerEntryCount()).isZero();
+        } finally {
+            CacheManager.setDefault(shared);
+        }
+    }
+
     /** Reads the footer of a corpus file through a source that names itself, which is what the cache keys on. */
     private void openAReaderOverALocalFile() {
         Path file = TestCorpus.extractFile(FIXTURE, tempDir);
@@ -129,5 +159,39 @@ class ParquetCachesTest {
         });
         Collection<Object> keys = cache.keys();
         return keys.size();
+    }
+
+    /**
+     * A manager holding its caches in one map, as a host might write its own. It knows nothing of pools. The default
+     * {@link CacheManager#partition} registers the metadata pool with it as one more named cache.
+     */
+    private static final class MapCacheManager implements CacheManager {
+
+        private final ConcurrentMap<String, Cache<?, ?>> caches = new ConcurrentHashMap<>();
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <K, V, C extends Cache<K, V>> C getCache(String cacheIdentifier, Supplier<C> builder) {
+            return (C) caches.computeIfAbsent(cacheIdentifier, _ -> builder.get());
+        }
+
+        @Override
+        public Collection<String> getCacheNames() {
+            return List.copyOf(caches.keySet());
+        }
+
+        @Override
+        public Map<String, CacheStats> stats() {
+            Map<String, CacheStats> stats = new HashMap<>();
+            caches.forEach((name, cache) -> stats.put(name, cache.stats()));
+            return stats;
+        }
+
+        @Override
+        public void invalidateAll() {
+            for (Cache<?, ?> cache : caches.values()) {
+                cache.invalidateAll();
+            }
+        }
     }
 }

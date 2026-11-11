@@ -40,8 +40,8 @@ final class CachedPageIndexes implements LearnedPageIndexes {
      * The learned page indexes of the file read through {@code source}, or {@link LearnedPageIndexes#NONE}. An unnamed
      * source has no stable identity to key on. An encrypted file learns nothing, because what its page headers tell
      * must not outlive the reader holding its key. A file with an offset index on each column chunk has no chunk to
-     * learn, and its reads look nothing up. A cache with a heap share of 0 keeps nothing, and a read would parse page
-     * headers for nothing.
+     * learn, and its reads look nothing up. A metadata pool with a budget of 0 keeps nothing, and a read would parse
+     * page headers for nothing.
      *
      * @param footer the forms derived from the footer of the file
      */
@@ -54,7 +54,7 @@ final class CachedPageIndexes implements LearnedPageIndexes {
     }
 
     private static boolean cacheTurnedOff() {
-        return FooterMetadataCache.configuredMaxHeapPercent() == 0;
+        return FooterMetadataCache.keepsNothing();
     }
 
     @Override
