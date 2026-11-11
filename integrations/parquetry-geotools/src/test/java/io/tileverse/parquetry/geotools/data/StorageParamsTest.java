@@ -108,6 +108,21 @@ class StorageParamsTest {
     }
 
     @Test
+    void cachingParamShowsOn() {
+        Param caching = find("storage.caching.enabled").orElseThrow();
+        assertThat(caching.sample).isEqualTo(Boolean.TRUE);
+    }
+
+    @Test
+    void cachingParamSaysOnByDefault() {
+        Param caching = find("storage.caching.enabled").orElseThrow();
+        String tooltip = caching.title.toString();
+        String description = caching.description.toString();
+        assertThat(description).contains("On by default").doesNotContain("Off by default");
+        assertThat(tooltip).isEqualTo(description);
+    }
+
+    @Test
     void allStorageParamsAreAdvancedAndOptional() {
         assertThat(StorageParams.PROVIDER_PARAMS)
                 .allSatisfy(p -> assertThat(p.metadata).containsEntry(Parameter.LEVEL, "advanced"))
@@ -119,7 +134,22 @@ class StorageParamsTest {
         Map<String, Object> params = Map.of("geoparquet", "s3://b/x.parquet", "storage.s3.region", "us-west-2");
         Properties props = StorageParams.toProperties(params);
         assertThat(props.getProperty("storage.s3.region")).isEqualTo("us-west-2");
-        assertThat(props.stringPropertyNames()).containsExactly("storage.s3.region");
+        assertThat(props.stringPropertyNames())
+                .containsExactlyInAnyOrder("storage.s3.region", "storage.caching.enabled");
+    }
+
+    @Test
+    void cachingDefaultsToOn() {
+        Properties props = StorageParams.toProperties(Map.of("geoparquet", "s3://b/k.parquet"));
+        assertThat(props.getProperty("storage.caching.enabled")).isEqualTo("true");
+    }
+
+    @Test
+    void explicitCachingOffStays() {
+        Properties fromBoolean = StorageParams.toProperties(Map.of("storage.caching.enabled", Boolean.FALSE));
+        Properties fromText = StorageParams.toProperties(Map.of("storage.caching.enabled", "false"));
+        assertThat(fromBoolean.getProperty("storage.caching.enabled")).isEqualTo("false");
+        assertThat(fromText.getProperty("storage.caching.enabled")).isEqualTo("false");
     }
 
     @Test

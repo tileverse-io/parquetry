@@ -81,9 +81,10 @@ budget of 0 keeps neither kind, and reads then learn no pages. An open over an
 unnamed source, and an open given a decryption key, never reach the cache.
 
 The byte-range cache keeps the ranges read from remote storage in the data pool,
-20% of the heap by default (`io.tileverse.cache.data.max-size`), when the
-storage properties set `storage.caching.enabled=true`. Local files have no
-byte-range cache.
+20% of the heap by default (`io.tileverse.cache.data.max-size`). The GeoTools
+stores (GeoParquet, STAC and Iceberg) turn it on by default, and the connection
+parameter `storage.caching.enabled=false` turns it off for a store. `par` and
+`FileSource.open` keep it off. Local files have no byte-range cache.
 
 The metadata of a file is keyed by its name, with the version of the object when
 the reader knows one, and by its length. Files opened through `FileSource` have
@@ -196,6 +197,7 @@ Settings beside parquetry's own that matter in a container:
 | Decode-ahead + promotion | `internal/read/ParallelDecodeCoordinator.java`, `internal/read/StreamingBatchSource.java` |
 | Prefetch | `internal/read/RowGroupPrefetcher.java` |
 | Metadata cache | `data/FooterMetadataCache.java`, `data/ParquetCaches.java` |
+| Byte-range cache default of the GeoTools stores | `geotools/data/StorageParams.java` |
 
 ---
 

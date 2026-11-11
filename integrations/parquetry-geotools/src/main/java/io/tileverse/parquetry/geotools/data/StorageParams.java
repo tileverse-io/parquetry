@@ -31,6 +31,7 @@ import org.geotools.util.SimpleInternationalString;
 
 import io.tileverse.storage.StorageConfig;
 import io.tileverse.storage.StorageParameter;
+import io.tileverse.storage.spi.CachingProviderHelper;
 import io.tileverse.storage.spi.StorageProvider;
 
 /**
@@ -42,6 +43,22 @@ import io.tileverse.storage.spi.StorageProvider;
 public final class StorageParams {
 
     private static final String STORAGE_PREFIX = "storage.";
+
+    private static final String CACHING_ENABLED = CachingProviderHelper.MEMORY_CACHE_ENABLED.key();
+
+    /**
+     * Whether a store caches byte ranges when its connection parameters do not set {@code storage.caching.enabled}. Map
+     * requests over the same data read many of the same byte ranges. The cache serves the repeats from memory instead
+     * of reading them again from remote storage. Local files have no byte-range cache whatever the setting.
+     */
+    private static final boolean CACHING_BY_DEFAULT = true;
+
+    /**
+     * The description of {@code storage.caching.enabled} in the store form. The description declared by tileverse says
+     * the cache is off by default. A store turns it on.
+     */
+    private static final String CACHING_DESCRIPTION = "Cache the byte ranges read from remote storage in memory."
+            + " On by default for this store. Local files have no byte-range cache.";
 
     /** The storage connection parameters, the provider selector first, then the backend parameters by group. */
     static final List<Param> PROVIDER_PARAMS = buildProviderParams();
@@ -71,7 +88,10 @@ public final class StorageParams {
         return all.toArray(Param[]::new);
     }
 
-    /** Copies every set {@code storage.*} connection parameter into a Properties for the storage backend. */
+    /**
+     * Copies the {@code storage.*} connection parameters with a value into a Properties for the storage backend. The
+     * byte-range cache is on unless the parameters turn it off.
+     */
     public static Properties toProperties(Map<String, ?> params) {
         Properties props = new Properties();
         for (Map.Entry<String, ?> entry : params.entrySet()) {
@@ -79,6 +99,7 @@ public final class StorageParams {
                 props.setProperty(entry.getKey(), String.valueOf(entry.getValue()));
             }
         }
+        props.putIfAbsent(CACHING_ENABLED, String.valueOf(CACHING_BY_DEFAULT));
         return props;
     }
 
@@ -139,14 +160,45 @@ public final class StorageParams {
                     .toList());
             metadata.put(Parameter.OPTIONS, options);
         }
-        Object sample = parameter
-                .defaultValue()
-                .map(value -> coerceToString ? (Object) String.valueOf(value) : value)
-                .orElse(null);
+        Object sample = sampleOf(parameter, coerceToString);
+        String description = descriptionOf(parameter);
         // GeoServer's store edit page uses the Param title as the field tooltip and resolves the field
         // label separately from GeoServerApplication.properties. Pass the full description as the title
         // so the tooltip is informative; the short label comes from the resource bundle.
-        return param(parameter.key(), type, parameter.description(), parameter.description(), sample, metadata);
+        return param(parameter.key(), type, description, description, sample, metadata);
+    }
+
+    /**
+     * The default value offered by the Param. The byte-range cache offers the store default, and the other parameters
+     * offer the default declared by tileverse.
+     */
+    private static Object sampleOf(StorageParameter<?> parameter, boolean coerceToString) {
+        if (isCachingSwitch(parameter)) {
+            return CACHING_BY_DEFAULT;
+        }
+        return parameter
+                .defaultValue()
+                .map(value -> coerceToString ? (Object) String.valueOf(value) : value)
+                .orElse(null);
+    }
+
+    /**
+     * The description shown for the Param. The byte-range cache has a description of its own, and the other parameters
+     * show the description declared by tileverse.
+     */
+    private static String descriptionOf(StorageParameter<?> parameter) {
+        if (isCachingSwitch(parameter)) {
+            return CACHING_DESCRIPTION;
+        }
+        return parameter.description();
+    }
+
+    /**
+     * Whether the parameter is {@code storage.caching.enabled}. Its store default differs from the default declared by
+     * tileverse.
+     */
+    private static boolean isCachingSwitch(StorageParameter<?> parameter) {
+        return parameter.key().equals(CACHING_ENABLED);
     }
 
     private static Param param(

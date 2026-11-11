@@ -83,7 +83,7 @@ Reading from S3, Azure, GCS, or HTTP is configured through the tileverse
 | `storage.azure.*`  | `storage.azure.account-key`, `storage.azure.sas-token`, `storage.azure.connection-string` |
 | `storage.gcs.*`    | `storage.gcs.project-id`, `storage.gcs.default-credentials-chain` |
 | `storage.http.*`   | `storage.http.username`, `storage.http.password`, `storage.http.bearer-token`, `storage.http.api-key` |
-| `storage.caching.enabled` | turn the storage memory cache on or off |
+| `storage.caching.enabled` | caches remote byte ranges in memory, on by default; `false` turns it off. Local files have no byte-range cache |
 
 ```java
 Map<String, Object> params = Map.of(
