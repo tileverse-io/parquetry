@@ -55,6 +55,7 @@ import io.tileverse.storage.NotFoundException;
 import io.tileverse.storage.RangeReader;
 import io.tileverse.storage.RangeRequest;
 import io.tileverse.storage.Storage;
+import io.tileverse.storage.StorageEntry;
 import io.tileverse.storage.StorageException;
 import io.tileverse.storage.StorageFactory;
 
@@ -140,6 +141,48 @@ class RangeReaderByteRangeSourceTest {
         RecordingRangeReader reader = new RecordingRangeReader(OptionalLong.of(0));
 
         assertThat(ByteRangeSource.owning(reader).sourceIdentifier()).contains("recording");
+    }
+
+    @Test
+    void entryOpenNamesTheVersion(@TempDir Path dir) throws Exception {
+        Files.write(dir.resolve("f.bin"), CONTENT);
+        try (Storage storage = StorageFactory.open(dir.toUri())) {
+            StorageEntry.File entry = storage.stat("f.bin").orElseThrow();
+            try (RangeReader reader = storage.openRangeReader(entry);
+                    ByteRangeSource source = ByteRangeSource.of(reader)) {
+                String version = reader.version().orElseThrow();
+
+                assertThat(source.sourceIdentifier()).hasValue(reader.getSourceIdentifier() + "@" + version);
+            }
+        }
+    }
+
+    @Test
+    void keyOpenKeepsThePlainName(@TempDir Path dir) throws Exception {
+        Files.write(dir.resolve("f.bin"), CONTENT);
+        try (Storage storage = StorageFactory.open(dir.toUri());
+                RangeReader reader = storage.openRangeReader("f.bin");
+                ByteRangeSource source = ByteRangeSource.of(reader)) {
+            assertThat(source.sourceIdentifier()).hasValue(reader.getSourceIdentifier());
+        }
+    }
+
+    // A version alone names no object.
+    @Test
+    void unnamedReaderStaysUnnamed() {
+        RangeReader unnamed = new ContentRangeReader(CONTENT) {
+            @Override
+            public String getSourceIdentifier() {
+                return null;
+            }
+
+            @Override
+            public Optional<String> version() {
+                return Optional.of("etag-1");
+            }
+        };
+
+        assertThat(ByteRangeSource.of(unnamed).sourceIdentifier()).isEmpty();
     }
 
     @Test

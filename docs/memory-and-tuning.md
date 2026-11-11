@@ -71,8 +71,10 @@ on the heap. `FooterMetadataCache` holds parsed footers and the page indexes
 learned from page headers ([The read path](read-path.md#without-a-page-index)).
 The cache knows a file by the name of its source and by its length. An open
 over an unnamed source, and an open given a decryption key, never reach it. A
-file rewritten under the same name at the same length is served its old entries
-until they expire or `ParquetCaches.clearAll()` drops them.
+source opened from a listing or a stat lookup adds the version of the object to
+its name. A file rewritten under the same name at the same length, and opened by
+path or by key alone, is served its old entries until they expire or
+`ParquetCaches.clearAll()` drops them.
 
 Both kinds share one budget, 10% of `Runtime.maxMemory()` by default, set as a
 whole percentage with the system property

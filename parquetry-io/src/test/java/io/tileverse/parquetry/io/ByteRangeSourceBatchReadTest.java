@@ -35,8 +35,8 @@ import io.tileverse.storage.BatchReadResult;
 import io.tileverse.storage.RangeRequest;
 
 /**
- * The default {@link ByteRangeSource#readFully(java.util.List)}: exactly the requested bytes, in file order, with
- * ranges that touch byte for byte read as one, and a result that accounts for the reads issued by it.
+ * The default {@link ByteRangeSource#readFully(java.util.List)}: exactly the requested bytes, each range read on its
+ * own in file order, and a result that accounts for the reads issued by it.
  */
 class ByteRangeSourceBatchReadTest {
 
@@ -90,10 +90,11 @@ class ByteRangeSourceBatchReadTest {
         return requests;
     }
 
-    /** The two reads issued by the default for {@link #threeRequestsInto}, in file order. */
-    private static List<RecordingByteRangeSource.Range> theTwoReadsInFileOrder() {
+    /** The three reads issued by the default for {@link #threeRequestsInto}, in file order. */
+    private static List<RecordingByteRangeSource.Range> theThreeReadsInFileOrder() {
         return List.of(
-                new RecordingByteRangeSource.Range(0, HOLE_START),
+                new RecordingByteRangeSource.Range(0, FIRST_LENGTH),
+                new RecordingByteRangeSource.Range(FIRST_LENGTH, SECOND_LENGTH),
                 new RecordingByteRangeSource.Range(HOLE_END, THIRD_LENGTH));
     }
 
@@ -107,8 +108,8 @@ class ByteRangeSourceBatchReadTest {
     }
 
     /**
-     * A window on {@code buffer} at {@code position}, {@code length} bytes wide. A duplicate rather than a slice: the
-     * joined read of two touching ranges widens the first window's limit, and a slice has no capacity past its own end.
+     * A window on {@code buffer} at {@code position}, {@code length} bytes wide. A duplicate rather than a slice keeps
+     * the positions of the whole buffer, the ones checked by {@link #eachTargetPositionAdvancesByItsRangeLength}.
      */
     private static ByteBuffer window(ByteBuffer buffer, int position, int length) {
         ByteBuffer duplicate = buffer.duplicate();
@@ -118,12 +119,12 @@ class ByteRangeSourceBatchReadTest {
     }
 
     @Test
-    void touchingRangesAreReadAsOne(@TempDir Path dir) throws IOException {
+    void touchingRangesReadApart(@TempDir Path dir) throws IOException {
         try (RecordingByteRangeSource recording = openRecording(dir)) {
             ByteBuffer buffer = ByteBuffer.allocate(BUFFER_LENGTH);
             recording.readFully(threeRequestsInto(buffer));
 
-            assertThat(recording.ranges()).containsExactlyElementsOf(theTwoReadsInFileOrder());
+            assertThat(recording.ranges()).containsExactlyElementsOf(theThreeReadsInFileOrder());
         }
     }
 
@@ -160,9 +161,7 @@ class ByteRangeSourceBatchReadTest {
             assertThat(result.bytesRead(1)).isEqualTo(SECOND_LENGTH);
             assertThat(result.bytesRead(2)).isEqualTo(THIRD_LENGTH);
             assertThat(result.bytesRequested()).isEqualTo(BUFFER_LENGTH);
-            assertThat(result.fetches())
-                    .as("one read per run of touching ranges")
-                    .isEqualTo(2);
+            assertThat(result.fetches()).as("one read per range").isEqualTo(3);
             assertThat(result.bytesTransferred()).isEqualTo(BUFFER_LENGTH);
             assertThat(result.bytesFromCache()).isZero();
         }
@@ -178,8 +177,8 @@ class ByteRangeSourceBatchReadTest {
             BatchReadResult result = recording.readFully(reversed);
 
             assertThat(recording.ranges())
-                    .as("the reads go out in file order whatever order the requests arrived in")
-                    .containsExactlyElementsOf(theTwoReadsInFileOrder());
+                    .as("the three reads go out in file order whatever order the requests arrived in")
+                    .containsExactlyElementsOf(theThreeReadsInFileOrder());
             assertThat(result.bytesRead(0))
                     .as("the first count belongs to the first request, the widest one here")
                     .isEqualTo(THIRD_LENGTH);

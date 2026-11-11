@@ -37,7 +37,7 @@ import io.tileverse.io.ByteRange;
 /**
  * A thread-safe, positional, read-only byte source of known size. parquetry's single read dependency.
  *
- * <p>Concurrent calls at different offsets are safe; implementations never carry a shared read position. There is
+ * <p>Concurrent calls at different offsets are safe; implementations never hold a shared read position. There is
  * deliberately no JDK parent interface (no {@link java.nio.channels.ReadableByteChannel}) - parquetry only ever reads
  * positionally, and a sequential-read method would invite misuse.
  */
@@ -47,14 +47,16 @@ public interface ByteRangeSource extends AutoCloseable {
     long size();
 
     /**
-     * A stable name for the underlying object - typically its URI or absolute path - which parquetry pairs with
-     * {@link #size()} as the identity of the file's content when it caches metadata derived from it. Two sources over
-     * the same object return equal names; two sources over different objects do not. An implementation returns a name
-     * only when that name plus the length pins the content: an object rewritten in place to the same length under the
-     * same name would otherwise be served the metadata of its previous content.
+     * A stable name for the content of the object. The name is the URI or path of the object, followed by a version
+     * when the source knows one. parquetry pairs it with {@link #size()} as the key of the metadata cached from the
+     * file.
      *
-     * <p>Empty, the default, means the source cannot make that promise, and every reader opened over it derives its own
-     * metadata.
+     * <p>Sources over one object return equal names when they know the same version, or no version. Sources over
+     * different objects, or over different known versions of one object, return different names. Without a version, an
+     * object rewritten in place keeps its name. If the rewrite keeps the length too, readers of the object receive the
+     * metadata of the previous content until that metadata leaves the cache.
+     *
+     * <p>Empty, the default, means the source has no stable name, and readers opened over it derive their own metadata.
      */
     default Optional<String> sourceIdentifier() {
         return Optional.empty();
@@ -113,10 +115,9 @@ public interface ByteRangeSource extends AutoCloseable {
      * The transport numbers beside those counts describe what serving the call cost below this source. A caller reads
      * them to weigh bytes moved against bytes asked for.
      *
-     * <p>The default reads the ranges in file order, joining only the ranges that touch byte for byte over one
-     * contiguous target, and never asks for a byte that no request named. It reports one fetch per read that it issued,
-     * and nothing served from a cache. An implementation overrides it when its backend serves several ranges in one
-     * round trip.
+     * <p>The default reads the ranges one at a time in ascending offset order, and asks for no byte that no request
+     * named. It reports one fetch per non-empty range, and nothing served from a cache. An implementation overrides it
+     * when its backend serves several ranges in one round trip.
      *
      * @param requests the ranges to read and their landing buffers
      * @return the bytes landed per request, and what the call cost
@@ -125,105 +126,35 @@ public interface ByteRangeSource extends AutoCloseable {
      */
     default BatchReadResult readFully(List<RangeRequest> requests) {
         RangeRequest.validate(requests);
-        long readsIssued = 0;
-        long bytesTransferred = 0;
-        for (List<RangeRequest> run : runsOfTouchingRanges(requests)) {
-            int runLength = totalLength(run);
-            if (runLength == 0) {
-                continue;
+        for (RangeRequest request : inOffsetOrder(requests)) {
+            if (request.range().length() > 0) {
+                readIntoTarget(request);
             }
-            readRunAsOneRead(run, runLength);
-            readsIssued++;
-            bytesTransferred += runLength;
         }
-        return BatchReadResult.of(requests, requestedLengths(requests), readsIssued, bytesTransferred, 0);
+        return BatchReadResult.perRange(requests, requestedLengths(requests));
     }
 
     /**
-     * The requests in ascending offset order, grouped into runs, each run served by one read. Request order would
-     * otherwise turn a row group into preads that jump between columns, the access pattern served worst by a network
-     * filesystem.
+     * The requests in ascending offset order. Request order would otherwise turn a row group into preads that jump
+     * between columns, the access pattern served worst by a network filesystem.
      */
-    private static List<List<RangeRequest>> runsOfTouchingRanges(List<RangeRequest> requests) {
+    private static List<RangeRequest> inOffsetOrder(List<RangeRequest> requests) {
         List<RangeRequest> ordered = new ArrayList<>(requests);
         ordered.sort(Comparator.comparingLong(request -> request.range().offset()));
-        List<List<RangeRequest>> runs = new ArrayList<>();
-        List<RangeRequest> current = null;
-        for (RangeRequest request : ordered) {
-            boolean joins = current != null && joinsRun(current, request);
-            if (!joins) {
-                current = new ArrayList<>();
-                runs.add(current);
-            }
-            current.add(request);
-        }
-        return runs;
+        return ordered;
     }
 
     /**
-     * Whether {@code next} extends {@code run} with no hole: its range starts where the run's last range ends, its
-     * target starts where that target's range ends, and the run's first target has the capacity to span them all.
+     * Fills the target of {@code request} over {@code [position, position + length)}, then moves its position past
+     * those bytes.
      */
-    private static boolean joinsRun(List<RangeRequest> run, RangeRequest next) {
-        RangeRequest last = run.getLast();
-        ByteRange lastRange = last.range();
-        ByteRange nextRange = next.range();
-        if (lastRange.end() != nextRange.offset()) {
-            return false;
-        }
-        ByteBuffer runTarget = run.getFirst().target();
-        long joinedLength = (long) totalLength(run) + nextRange.length();
-        if (joinedLength > runTarget.capacity() - runTarget.position()) {
-            return false;
-        }
-        return adjacentInMemory(last, next);
-    }
-
-    /** Whether the right target begins exactly where the left target's range ends, in one region of memory. */
-    private static boolean adjacentInMemory(RangeRequest left, RangeRequest right) {
-        MemorySegment leftBytes = MemorySegment.ofBuffer(left.target());
-        MemorySegment rightBytes = MemorySegment.ofBuffer(right.target());
-        if (!shareOneRegion(leftBytes, rightBytes)) {
-            return false;
-        }
-        return leftBytes.address() + left.range().length() == rightBytes.address();
-    }
-
-    /**
-     * Whether two windows sit in the same array, or under the same arena. Two native segments of one arena need not
-     * come from one allocation; {@link #joinsRun} keeps a joined write inside the room left in the run's first target
-     * by checking that target's capacity.
-     */
-    private static boolean shareOneRegion(MemorySegment left, MemorySegment right) {
-        Object leftBase = left.heapBase().orElse(null);
-        Object rightBase = right.heapBase().orElse(null);
-        if (leftBase != null || rightBase != null) {
-            return leftBase == rightBase;
-        }
-        return left.scope().equals(right.scope());
-    }
-
-    private void readRunAsOneRead(List<RangeRequest> run, int runLength) {
-        RangeRequest first = run.getFirst();
-        ByteBuffer span = first.target().duplicate();
-        span.limit(span.position() + runLength);
-        readFully(first.range().offset(), MemorySegment.ofBuffer(span));
-        advancePositions(run);
-    }
-
-    private static void advancePositions(List<RangeRequest> run) {
-        for (RangeRequest request : run) {
-            ByteBuffer target = request.target();
-            target.position(target.position() + request.range().length());
-        }
-    }
-
-    private static int totalLength(List<RangeRequest> run) {
-        int total = 0;
-        for (RangeRequest request : run) {
-            total += request.range().length();
-        }
-        return total;
+    private void readIntoTarget(RangeRequest request) {
+        ByteRange range = request.range();
+        ByteBuffer target = request.target();
+        ByteBuffer window = target.duplicate();
+        window.limit(target.position() + range.length());
+        readFully(range.offset(), MemorySegment.ofBuffer(window));
+        target.position(target.position() + range.length());
     }
 
     /** Each request's own length, equal to the bytes landed for it because every request is filled to completion. */

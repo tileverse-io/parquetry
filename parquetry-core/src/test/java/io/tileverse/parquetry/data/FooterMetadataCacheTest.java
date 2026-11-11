@@ -20,10 +20,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileTime;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -54,6 +58,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Policy;
 
+import io.tileverse.parquetry.data.WriteOptions.EncodingPolicy;
 import io.tileverse.parquetry.format.Encoding;
 import io.tileverse.parquetry.format.LogicalType;
 import io.tileverse.parquetry.format.MalformedFileException;
@@ -61,9 +66,14 @@ import io.tileverse.parquetry.format.Statistics;
 import io.tileverse.parquetry.internal.filter.LearnedPages;
 import io.tileverse.parquetry.internal.filter.spatial.EmptyBoundsSource;
 import io.tileverse.parquetry.internal.read.DecryptionKeyRetriever;
+import io.tileverse.parquetry.internal.write.WriteFixtures;
 import io.tileverse.parquetry.io.ByteRangeSource;
+import io.tileverse.parquetry.io.FileEntry;
+import io.tileverse.parquetry.io.FileSource;
 import io.tileverse.parquetry.runtime.ParquetRuntime;
+import io.tileverse.parquetry.schema.ParquetSchema;
 import io.tileverse.parquetry.schema.PrimitiveKind;
+import io.tileverse.parquetry.schema.SchemaNode;
 import io.tileverse.parquetry.testkit.TestCorpus;
 
 import io.tileverse.cache.CacheManager;
@@ -71,9 +81,9 @@ import io.tileverse.cache.CaffeineCacheManager;
 
 /**
  * Covers the identity and the bypass rules of the shared footer cache: what is reused by a repeat open of the same
- * file, what is dropped by a changed length or a {@link FooterMetadataCache#clear()}, and which opens never touch the
- * cache at all. Concurrent opens are covered too: one load per file, a load in flight that holds up no other file, and
- * a failed load that leaves nothing behind.
+ * file, what is dropped by a changed length, a changed version or a {@link FooterMetadataCache#clear()}, and which
+ * opens never touch the cache at all. Concurrent opens are covered too: one load per file, a load in flight that holds
+ * up no other file, and a failed load that leaves nothing behind.
  *
  * <p>The learned page indexes held beside the footers are covered as well. The first entry learned for a chunk stays,
  * an entry is charged its bytes, a clear drops it, and a footer lookup never reads one.
@@ -107,6 +117,12 @@ class FooterMetadataCacheTest {
     /** The annotation of the learned entries built here. A decimal keeps its bounds whole, at any length. */
     private static final Optional<LogicalType> DECIMAL = Optional.of(new LogicalType.Decimal(0, 38));
 
+    /** The key/value entry naming the revision of the rewritten file. */
+    private static final String REVISION = "revision";
+
+    /** The row count of one revision of the rewritten file. */
+    private static final int REVISION_ROWS = 100;
+
     @TempDir
     Path tempDir;
 
@@ -139,6 +155,26 @@ class FooterMetadataCacheTest {
 
         assertThat(atAnother).isNotSameAs(atOneLength);
         assertThat(loader.invocations()).isEqualTo(2);
+    }
+
+    // The rewrite keeps the name and the length of the file. Only its version tells the two contents apart.
+    @Test
+    void sameLengthRewriteRereads() throws IOException {
+        Path first = writeRevision("revision-1.parquet", "1");
+        Path second = writeRevision("revision-2.parquet", "2");
+        assertThat(Files.size(second)).as("the length of the second revision").isEqualTo(Files.size(first));
+        Path rewritten = tempDir.resolve("t.parquet");
+        Files.copy(first, rewritten);
+        assertThat(revisionOf(rewritten))
+                .as("the revision read before the rewrite")
+                .isEqualTo("1");
+
+        Files.copy(second, rewritten, StandardCopyOption.REPLACE_EXISTING);
+        moveModificationTimeAhead(rewritten);
+
+        assertThat(revisionOf(rewritten))
+                .as("the revision read after the rewrite")
+                .isEqualTo("2");
     }
 
     @Test
@@ -612,6 +648,58 @@ class FooterMetadataCacheTest {
 
     private static ParquetFileReader openWithKey(ByteRangeSource source) {
         return ParquetFileReader.open(source, ParquetRuntime.defaultRuntime(), Optional.of(ANY_KEY));
+    }
+
+    /**
+     * Writes {@link #REVISION_ROWS} values of one INT64 column, uncompressed and PLAIN encoded, with {@code revision}
+     * as the value of the key/value entry {@link #REVISION}. Revisions of one character give files of the same length.
+     */
+    private Path writeRevision(String fileName, String revision) throws IOException {
+        Path file = tempDir.resolve(fileName);
+        SchemaNode.Primitive id = WriteFixtures.requiredLeaf("id", PrimitiveKind.INT64);
+        ParquetSchema schema = WriteFixtures.schemaOf(id);
+        WriteOptions options = WriteOptions.builder()
+                .tempDir(tempDir)
+                .defaultCompression(Compression.uncompressed())
+                .encodingPolicy("id", EncodingPolicy.FORCE_PLAIN)
+                .keyValueMetadata(REVISION, revision)
+                .build();
+        try (OutputStream out = Files.newOutputStream(file);
+                ParquetFileWriter writer = ParquetFileWriter.create(out, schema, options)) {
+            ParquetRecordBatchBuilder appender = writer.appender();
+            for (long value = 0; value < REVISION_ROWS; value++) {
+                appender.setLong(0, value);
+                appender.endRow();
+            }
+        }
+        return file;
+    }
+
+    /** The value of the entry {@link #REVISION} in {@code file}, read through a new source over the file. */
+    private static String revisionOf(Path file) {
+        try (FileSource files = FileSource.file(file);
+                ByteRangeSource source = onlyEntry(files).open()) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            return reader.keyValueMetadata().get(REVISION);
+        }
+    }
+
+    private static FileEntry onlyEntry(FileSource files) {
+        try (Stream<FileEntry> entries = files.list()) {
+            List<FileEntry> listed = entries.toList();
+            assertThat(listed).as("the entries listed for one file").hasSize(1);
+            return listed.getFirst();
+        }
+    }
+
+    /**
+     * Moves the modification time of {@code file} two seconds ahead. The version of a local file comes from its size
+     * and its modification time, and two copies made within one tick of the file system clock could share a version.
+     */
+    private static void moveModificationTimeAhead(Path file) throws IOException {
+        FileTime modified = Files.getLastModifiedTime(file);
+        Instant twoSecondsLater = modified.toInstant().plusSeconds(2);
+        Files.setLastModifiedTime(file, FileTime.from(twoSecondsLater));
     }
 
     /** The fixture's footer metadata, derived afresh: two calls give two instances of equal content. */
