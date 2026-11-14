@@ -372,6 +372,10 @@
           <!-- BOM modules have no real javadoc links to resolve; skip auto-detection to keep the build offline-friendly. -->
           <detectLinks>false</detectLinks>
           <detectOfflineLinks>false</detectOfflineLinks>
+          <!-- Leave the web fonts out of the javadoc jars: they add about 4 MB to each jar. -->
+          <additionalOptions>
+            <additionalOption>--no-fonts</additionalOption>
+          </additionalOptions>
           <!-- parquetry compiles against Java 25 with preview features (see maven-compiler-plugin). -->
           <release>25</release>
           <additionalJOptions>
