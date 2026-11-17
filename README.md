@@ -2,9 +2,11 @@
 
 # Parquetry
 
-Parquetry reads and writes Apache Parquet and GeoParquet files from Java. Give it a file and a filter, and it returns the matching rows. The file can sit on a local disk, an HTTP server, Amazon S3, Azure Blob Storage or Google Cloud Storage, and Parquetry fetches only the parts of it needed by the query. It runs inside long-lived servers with small container memory limits, such as GeoServer and GeoServer Cloud, and sizes its memory from that limit.
+Parquetry reads and writes Apache Parquet and GeoParquet files from Java. Give it a file and a filter, and it returns the matching rows. The file can sit on a local disk, an HTTP server, Amazon S3, Azure Blob Storage or Google Cloud Storage, and Parquetry fetches only the parts of it needed by the query.
 
-Parquetry is a clean-room implementation of the Parquet format in Java. It depends on neither Hadoop nor parquet-java, and it runs no native engine. It reads Parquet 1.x and 2.x files, and writes Parquet 2.0 files, or 1.1 on request, with flat and nested columns and GeoParquet metadata. GeoServer Cloud 3.1.0 and newer include Parquetry and enable it by default.
+Parquetry is a clean-room implementation of the Parquet format in Java. It depends on neither Hadoop nor parquet-java, and it runs no native engine: `parquetry-core` and its dependencies add 20 jars and 12 MB to an application. In a container, it sizes its memory from the memory limit of the container. It reads Parquet 1.x and 2.x files, and writes Parquet 2.0 files, or 1.1 on request, with flat and nested columns and GeoParquet metadata.
+
+Parquetry runs in servers, desktop applications and command line tools. GeoServer Cloud 3.1.0 and newer include it and enable it by default. In JOSM, the Java editor of OpenStreetMap, the [JOSM GeoParquet](https://github.com/geoverse-dev/josm-geoparquet) plugin uses it to show GeoParquet files beside the OpenStreetMap data, and the [JOSM Overture Maps](https://github.com/overturemaps-ar-community/josm-overturemaps) plugin loads Overture Maps data through the GeoParquet plugin.
 
 The documentation is at [parquetry.io](https://parquetry.io/).
 

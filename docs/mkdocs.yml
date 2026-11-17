@@ -1,5 +1,5 @@
 site_name: Parquetry
-site_description: Parquet and GeoParquet for the JVM, built for servers running in containers with small memory limits
+site_description: Parquet and GeoParquet for Java, without Hadoop, with memory bounded by the container limit
 site_author: Multiversio LLC
 copyright: "&copy; 2026 Multiversio LLC. All rights reserved."
 repo_url: https://github.com/tileverse-io/parquetry

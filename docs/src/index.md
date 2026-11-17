@@ -2,23 +2,33 @@
 
 ![Parquetry](assets/images/parquetry_banner.svg){ .banner }
 
-Parquetry reads and writes Apache Parquet and GeoParquet files from Java. Give it a file and a filter, and it returns the matching rows. The file can sit on a local disk, an HTTP server, Amazon S3, Azure Blob Storage or Google Cloud Storage, and Parquetry fetches only the parts of it needed by the query. It runs inside long-lived servers with small container memory limits, such as GeoServer and GeoServer Cloud, and sizes its memory from that limit.
+Parquetry reads and writes Apache Parquet and GeoParquet files from Java, without Hadoop and without parquet-java. Give it a file and a filter, and it returns the matching rows. The file can sit on a local disk, an HTTP server, Amazon S3, Azure Blob Storage or Google Cloud Storage, and Parquetry fetches only the parts of it needed by the query.
 
-[Why Parquetry?](why.md) explains the deployment targeted by Parquetry, and when another tool fits better. [Getting started](getting-started.md) adds Parquetry to a Java project and runs a first filtered read.
+Parquetry is a small library. `parquetry-core` and its dependencies add 20 jars and 12 MB to an application. It decodes Parquet inside the JVM, with no native engine and no external process. In a container, it sizes its memory from the memory limit of the container.
+
+[Why Parquetry?](why.md) compares it with the other ways of reading Parquet from Java, and says when another tool fits better. [Getting started](getting-started.md) adds Parquetry to a Java project and runs a first filtered read.
 
 ## What you can do
 
 <div class="grid cards" markdown>
 
--   **Publish a GeoParquet file as a map layer**
+-   **Read Parquet files from a Java application**
 
     ---
 
-    Publish GeoParquet files from object storage or a mounted volume as vector layers of GeoServer Cloud, through its REST API. The Parquetry store is enabled by default.
+    Add one dependency and read a file with a filter, from a server, a desktop application or a command line tool. Rows come back as records or as columnar batches. The [JOSM GeoParquet](https://github.com/geoverse-dev/josm-geoparquet) plugin reads GeoParquet files this way in the OpenStreetMap editor.
 
-    [GeoParquet in GeoServer Cloud](https://geoserver.org/geoserver-cloud/user-guide/geoparquet-rest-api/) or [GeoTools and GeoServer](geoserver/index.md)
+    [Getting started](getting-started.md) then [Read records](guides/read-records.md)
 
--   **Query a remote file by bounding box from Java**
+-   **Write Parquet and GeoParquet files**
+
+    ---
+
+    Write files with flat and nested columns and GeoParquet metadata, laid out for selective queries: sorted by location, with a page index and bounding box columns.
+
+    [Write files](guides/write.md) then [Lay out files](guides/file-layout.md)
+
+-   **Query a remote file by bounding box**
 
     ---
 
@@ -26,13 +36,29 @@ Parquetry reads and writes Apache Parquet and GeoParquet files from Java. Give i
 
     [Cloud storage](guides/cloud-storage.md) then [Filter by location](guides/spatial-filter.md)
 
--   **Hand a layer to an analytics engine**
+-   **Read within a container's memory limit**
 
     ---
 
-    Download a vector layer of GeoServer Cloud as a GeoParquet file or an Arrow IPC stream through WFS, and read it with DuckDB or with Python. From Java, Parquetry exports a read as Arrow.
+    Parquetry reads the memory limit of the container at startup and derives its native memory budgets from it. Concurrent reads share these budgets, and a full budget slows a read down instead of killing the process.
 
-    [WFS output as GeoParquet and Arrow IPC](https://geoserver.org/geoserver-cloud/user-guide/wfs-geoparquet-arrow-ipc/) or [Arrow interop](guides/arrow.md)
+    [Tune memory](guides/tune-memory.md) then [Memory](concepts/memory.md)
+
+-   **Hand rows to an analytics engine**
+
+    ---
+
+    Export a read as an Arrow IPC stream, or through the Arrow C Data Interface, and query it with DuckDB or Python. Parquetry reads and filters, and the engine joins and aggregates.
+
+    [Arrow interop](guides/arrow.md)
+
+-   **Serve GeoParquet from GeoServer**
+
+    ---
+
+    A GeoTools data store publishes GeoParquet files as map layers. GeoServer Cloud 3.1.0 and newer include it and enable it by default, and a plugin adds it to GeoServer.
+
+    [GeoTools and GeoServer](geoserver/index.md)
 
 </div>
 
@@ -107,13 +133,6 @@ Parquetry has not reached 1.0, and its API may still change before then. The sta
 | [The `par` command line tool](cli/index.md) | `par` | <span class="status-badge status-badge--experimental">experimental</span> |
 
 Two supporting modules have no status of their own. `parquetry-avro` reads and writes Avro container files, the format of Iceberg manifests and manifest lists. `parquetry-jackson` renders the rows of a read as JSON.
-
-## In GeoServer Cloud
-
-GeoServer Cloud 3.1.0 and newer include Parquetry ([GeoServer Cloud](geoserver/geoserver-cloud.md)). The Parquetry extension, its "Parquet" data store, and the `geoparquet` and `arrow-ipc` WFS output formats are enabled by default. The Iceberg and STAC GeoParquet stores are not ready for production yet, and ship disabled. The GeoServer Cloud user guide covers both uses:
-
-- [GeoParquet through the REST API](https://geoserver.org/geoserver-cloud/user-guide/geoparquet-rest-api/) publishes GeoParquet files as layers.
-- [WFS output as GeoParquet and Arrow IPC](https://geoserver.org/geoserver-cloud/user-guide/wfs-geoparquet-arrow-ipc/) downloads any vector layer as a GeoParquet file or an Arrow IPC stream, regardless of its store.
 
 ## Part of the Tileverse ecosystem
 
