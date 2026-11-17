@@ -1,0 +1,3 @@
+# Zensical: the static site generator of the documentation. It reads mkdocs.yml
+# and bundles the Markdown extensions, the search, redirects and minify features.
+zensical>=0.1.1,<0.2

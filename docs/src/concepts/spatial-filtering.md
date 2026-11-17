@@ -1,15 +1,23 @@
-# Spatial filtering in parquetry
+# Spatial filtering
 
-How a spatial predicate over a GeoParquet geometry column turns into pruned row
-groups, skipped pages, and an exact per-row test - without a geometry engine in
-the core. This is the spatial face of the read path; read
-[The parquetry read path](read-path.md) first for the four-stage pipeline this
-hangs on.
+!!! abstract "In short"
+    A bounding box filter compares the bounding box of each geometry with the query box, and its result is exact for that comparison.
+    Parquetry skips row groups and pages with the `bbox` covering columns of a file, and row groups with its GeoParquet 2.0 bounds, then tests the remaining rows.
+    An exact geometry test, such as a true intersection, runs on the rows left by that pruning.
 
-The guiding rule: **the core filters on the geometry's 2D bounding box only.**
-Every relation below is an honest rectangle relation, evaluated exactly. True
-geometry tests (a real intersects against the curve, not its envelope) are the
-job of a geometry-engine integration, never the core.
+This page explains how a spatial predicate on a GeoParquet geometry column
+turns into pruned row groups, skipped pages and an exact per-row test. It is for
+developers filtering GeoParquet by location, and for operators who want to know
+which files prune well.
+
+Spatial filtering is part of the read path: read [The read path](read-path.md)
+first for the four stages of a read.
+
+The guiding rule: **the bbox relations compare the 2D bounding box of the
+geometry only.** They are rectangle relations, evaluated exactly. A
+true geometry test, such as a real intersects against the curve and not its
+envelope, goes through a geometry engine behind the `GeometryFilter<T>` SPI
+([section 6](#6-the-bbox-only-contract)).
 
 ---
 
@@ -27,9 +35,9 @@ The predicate ADT exposes a closed family of four bbox relations under the seale
 | `BboxEquals` | matches the query box on all four edges | `Pred.col("geometry").bboxEquals(q)` |
 
 The query box is a `Bbox`: `Bbox.of2d(minX, minY, maxX, maxY)` (or `of3d(...)`,
-though the relations compare X/Y only). The family is closed on purpose: the core
-never exposes a predicate it cannot evaluate exactly. There are no
-`DWithin` / `Within` / `Overlaps` stubs that would silently return wrong rows.
+though the relations compare X/Y only). The family is closed on purpose: each
+relation in it has an exact evaluation. There are no `DWithin`, `Within` or
+`Overlaps` stubs returning wrong rows.
 
 ---
 
@@ -37,32 +45,19 @@ never exposes a predicate it cannot evaluate exactly. There are no
 
 A spatial read is an ordinary `read()` with a spatial predicate. The geometry
 column is decoded for the filter even when it is outside the projection.
-
-```java
-Bbox manhattan = Bbox.of2d(-74.05, 40.68, -73.90, 40.88);
-
-try (ByteRangeSource source = ByteRangeSource.ofFile(path)) {
-    ParquetSource dataset = ParquetSource.open(source);
-    try (Stream<ParquetRecord> rows = dataset.read(
-            Pred.col("geometry").bboxIntersects(manhattan),
-            Projection.ALL,
-            ReadOptions.DEFAULTS)) {
-        rows.forEach(record -> { /* ... */ });
-    }
-}
-```
+[Filter by location](../guides/spatial-filter.md) shows such a read.
 
 A spatial predicate composes with the rest of the ADT: `And` / `Or` with
-attribute predicates, and `Not` around a spatial relation, all behave as usual
+attribute predicates, and `Not` around a spatial relation, behave as usual
 (see [section 5](#5-null-geometries) for the one subtlety, null geometries).
 
 ---
 
 ## 3. How it filters
 
-A spatial predicate is filtered at three levels, cheapest first - the same
-"filter, then fetch, then decode" order as every other predicate. Which row-group
-and page levels apply depends on what statistics the file provides
+A spatial predicate is filtered at three levels, cheapest first, in the same
+"filter, then fetch, then decode" order as other predicates. The statistics
+present in the file decide which row-group and page levels apply
 ([section 4](#4-which-path-applies)).
 
 ```mermaid
@@ -90,14 +85,14 @@ The walk accepts both WKB type-code encodings: ISO (Z/M/ZM via the
 high-bit flags, as JTS and PostGIS write them). An EWKB `0x20000000` SRID flag is
 recognized and its 4-byte payload skipped. Per the parquet-format spec, the
 `geospatial_types` recorded in the written statistics are always normalized to ISO
-codes, whichever encoding the input used.
+codes, whatever the encoding of the input.
 
 **Row-group and page pruning** comes from one of two mechanisms:
 
 - **Covering-column lowering.** A GeoParquet file with a `bbox` covering (1.1 or
   2.0) stores a box enclosing each row's geometry in four `bbox.*` sidecar
   columns. GeoParquet allows that box to be wider than the geometry's own
-  bounding box, and parquetry's FLOAT covering rounds its bounds outward. A
+  bounding box, and Parquetry's FLOAT covering rounds its bounds outward. A
   relation lowers to the comparisons on those columns satisfied by the matching
   rows, a necessary condition rather than an equivalent. `BboxIntersects(q)` and
   `BboxCoveredBy(q)` lower to an overlap test,
@@ -122,8 +117,8 @@ codes, whichever encoding the input used.
 
 ## 4. Which path applies
 
-The two pruning mechanisms target different files, and a single read picks
-whichever the file supports:
+The two pruning mechanisms target different files, and a single read picks the
+mechanism supported by the file:
 
 | The file has ... | Row-group pruning | Page pruning | Record-level test |
 |------------------|-------------------|--------------|-------------------|
@@ -131,17 +126,18 @@ whichever the file supports:
 | native per-row-group geometry stats only (GeoParquet 2.0) | yes (SPATIAL tier) | no | `WkbEnvelope.matches` on WKB |
 | neither | no | no | `WkbEnvelope.matches` on WKB |
 
-A file with a covering takes the lowering path, whichever GeoParquet version its
-geo document declares. It prunes pages too, from the first read when its
+A file with a covering takes the lowering path, whatever the GeoParquet version
+declared in its geo document. It prunes pages too, from the first read when its
 covering columns have a column index. Without one, pruning starts at the second
 read of a row group, when that read scans only learned columns. A GeoParquet 2.0
 file without a covering takes the native path, at row-group granularity. With no
-usable statistics, pruning declines to nothing and the result is still exact -
-the record-level test decides every row.
+usable statistics, nothing is pruned and the result is still exact: the
+record-level test decides the rows.
 
-The default write (`DUAL_V1_1_AND_V2_0`) emits both: native per-row-group
-geometry statistics and a `bbox` covering. `WriteOptions.bboxCovering` requests or
-declines the covering in any metadata mode, including `V2_0_ONLY`.
+Parquetry's writer emits both by default: native per-row-group geometry
+statistics and a `bbox` covering.
+[Write a GeoParquet file](../guides/write.md#write-a-geoparquet-file) lists the
+options.
 
 Pruning is conservative everywhere: a row group or page is dropped only when its
 statistics prove no row in it can match; pruning never changes which rows a
@@ -177,44 +173,43 @@ they answer "could these interact?", not "do these shapes actually intersect?".
 That coarse answer is exactly what a spatial index gives, and it is enough to
 prune the read down to a small candidate set.
 
-True-geometry filtering - a real intersection against the curve, decimation,
-reprojection - belongs to a geometry-engine integration, not the core. The
-materializer that decodes WKB into a geometry object is output-only; it never runs
-in the filter path. There are two ways to apply the exact test:
+True-geometry filtering, such as a real intersection against the curve, needs a
+geometry engine. The materializer decoding WKB into a geometry object is
+output-only, and it never runs in the filter path.
 
-1. **Consumer-side re-check.** Push the query's envelope as a bbox relation; the
-   core prunes and returns a candidate stream. Re-apply the exact geometry filter
-   on the candidates in the consumer's own geometry model.
-2. **In-core gate.** Inject a `GeometryFilter<T>` (`filter/GeometryFilter.java`)
-   through `Predicate.geometryFilter(...)`. The filter provides a sound bbox
-   lowering for coarse pruning plus an exact `matches` test; the reader prunes with
-   the lowering, then runs the exact test per surviving row, dropping non-matches
-   before their other columns materialize. `parquetry-core` ships
-   `JtsGeometryFilter` (package `io.tileverse.parquetry.geo`) over the JTS topology
-   predicates. The gate decodes each
-   surviving geometry once for the test; output materialization decodes the WKB
-   again (reusing the gate's geometry as the output value is a possible future
-   optimization).
+The exact test runs either in the consumer, on the candidates returned by a bbox
+relation, or inside the read, as a `GeometryFilter<T>`
+(`filter/GeometryFilter.java`). A geometry filter provides a sound bbox lowering
+for coarse pruning plus an exact `matches` test. The reader prunes with the
+lowering, then runs the exact test per surviving row, dropping non-matches
+before their other columns materialize. `parquetry-core` ships
+`JtsGeometryFilter` (package `io.tileverse.parquetry.geo`) over the JTS topology
+predicates. A geometry filter in the read decodes each surviving geometry once
+for the test, and output materialization decodes the WKB again.
+[Apply an exact geometry test](../guides/spatial-filter.md#apply-an-exact-geometry-test)
+shows both ways.
 
 ---
 
 ## 7. Where to look
 
+Paths are relative to the `io/tileverse/parquetry` package of `parquetry-core`.
+
 | Concern | Start in |
 |---------|----------|
 | Predicate family + builders | `filter/Predicate.java` (`Predicate.Spatial`), `filter/Pred.java` |
 | Query box + 2D relations | `filter/Bbox.java` |
-| Shared WKB walk + exact match | `filter/spatial/WkbEnvelope.java` |
-| Record-level evaluation | `filter/RecordLevelEvaluator.java` |
-| Covering-column lowering | `filter/spatial/SpatialCoveringRewrite.java` |
-| Native row-group pruning | `filter/SpatialBoundsEvaluator.java`, `filter/Tier.java`, `filter/spatial/SpatialBoundsSource.java` |
+| Shared WKB walk + exact match | `internal/filter/spatial/WkbEnvelope.java` |
+| Record-level evaluation | `internal/filter/RecordLevelEvaluator.java` |
+| Covering-column lowering | `internal/filter/spatial/SpatialCoveringRewrite.java` |
+| Native row-group pruning | `internal/filter/SpatialBoundsEvaluator.java`, `filter/explain/Tier.java`, `internal/filter/spatial/SpatialBoundsSource.java` |
 | Exact geometry gate (SPI) | `filter/GeometryFilter.java`, `Predicate.geometryFilter(...)` |
-| JTS-backed exact filter | `parquetry-core/.../geo/JtsGeometryFilter.java` |
+| JTS-backed exact filter | `geo/JtsGeometryFilter.java` |
 | Benchmarks | `internal/parquetry-benchmarks/.../SpatialPruningBenchmark.java`, `SpatialGateBenchmark.java`, `JtsSpatialFilterBenchmark.java` |
 
 ---
 
 *Scope: bbox-based spatial filtering over a GeoParquet geometry column. True
-geometry materialization (WKB to a JTS geometry) is in `parquetry-core` (the
-`io.tileverse.parquetry.geo` package); the general read path is in
-[read-path.md](read-path.md).*
+geometry materialization (WKB to a JTS geometry) is in `parquetry-core`, in the
+`io.tileverse.parquetry.geo` package. The general read path is in
+[The read path](read-path.md).*

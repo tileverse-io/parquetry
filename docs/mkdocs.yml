@@ -1,0 +1,148 @@
+site_name: Parquetry
+site_description: Parquet and GeoParquet for the JVM, built for servers running in containers with small memory limits
+site_author: Multiversio LLC
+copyright: "&copy; 2026 Multiversio LLC. All rights reserved."
+repo_url: https://github.com/tileverse-io/parquetry
+edit_uri: edit/main/docs/src/
+site_url: https://parquetry.io/
+docs_dir: src
+
+theme:
+  name: material
+  custom_dir: overrides
+  logo: assets/images/parquetry-mark.svg
+  favicon: assets/images/favicon.ico
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  icon:
+    repo: fontawesome/brands/github
+
+extra_css:
+  - assets/stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+      title: On this page
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
+  - minify:
+      minify_html: true
+
+nav:
+  - Home: index.md
+  - Why Parquetry?: why.md
+  - Getting started: getting-started.md
+  - Guides:
+    - Read records: guides/read-records.md
+    - Read columnar batches: guides/read-batches.md
+    - Filter rows: guides/filter.md
+    - Filter by location: guides/spatial-filter.md
+    - Read GeoParquet: guides/geoparquet.md
+    - Write files: guides/write.md
+    - Lay out files: guides/file-layout.md
+    - Cloud storage: guides/cloud-storage.md
+    - Multi-file datasets: guides/datasets.md
+    - Tune memory: guides/tune-memory.md
+    - Arrow interop: guides/arrow.md
+    - Avro: guides/avro.md
+    - JSON: guides/json.md
+  - GeoTools and GeoServer:
+    - geoserver/index.md
+    - The GeoTools data store: geoserver/geotools-datastore.md
+    - The GeoServer plugin: geoserver/geoserver-plugin.md
+    - GeoServer Cloud: geoserver/geoserver-cloud.md
+    - Size a GeoServer pod: geoserver/pod-sizing.md
+  - par CLI:
+    - cli/index.md
+    - Filter rows: cli/filtering.md
+    - Copy files: cli/copy.md
+  - Experimental:
+    - experimental/index.md
+    - Apache Iceberg tables: experimental/iceberg.md
+    - STAC GeoParquet collections: experimental/stac.md
+  - Under the hood:
+    - The read path: concepts/read-path.md
+    - Memory: concepts/memory.md
+    - Native memory and spill: concepts/native-memory-and-spill.md
+    - Spatial filtering: concepts/spatial-filtering.md
+    - Counting: concepts/counting.md
+    - Float statistics: concepts/float-statistics.md
+  - Reference:
+    - Modules: reference/modules.md
+    - Format support: reference/format-support.md
+  - Developer guide:
+    - developer-guide/index.md
+    - Architecture: developer-guide/architecture.md
+    - Build from source: developer-guide/build.md
+    - Releases: developer-guide/releases.md
+    - Contribute: developer-guide/contribute.md
+
+extra:
+  # The deploy job sets GOOGLE_ANALYTICS_KEY from the repository variable of the same name. Local and pull request
+  # builds have no key, and overrides/main.html then leaves the analytics out of the pages.
+  analytics:
+    provider: google
+    property: !ENV GOOGLE_ANALYTICS_KEY
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/tileverse-io/parquetry
+    - icon: fontawesome/solid/globe
+      link: https://tileverse.io
+      name: Part of the Tileverse ecosystem

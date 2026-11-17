@@ -1,9 +1,17 @@
-# Float statistics in parquetry
+# Float statistics
 
-How parquetry writes and reads the min/max statistics of `FLOAT`, `DOUBLE` and
-`FLOAT16` columns, what it does with `NaN` and the two zeros, and when to ask
-for IEEE 754 total order. Read [The parquetry read path](read-path.md) first for
-the pruning tiers fed by these statistics.
+!!! abstract "In short"
+    Parquetry writes the min/max statistics of float columns in the type-defined order by default, and the readers tested open such files and use the statistics to skip data.
+    Pruning agrees with the per-row comparison on `NaN` and on the two zeros.
+    IEEE 754 total order is available on request, for files read by readers known to support it.
+
+This page explains how Parquetry writes and reads the min/max statistics of
+`FLOAT`, `DOUBLE` and `FLOAT16` columns, what it does with `NaN` and the two
+zeros, and when to ask for IEEE 754 total order. It is for developers writing
+float columns for other readers, and for developers filtering on float columns.
+
+The pruning tiers fed by these statistics are described in
+[The read path](read-path.md).
 
 The guiding rule: **the readers tested open the default output and prune it
 like the files of other writers; IEEE 754 total order is a choice for files with
@@ -31,7 +39,7 @@ bounds of the column were computed.
 
 ---
 
-## 2. What parquetry writes
+## 2. What Parquetry writes
 
 Float columns declare the **type-defined order** by default. A write can ask for
 **IEEE 754 total order** instead (section 4). Both orders record a NaN count.
@@ -53,7 +61,7 @@ cell reads back with its sign and payload intact.
 
 ---
 
-## 3. How parquetry reads them
+## 3. How Parquetry reads them
 
 `FLOAT` and `DOUBLE` predicates compare as IEEE 754 numbers: `<`, `<=`, `>` and
 `>=` never match `NaN`, and `-0.0` equals `+0.0`. `NaN` literals are the one
@@ -91,29 +99,21 @@ keeps its column index. The cost is compatibility: the order entered the format
 in parquet-format 2.13.0 (June 2026), and several readers in use today cannot
 open a file written in it or do not prune its float columns (section 5).
 
-```java
-WriteOptions options = WriteOptions.builder()
-        .floatColumnOrder(WriteOptions.FloatColumnOrder.IEEE_754_TOTAL_ORDER)
-        .build();
-```
-
-```
-par cp --float-column-order ieee_754_total_order in.parquet out.parquet
-```
-
-The option applies to the float columns of the file, the `bbox` covering columns
-of a GeoParquet file included.
+[Choose the order of float statistics](../guides/write.md#choose-the-order-of-float-statistics)
+shows how to ask for it.
 
 ---
 
 ## 5. Reader compatibility
 
-Measured in October 2026 on `par cp` copies of a 1M-row file with float32
-columns, `NaN` cells and one row group of only `NaN`, against the same queries
-on the source file written by pyarrow. "Prunes" means the reader skipped the row
-groups ruled out by a filter on a float column: it still answered with their
-column chunks overwritten by garbage. The parquet-java row comes from the
-parquetry conformance tests, not from this probe.
+This table was measured in October 2026, with the reader versions named in each
+row. Releases after those versions were not measured. The probe ran on `par cp`
+copies of a 1M-row file with float32 columns, `NaN` cells and one row group of
+only `NaN`, against the same queries on the source file written by pyarrow. "Prunes" means the reader skipped the row
+groups ruled out by a filter on a float column. The probe overwrote the column
+chunks of those row groups with garbage. A reader that still returned the right
+rows skipped them. The parquet-java row comes from the
+Parquetry conformance tests, not from this probe.
 
 | Reader | Type-defined order (default) | IEEE 754 total order |
 |---|---|---|
@@ -133,11 +133,11 @@ Notes:
 - The Polars rows say "reads" alone: Polars 1.30 and later did not skip the row
   groups of this query on the pyarrow source either. Polars 1.0 and 1.20
   skipped them on the default copy as on the source.
-- parquet-java 1.18 is the oracle of the parquetry conformance tests. For the
+- parquet-java 1.18 is the oracle of the Parquetry conformance tests. For the
   same cells it writes the same bounds and NaN counts in either order, and the
   same column indexes in total order. In the type-defined order it writes no
-  column index for a chunk holding a `NaN`; parquetry keeps the index unless a
-  page holds only `NaN`. Its filtered reads of parquetry files return the same
+  column index for a chunk holding a `NaN`; Parquetry keeps the index unless a
+  page holds only `NaN`. Its filtered reads of Parquetry files return the same
   rows with and without pruning.
 - parquet-java 1.17 and earlier ignore the statistics of a column in an order
   unknown to them, except for a chunk with equal min and max (per its sources;
@@ -149,6 +149,9 @@ Notes:
 ---
 
 ## 6. Where to look
+
+Paths are relative to the `io/tileverse/parquetry` package of `parquetry-core`,
+in its main sources, and in its test sources for the conformance tests.
 
 | Concern | Start in |
 |---------|----------|
@@ -164,5 +167,5 @@ Notes:
 
 *Scope: the statistics of floating-point columns in a single Parquet /
 GeoParquet file. The proof of a whole row group matching, and counting from it,
-is in [counting.md](counting.md). The pruning tiers are in
-[read-path.md](read-path.md).*
+is in [Counting](counting.md). The pruning tiers are in
+[The read path](read-path.md).*

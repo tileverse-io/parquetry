@@ -1,19 +1,24 @@
-# The parquetry read path
+# The read path
 
-How a `read()` turns a Parquet file on some byte source into a stream of records,
-explained from the top down. Each section zooms in one level; stop wherever you
-have enough detail. Diagrams are [Mermaid](https://mermaid.js.org/) and render on
-GitHub.
+!!! abstract "In short"
+    A read runs in four steps: filter, fetch, decode and materialize.
+    The filter step works on the metadata of the file and skips the row groups and pages unable to match; the fetch step then reads the byte ranges of what is left.
+    A read returns a lazy stream, and fetches no column data until the consumer pulls rows.
 
-The guiding principle never changes: **filter, then fetch, then decode, then
-materialize.** Everything below is detail hanging on those four verbs.
+This page follows a `read()` from a Parquet file on a byte source to a stream of
+records, from the top down. It is for developers who tune reads, investigate a
+slow query or work on the reader. The sections zoom in one level at a time:
+stop wherever you have enough detail.
+
+The principle of a read is **filter, then fetch, then decode, then
+materialize.** The sections below detail these four steps.
 
 ---
 
 ## 1. System context
 
-What talks to what. `parquetry-core` reads one file; it does not own the bytes or
-the threads the consumer runs on.
+What talks to what. `parquetry-core` reads one file. It owns neither the bytes
+nor the threads of the consumer.
 
 ```mermaid
 flowchart LR
@@ -30,17 +35,21 @@ flowchart LR
 
 - The consumer passes a **predicate** (what rows), a **projection** (what
   columns), and **ReadOptions** (tunables), and gets back a lazy `Stream`.
-- parquetry reads through a byte-range abstraction; it never assumes a local
+- Parquetry reads through a byte-range abstraction and never assumes a local
   file. The consumer opens and closes that source.
-- The reader is immutable and thread-safe; each `read()` allocates its own
+- The reader is immutable and thread-safe. A `read()` allocates its own
   per-call state.
+
+[Architecture](../developer-guide/architecture.md) shows the modules and the
+components of the read path as C4 diagrams.
 
 ---
 
 ## 2. The four-stage pipeline
 
-The one diagram to hold in your head. A `read()` flows left to right; the lead
-type of each stage is named under it.
+A file is opened once. Each `read()` then runs four stages from left to right:
+filter, fetch, decode and materialize. The diagram names the lead types of the
+stages.
 
 ```mermaid
 flowchart LR
@@ -75,13 +84,14 @@ flowchart LR
 Two cross-cutting helpers thread through filter, fetch, and decode:
 
 - **`RowGroupChunks`** - a per-call view of one row group's column chunks that
-  memoizes its index sections (offset index, column index, bloom filter); each is
-  read at most once no matter how many stages ask. A chunk without an offset
-  index takes its pages from the metadata cache, once a read has learned them
+  memoizes its index sections (offset index, column index, bloom filter). A
+  section is read at most once, however many stages ask for it. A chunk
+  without an offset index takes its pages from the metadata cache, once a read has learned them
   (section 4).
-- **`ReadOptions`** - the tunables: which filter tiers run, the buffer pool, the
-  off-heap fetch budget, the on-heap decode budget, prefetch depth, decode
-  parallelism.
+- **`ReadOptions`** - the options of one read: which filter tiers run, the batch
+  size, the page-narrowed fetch. The buffer pool, the fetch and decode budgets,
+  the prefetch depth and the decode-ahead window belong to the `ParquetRuntime`
+  shared by the readers ([Memory](memory.md)).
 
 ---
 
@@ -129,18 +139,18 @@ sequenceDiagram
     BP-->>C: ParquetRecord
 ```
 
-Key points the diagram encodes:
+Key points shown by the diagram:
 
 - **The stream is lazy.** `read()` returns immediately; filtering at the metadata
   level has run, but no column bytes are fetched or decoded until the consumer
   pulls.
 - **Filter expands the projection.** When the record-level filter is on, the
-  *scan* projection is the caller's projection plus the predicate's columns, so
-  the predicate can be evaluated even on columns the caller did not ask for. The
-  *output* schema stays the caller's projection.
+  *scan* projection is the caller's projection plus the predicate's columns.
+  The predicate can then be evaluated on columns not requested by the caller.
+  The *output* schema stays the caller's projection.
 - **Outcomes flow forward.** Per row group, the plan yields `ELIMINATED`
-  (dropped), `FULL` (read every row), `PARTIAL` (read only `survivingRows`), or
-  `MATCHED` (statistics proved every row matches - read every row, but skip the
+  (dropped), `FULL` (read the rows), `PARTIAL` (read only `survivingRows`), or
+  `MATCHED` (statistics proved that all rows match: read them, but skip the
   per-row record filter). `PARTIAL` becomes a `RowMask` that skips non-surviving
   pages during decode.
 - **The plan assembles the decode.** A `ReadPlan` holds the outcome of the
@@ -150,7 +160,7 @@ Key points the diagram encodes:
   plan builds the coordinator from both in `decode`.
 
 `readBatches()` is the same spine without the last step: it returns the batches
-themselves, holding exactly the rows the predicate matched, narrowed to the
+themselves, holding exactly the rows matched by the predicate, narrowed to the
 caller's projection. The row `read()` is `readBatches`' pipeline plus
 row-flattening into the caller's record shape.
 
@@ -158,43 +168,45 @@ row-flattening into the caller's record shape.
 
 ## 4. Filtering: the five tiers
 
-The filter pipeline runs on **metadata only** - no column data is decoded here.
-Each row group is run through five tiers in increasing cost; the pipeline
-short-circuits the moment a tier proves the row group cannot match - or that every
-row matches.
+The filter pipeline runs on **metadata only**: no column data is decoded here.
+The pipeline runs a row group through five tiers, cheapest first. It stops as
+soon as a tier proves that no row of the row group can match, or that all its
+rows match.
 
 ```mermaid
 flowchart TD
     start["row group"] --> norm["PredicateNormalizer<br/>(Not-to-leaves, fold Always, flatten And/Or)"]
     norm --> stats["STATS<br/>min/max from column metadata"]
     stats -->|eliminated| drop["drop row group"]
-    stats -->|maybe| dict["DICTIONARY<br/>value in dictionary page?"]
-    dict -->|eliminated| drop
-    dict -->|maybe| ci["COLUMN_INDEX<br/>per-page min/max -> RowRanges"]
+    stats -->|"all rows match"| matched["MATCHED"]
+    stats -->|maybe| spatial["SPATIAL<br/>geometry bbox of the row group"]
+    spatial -->|eliminated| drop
+    spatial -->|maybe| ci["COLUMN_INDEX<br/>per-page min/max -> RowRanges"]
     ci -->|eliminated| drop
     ci -->|narrowed| partial["PARTIAL: survivingRows"]
     ci -->|maybe| bloom["BLOOM_FILTER<br/>probe Eq / In keys"]
     bloom -->|eliminated| drop
-    bloom -->|maybe| record["RECORD_LEVEL<br/>(runs later, during assembly)"]
+    bloom -->|maybe| record["RECORD_LEVEL<br/>(runs later, during decode)"]
     record --> survivor["survivor: FULL or PARTIAL"]
     partial --> survivor
 ```
 
-- **Cheapest first.** STATS and DICTIONARY read only the footer. COLUMN_INDEX and
-  BLOOM read small index sections (loaded lazily and memoized by
-  `RowGroupChunks`). RECORD_LEVEL is the only tier that needs decoded values, so
-  it runs later, inline during assembly, not here.
+- **Cheapest first.** STATS and SPATIAL read only the footer. COLUMN_INDEX and
+  BLOOM_FILTER read small index sections, loaded lazily and memoized by
+  `RowGroupChunks`. RECORD_LEVEL is the only tier needing decoded values. It
+  runs later, during the decode ([The masked scan](#6-the-masked-scan)).
 - **COLUMN_INDEX is the lever for selective reads.** It narrows a row group to the
   pages whose min/max bounds overlap the predicate, producing `survivingRows` (a
   `RowRanges`). That is what lets decode skip whole pages. A file without a page
   index gets the same lever from the second read of a row group, when that read
   scans only learned columns ([Without a page index](#without-a-page-index)).
-- **STATS also proves the positive.** When a row group's statistics prove *every*
-  row matches - not just that some might - the STATS tier short-circuits to the
-  `MATCHED` outcome. A `MATCHED` row group is read in full but skips the per-row
-  record filter, and [`count()`](counting.md) answers it from the row count with no
-  decode at all. [Counting](counting.md#3-proving-a-whole-row-group-matches)
-  explains the deliberately conservative proof that keeps this sound.
+- **STATS also proves the positive.** When the statistics of a row group prove
+  that *all* its rows match, and not only that some might, the STATS tier stops
+  the pipeline with the `MATCHED` outcome. A `MATCHED` row group is read in
+  full but skips the per-row record filter, and [`count()`](counting.md)
+  answers it from the row count, without decoding.
+  [Counting](counting.md#3-proving-a-whole-row-group-matches) explains the
+  deliberately conservative proof keeping this sound.
 - **The output is an `ExplainPlan`** - the same structure returned by `explain()`
   and rendered by `toAsciiTable()` / `toJson()`. The `ReadPlan` of the query
   routes its row groups to the `RowGroupSurvivor` list consumed by the rest of
@@ -202,21 +214,21 @@ flowchart TD
   and answers the `MATCHED` row groups from metadata.
 
 `RowGroupChunks` is what keeps this honest: the tiers ask it for a column's
-stats / page index / bloom filter, and it loads each section once and hands the
+stats / page index / bloom filter, and it loads a section once and hands the
 same instance to the decode-mask builder later.
 
-Bbox spatial predicates over a GeoParquet geometry column add one row-group tier,
-`SPATIAL`, after STATS, plus a covering-column lowering step that feeds the STATS
-and COLUMN_INDEX tiers above. See [Spatial filtering](spatial-filtering.md).
+The SPATIAL tier applies to bbox predicates on a GeoParquet geometry column.
+Such a predicate also goes through a covering-column lowering step, which feeds
+the STATS and COLUMN_INDEX tiers. See [Spatial filtering](spatial-filtering.md).
 
 ### Without a page index
 
 The COLUMN_INDEX tier works from the page index of a chunk. The page index has
 two sections. The offset index places the pages, and the column index holds
-their min/max bounds. pyarrow writes no page index by default. A filtered read
-of such a file learns the pages from their page headers. Pruning starts at the
-second read of a row group, when that read scans only learned columns and the
-cache still holds their pages.
+their min/max bounds. pyarrow 26.0.1 writes no page index by default. A
+filtered read of such a file learns the pages from their page headers.
+Pruning starts at the second read of a row group, when that read scans only
+learned columns and the cache still holds their pages.
 
 A read keeps the pages of a row group only when three rules hold:
 
@@ -247,42 +259,34 @@ failing them gets no learning pass. A full scan learns nothing.
   INT96 columns keep page locations and null counts, without bounds.
 - **One page view.** The kept entries go into the metadata cache of the
   process, beside the parsed footers
-  ([Memory and tuning](memory-and-tuning.md#the-caches)). A later read
+  ([Memory](memory.md#the-caches)). A later read
   of the row group takes them as it takes a declared page index. The
   COLUMN_INDEX tier and the `RowMask` do not tell the two sources apart. The
   fetch of the surviving pages differs in one point, because learned pages record
   their encodings and can leave a dictionary page out
   ([Fetch and decode](#5-fetch-and-decode)). An `explain()` after the first read
   shows the decisions of the next one.
-- **Turning it off.** `ReadOptions.builder().useColumnIndexFilter(false)` turns
-  the COLUMN_INDEX tier off for a read, and with it both the learning and the
-  use of learned pages. A metadata pool with a budget of 0 turns learning off
-  for the process ([Memory and tuning](memory-and-tuning.md#the-caches)). A
-  source without a name (`ByteRangeSource.sourceIdentifier()` is empty) and an
-  encrypted file learn nothing. A file with an offset index on each chunk learns
+- **Turning it off.** A read with the COLUMN_INDEX tier off neither learns pages
+  nor uses learned pages ([Turn a tier off](../guides/filter.md#turn-a-tier-off)
+  shows the switch). A metadata pool with a budget of 0 turns learning off
+  for the process ([Size the caches](../guides/tune-memory.md#size-the-caches)). A
+  source without a name (`ByteRangeSource.sourceIdentifier()` is empty) learns
+  nothing. A file with an offset index on each chunk learns
   nothing and looks nothing up.
 
-`PageIndexLearningIT` writes a file of five row groups of 1,000 rows in
-uncompressed pages of 100 rows. Its name column holds plain-encoded strings of
-80 characters. In one run of the test, a query fetched 99,388 bytes on its
-first read and 9,613 on its second, for eleven rows on one page. Over the same
-rows written with a page index, the same query fetched 10,288 bytes, its index
-sections included. The test checks ratios between these figures, not the
-figures themselves.
+The figures below come from one run of the integration test
+`PageIndexLearningIT`, in `parquetry-core`. The test writes a file of five row groups of
+1,000 rows in uncompressed pages of 100 rows. Its name column holds
+plain-encoded strings of 80 characters. In one run of the test, a query fetched
+99,388 bytes on its first read and 9,613 on its second, for eleven rows on one
+page. Over the same rows written with a page index, the same query fetched
+10,288 bytes, its index sections included. The test checks ratios between these
+figures, not the figures themselves.
 
-A declared page index is the recommended layout. It prunes from the first read
-and does not depend on the cache. pyarrow writes one with
-`write_page_index=True`, and `par cp` writes a copy with one, because
-parquetry's writer declares a page index by default. Learning is a bridge for
-the files written without one.
-
-Writers should leave geometry out of dictionary encoding. pyarrow tries a
-dictionary on each column by default (`use_dictionary=True`), and WKB
-deduplicates nothing in it. On a file of the Overture buildings release,
-1,357,824 dictionary entries serve 1,357,824 rows, and the chunk then falls back
-to PLAIN. `use_dictionary` takes a list of columns, and the columns with repeated
-values keep their dictionary. parquetry's writer writes geometry PLAIN unless
-told otherwise.
+A declared page index prunes from the first read and does not depend on the
+cache. Learning is a bridge for the files written without one.
+[Lay out files for selective queries](../guides/file-layout.md) shows how to
+write a page index, with Parquetry and with other tools.
 
 ---
 
@@ -313,14 +317,14 @@ flowchart TD
     page --> batch["ParquetRecordBatch<br/>(ColumnVector per column)"]
 ```
 
-What each piece guarantees:
+What the pieces guarantee:
 
 - **`RowGroupFetcher`** asks for the ranges of a row group's plan in one batch
   call, each as its own range, and hands out zero-copy `FetchedColumnChunk` views
   into pooled buffers. The storage layer joins nearby ranges into fewer fetches
   ([batched reads](https://tileverse.io/storage/how-to/configure/#batched-reads)),
   and serves the cached ones from memory when the byte-range cache is on
-  ([Memory and tuning](memory-and-tuning.md#the-caches)).
+  ([Memory](memory.md#the-caches)).
 - **`RowGroupPrefetcher`** fetches upcoming row groups ahead of consumption on a
   per-read virtual-thread pool, bounded by a process-wide `FetchBudget` that caps
   the off-heap bytes held by column-chunk fetches. A prefetch is refused when the
@@ -329,10 +333,10 @@ What each piece guarantees:
 - **`ParallelDecodeCoordinator`** decodes several row groups concurrently on a
   shared CPU pool but returns them in file order; the stream stays ordered. A
   decode worker streams one page-batch at a time into a small bounded hand-off
-  (currently two batches) and parks under backpressure when the consumer is slow.
+  (two batches) and parks under backpressure when the consumer is slow.
   A single row group is never fully resident; only the in-flight window of its
   batches is.
-- **`BatchColumnReader`** is page-at-a-time. Each page is decompressed into a
+- **`BatchColumnReader`** is page-at-a-time. A page is decompressed into a
   short-lived confined `Arena`, decoded into heap arrays, and the arena is closed
   before the next page. With a `RowMask`, `PageCursor` skips non-surviving pages
   outright, and surviving pages are compacted to the surviving rows.
@@ -384,8 +388,9 @@ What each piece guarantees:
   each page, and their answer is exact. A declared page index records no
   encoding. The `encoding_stats` of the chunk give the count of dictionary-encoded
   pages, and a page at or past that count is taken to use no dictionary.
-  parquet-mr and Arrow fall back to PLAIN once per chunk, and the
-  dictionary-encoded pages come first. The format does not promise that order,
+  parquet-java 1.18.0 and Arrow C++ 26.0.1 (the writer of pyarrow) fall back
+  to PLAIN at most once per chunk, after the dictionary-encoded pages. The
+  format does not promise that order,
   and the fetch checks it. The prefix keeps its room in the fetch buffer, and the
   budget sees the same bytes, but the first call leaves the prefix unread. Once
   the pages arrive, the fetch thread reads their headers from memory. When a
@@ -393,38 +398,43 @@ What each piece guarantees:
   call, into the room already held. A wrong count therefore costs one call and
   never a row, and a right count costs no call. A page header failing to parse
   on that check fails the fetch, as it would fail the decode. A declared index
-  without a count reads the prefix with the pages. parquetry's writer records no
+  without a count reads the prefix with the pages. Parquetry's writer records no
   `encoding_stats`, and its files read this way. A chunk fetched whole holds its
   dictionary page.
 
-**Memory contract.** Two budgets bound a read. `FetchBudget` caps the *off-heap*
-bytes held by column-chunk fetches, the current row group's and the prefetched
-ones alike; off-heap memory counts against a container's limit and is invisible
-to `-Xmx`. `DecodeBudget` (`ReadOptions.decodeBudget`) caps the *on-heap* bytes
-held by a read in speculatively decoded batches, inside `-Xmx`. Only speculative
-decode-ahead is controlled by `DecodeBudget`: the in-order current row group (the
-one being read by the consumer) never reserves decode budget, and that is what
-prevents deadlock on the decode side. When the
-consumer advances to a row group that was decoding ahead, the coordinator promotes
-it, and it stops reserving. `maxDecodeAheadPerRead` is a concurrency cap on decode
-worker slots, not a memory bound; a speculative row group decodes ahead only when a
-slot is free and budget headroom exists, and under slot contention a read degrades
-to inline (synchronous, still memory-bounded) decode on the consumer thread.
+**Memory contract.** Three budgets bound a read.
 
-Peak process memory is approximately `maxHeap (-Xmx, includes the on-heap
-DecodeBudget) + FetchBudget (off-heap) + retained segment pool (off-heap) + JVM
-native baseline`. The design target is a GeoServer pod with 1-2 GB for parquetry,
-not "load the file." Sizing both budgets against a container limit is covered in
-[Memory and tuning](memory-and-tuning.md).
+- `FetchBudget` caps the *off-heap* bytes held by column-chunk fetches, for the
+  current row group and the prefetched ones alike. Off-heap memory counts
+  against the container limit and is invisible to `-Xmx`.
+- The off-heap `DecodeBudget` (`ParquetRuntime.offHeapDecodeBudget`) caps the
+  *off-heap* bytes holding decoded values in native segments.
+- The on-heap `DecodeBudget` (`ParquetRuntime.decodeBudget`) caps the
+  *on-heap* bytes held by a read in speculatively decoded batches, inside
+  `-Xmx`.
+
+The on-heap `DecodeBudget` controls speculative decode-ahead only. The current
+row group, the one being read by the consumer, never reserves it, and that
+prevents deadlock on the decode side. When the consumer advances to a row
+group decoding ahead, the coordinator promotes it, and it stops reserving.
+`ParquetRuntime.maxDecodeAhead` is a concurrency cap on decode worker slots,
+not a memory bound. A speculative row group decodes ahead only when a slot is
+free and the budget has room. Under slot contention, a read decodes inline on
+the consumer thread, synchronously and still within its memory bounds.
+
+The design target is a GeoServer pod with 1-2 GB for Parquetry, not "load the
+file." The peak memory of the process, and the sizing of the budgets against a
+container limit, are in
+[Memory](memory.md#4-sizing-against-a-container-limit).
 
 ---
 
 ## 6. The masked scan
 
-Decoding every surviving row's output columns and then dropping the non-matches
-is wasteful under a selective predicate. A filtered read therefore decodes each
-row group in **one pass that applies the predicate as it goes**: the filter
-columns decode, the predicate runs over them, and an output column materializes
+Decoding the output columns of the surviving rows and then dropping the
+non-matches wastes work under a selective predicate. A filtered read therefore
+decodes a row group in **one pass that applies the predicate as it goes**: the
+filter columns decode, the predicate runs over them, and an output column materializes
 a value only where the predicate kept the row. One reader per row group, one
 walk over the bytes. `ParallelDecodeCoordinator` chooses the reader of each row
 group. A row group needing the predicate takes `MaskedScanRowGroupReader`, and
@@ -433,7 +443,7 @@ any other row group takes `BatchRowGroupReader`.
 ```mermaid
 flowchart TD
     outcome{"row group outcome"}
-    outcome -->|"MATCHED<br/>(statistics proved every row matches)"| classic["BatchRowGroupReader<br/>full decode, no predicate"]
+    outcome -->|"MATCHED<br/>(statistics proved that all rows match)"| classic["BatchRowGroupReader<br/>full decode, no predicate"]
     outcome -->|"FULL / PARTIAL"| win
 
     subgraph scan["MaskedScanRowGroupReader"]
@@ -443,7 +453,7 @@ flowchart TD
         rowsLeft{"rows left?"}
         later["next LATER stage: decode its own columns<br/>over the whole window, evaluate the rows left"]
         step["no row left: the remaining stages and the<br/>output columns step over the window"]
-        out["OUTPUT-only columns: decode the value<br/>slots the survivors cover, step the page<br/>decoder over the rest"]
+        out["OUTPUT-only columns: decode the value<br/>slots covered by the survivors, step the<br/>page decoder over the rest"]
         gather["SHARED columns: gather the survivors<br/>out of the window already decoded"]
         win --> filt --> eval --> rowsLeft
         rowsLeft -->|"yes, a stage remains"| later
@@ -462,7 +472,7 @@ flowchart TD
 - **A window is page-bounded, not row-group-bounded.** It is the run of rows served
   by the current page of each scanned column, capped by the read's batch size. A
   window whose rows all fail the predicate emits nothing and materializes no output
-  value at all.
+  value.
 - **A filter column waits for the conditions before it.** The conditions of an
   `And` split into up to three stages (`ScanStages`). Conditions on fixed-width
   columns run first, conditions on `BYTE_ARRAY` columns next, and per-row geometry
@@ -477,15 +487,15 @@ flowchart TD
   `pagesPruned`. Under a row mask a page loads at window sizing, because no header
   states the rows of the mask.
 - **Output columns pay for survivors only.** An output-only leaf reads the value
-  slots its surviving rows cover and steps its page decoder past the rest
+  slots covered by its surviving rows and steps its page decoder past the rest
   (`ValueDecode.WINDOWED_MASK`, survivor slots computed by `MaskedValues`).
   Decoded-value count tracks selectivity, not page size.
 - **A column that both filters and outputs is read once.** It decodes as a filter
   column, and its surviving rows are gathered out of the window already in hand
   rather than through a second reader over the same pages.
-- **`MATCHED` row groups never reach the scan.** Statistics already proved every
-  row matches; there is nothing to evaluate. They take `BatchRowGroupReader`
-  over the scan schema, and the batch pipeline narrows the result to the caller's
+- **`MATCHED` row groups never reach the scan.** Statistics already proved that
+  their rows match, and there is nothing to evaluate. They take
+  `BatchRowGroupReader` over the scan schema, and the batch pipeline narrows the result to the caller's
   projection - which is what keeps a predicate-only column out of the emitted
   shape.
 - **Unfiltered reads are untouched.** No predicate means no scan:
@@ -498,22 +508,23 @@ flowchart TD
   declared ones do, and it is the mask, not the scan, that is flat-only.
 - **Nested output columns are supported.** Repetition and definition levels travel
   with each window and are gathered alongside the values. A row whose values
-  outrun the page it started in is followed across the boundary as a one-row
-  window.
+  run past the end of its first page is followed across the boundary as a
+  one-row window.
 - **Both `read()` and `readBatches()` take it.** The predicate is applied exactly
   during decode, and no per-row filter runs afterwards at materialization.
-- **The walk is proved.** A scan whose windows do not add up to the rows the plan
-  left it throws `MalformedFileException` rather than silently dropping rows.
+- **The walk is proved.** A scan whose windows do not add up to the rows given
+  to it by the plan throws `MalformedFileException` rather than silently
+  dropping rows.
 
 [`count()`](counting.md) pushes the same instinct to its limit: it materializes
-no records at all, answering proven row groups from metadata and counting the rest
+no record, answering proven row groups from metadata and counting the rest
 with a columnar popcount over the decoded predicate columns.
 
 ---
 
 ## 7. Key types
 
-A map to place any class you land on. Arrows are "uses / produces".
+A map of the types named on this page. An arrow reads "uses" or "produces".
 
 ```mermaid
 classDiagram
@@ -580,6 +591,9 @@ classDiagram
 
 ## 8. Where to look
 
+Paths are relative to the `io/tileverse/parquetry` package of `parquetry-core`.
+The footer and schema files are in `parquetry-format`.
+
 | Stage | Start in |
 |------|----------|
 | Entry, orchestration | `data/ParquetFileReader.java`, `data/ReadOptions.java` |
@@ -602,9 +616,8 @@ classDiagram
 
 ---
 
-*Scope: the row and batch read paths. Flat and nested/repeated columns both go
-through the masked scan; the column-index page-skip mask is the flat-only part,
-and a read whose scan columns are not all flat simply runs the scan without one.
-Spatial (bbox) filtering is covered in [spatial-filtering.md](spatial-filtering.md),
-counting without materialization in [counting.md](counting.md). Writing, encryption,
-and the geometry materializer are documented separately.*
+*Scope: the row and batch read paths. Flat and nested or repeated columns both
+go through the masked scan. The column-index page-skip mask is the flat-only
+part, and a read with a nested scan column runs the scan without one. Spatial
+(bbox) filtering is covered in [Spatial filtering](spatial-filtering.md), and
+counting without materialization in [Counting](counting.md).*
