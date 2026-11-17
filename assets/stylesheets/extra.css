@@ -1,0 +1,116 @@
+/*
+ * Parquetry brand colors, on top of the Zensical theme.
+ *
+ * Contrast ratios of the pairs below (WCAG, 4.5 is the minimum for body text):
+ *   header text        #f7f4f4 on #613d29   8.7
+ *   light scheme link  #613d29 on #ffffff   9.5
+ *   light link hover   #8f4a1c on #ffffff   6.6
+ *   dark scheme text   #e6e3e3 on #162219  12.9
+ *   dark scheme link   #dbdb31 on #162219  11.1
+ *   dark link in code  #dbdb31 on #1f2e23   9.6
+ *   experimental badge #3b2418 on #dbdb31   9.8
+ *   stable badge       #ffffff on #2e6b3a   6.4
+ *
+ * The lime is never used as a text color on a light background: its ratio on white is 1.5.
+ */
+
+:root {
+  --pq-brown: #613d29;
+  --pq-brown-light: #7a5038;
+  --pq-brown-dark: #4a2e1f;
+  --pq-brown-hover: #8f4a1c;
+  --pq-green: #162219;
+  --pq-green-raised: #1f2e23;
+  --pq-lime: #dbdb31;
+  --pq-offwhite: #f7f4f4;
+}
+
+[data-md-color-primary="custom"] {
+  --md-primary-fg-color: var(--pq-brown);
+  --md-primary-fg-color--light: var(--pq-brown-light);
+  --md-primary-fg-color--dark: var(--pq-brown-dark);
+  --md-primary-bg-color: var(--pq-offwhite);
+  --md-primary-bg-color--light: rgba(247, 244, 244, 0.7);
+}
+
+[data-md-color-scheme="default"] {
+  --md-accent-fg-color: var(--pq-brown-hover);
+  --md-accent-fg-color--transparent: rgba(143, 74, 28, 0.1);
+  --md-typeset-a-color: var(--pq-brown);
+}
+
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: var(--pq-green);
+  --md-default-fg-color: #e6e3e3;
+  --md-code-bg-color: var(--pq-green-raised);
+  --md-code-fg-color: #d5d8d6;
+  --md-footer-bg-color: #0f1812;
+  --md-accent-fg-color: var(--pq-offwhite);
+  --md-accent-fg-color--transparent: rgba(219, 219, 49, 0.1);
+  --md-typeset-a-color: var(--pq-lime);
+}
+
+/*
+ * The theme colors the header like the page. The brand header is brown in both
+ * schemes: the off-white diamond mark needs a dark background behind it.
+ */
+.md-header,
+.md-tabs {
+  background-color: var(--pq-brown);
+  color: var(--pq-offwhite);
+}
+
+.md-header .md-search__button {
+  background-color: rgba(247, 244, 244, 0.14);
+  color: var(--pq-offwhite);
+}
+
+.md-header .md-search__button:hover {
+  background-color: rgba(247, 244, 244, 0.24);
+  color: var(--pq-offwhite);
+}
+
+/* The diamond mark has fine lines: show it larger than the default 1.2rem. */
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  height: 1.7rem;
+  width: 1.7rem;
+}
+
+/* The active tab gets the lime underline of the wordmark. */
+.md-tabs__item--active {
+  border-bottom: 0.1rem solid var(--pq-lime);
+}
+
+/* Home page banner */
+.md-typeset img.banner {
+  width: 100%;
+  border-radius: 0.4rem;
+}
+
+/* Stability labels, used on the home page and on the experimental pages */
+.status-badge {
+  display: inline-block;
+  padding: 0.05rem 0.5rem;
+  border-radius: 0.8rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-badge--stable {
+  background-color: #2e6b3a;
+  color: #ffffff;
+}
+
+.status-badge--experimental {
+  background-color: var(--pq-lime);
+  color: #3b2418;
+}
+
+/* Generated C4 diagrams have a white background: keep it in the dark scheme too. */
+.md-typeset img[src*="structurizr-"] {
+  background-color: #ffffff;
+  border-radius: 0.2rem;
+  padding: 0.5rem;
+}
