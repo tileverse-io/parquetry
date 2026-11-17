@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{#- Without a measurement ID, the theme would load the Google tag script with an empty ID. -#}
+{% block analytics %}
+  {% if config.extra.analytics and config.extra.analytics.property %}
+    {{ super() }}
+  {% endif %}
+{% endblock %}
+
+{% block extrahead %}
+  <link rel="icon" type="image/svg+xml" href="{{ 'assets/images/favicon.svg' | url }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ 'assets/images/apple-touch-icon.png' | url }}">
+{% endblock %}

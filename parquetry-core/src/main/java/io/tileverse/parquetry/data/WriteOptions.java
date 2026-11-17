@@ -266,8 +266,8 @@ public record WriteOptions(
 
     /**
      * The order of the min and max statistics of the FLOAT, DOUBLE and FLOAT16 columns, declared per column in the
-     * footer. Both orders record a NaN count. {@code docs/float-statistics.md} lists the readers tested against files
-     * written in each order.
+     * footer. Both orders record a NaN count. The <a href="https://parquetry.io/concepts/float-statistics/">float
+     * statistics</a> page lists the readers tested against files written in each order.
      *
      * <ul>
      *   <li>{@link #TYPE_DEFINED}, the default: the bounds cover the numbers of a chunk or page and leave its NaN cells

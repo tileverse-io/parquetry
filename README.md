@@ -1,187 +1,125 @@
-<img src="docs/parquetry_banner.svg" alt="Parquetry" width="100%">
+<img src="docs/src/assets/images/parquetry_banner.svg" alt="Parquetry" width="100%">
 
 # Parquetry
 
-A modern, streaming Apache Parquet and GeoParquet reader and writer for the JVM, built for bounded-memory cloud-native and containerized servers.
+Parquetry reads and writes Apache Parquet and GeoParquet files from Java. Give it a file and a filter, and it returns the matching rows. The file can sit on a local disk, an HTTP server, Amazon S3, Azure Blob Storage or Google Cloud Storage, and Parquetry fetches only the parts of it needed by the query. It runs inside long-lived servers with small container memory limits, such as GeoServer and GeoServer Cloud, and sizes its memory from that limit.
 
-Parquetry is a clean-room implementation of the Parquet format. It depends on neither Hadoop nor parquet-java, reads bytes through a pluggable range-reader (local files, HTTP, S3, Azure, GCS), and keeps only the active row group resident. Memory use stays within tight container budgets no matter how large the file.
+Parquetry is a clean-room implementation of the Parquet format in Java. It depends on neither Hadoop nor parquet-java, and it runs no native engine. It reads Parquet 1.x and 2.x files, and writes Parquet 2.0 files, or 1.1 on request, with flat and nested columns and GeoParquet metadata. GeoServer Cloud 3.1.0 and newer include Parquetry and enable it by default.
 
-## Why Parquetry
+The documentation is at [parquetry.io](https://parquetry.io/).
 
-- **Streaming and bounded-memory.** Resident bytes are capped at the active row group. Memory use does not grow with file size, which suits services like GeoServer running in pods with a gigabyte or two to spare.
-- **Cloud-native I/O.** One code path, built on tileverse-storage's `RangeReader` SPI, serves a local file, an HTTPS URL, or an object store equally.
-- **Geospatial-first.** Native GeoParquet 1.x and 2.0 support, including typed CRS and optional JTS geometry materialization.
-- **Lean dependencies.** No Hadoop and no parquet-java. The dependency tree stays focused instead of carrying their transitive weight into your server.
+## Add the dependency
 
-## Features
-
-- Reads Parquet 1.x and 2.x. Writes the Parquet 2.0 page format by default, or the 1.1 page format on request for legacy-reader round-tripping. Writing is limited to flat (non-nested) columns today.
-- Full Dremel record assembly on read: repeated columns, LIST, MAP, and nested structs.
-- All standard codecs: Snappy, Zstd, LZ4_RAW, GZip, Brotli.
-- Multi-tier filter pushdown with an explain plan: row-group statistics, dictionaries, column index, bloom filter, and record-level predicates.
-- Vectorized columnar batch API backed by off-heap `MemorySegment`.
-- Parallel multi-range fetch and parallel row-group decode within a fixed memory budget.
-- Native GeoParquet: Geometry and Geography logical types, typed PROJJSON and CRS models, and an optional JTS materializer.
-
-## Requirements
-
-- JDK 25. The library is compiled with preview features and must be built and run with `--enable-preview`.
-- Maven (a wrapper is included; use `./mvnw`).
-
-## Coordinates
-
-Published under the `io.tileverse.parquetry` group. Current version is `1.0-SNAPSHOT`.
+Parquetry requires Java 25. Import the BOM, then declare `parquetry-core`, which reads and writes single Parquet and GeoParquet files:
 
 ```xml
-<dependency>
-  <groupId>io.tileverse.parquetry</groupId>
-  <artifactId>parquetry-core</artifactId>
-  <version>1.0-SNAPSHOT</version>
-</dependency>
+<dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>io.tileverse.parquetry</groupId>
+      <artifactId>parquetry-bom</artifactId>
+      <version>1.0-RC6</version>
+      <type>pom</type>
+      <scope>import</scope>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+
+<dependencies>
+  <dependency>
+    <groupId>io.tileverse.parquetry</groupId>
+    <artifactId>parquetry-core</artifactId>
+  </dependency>
+</dependencies>
 ```
 
-Geometry decoding to JTS objects ships in `parquetry-core` (package `io.tileverse.parquetry.geo`). A `parquetry-bom` is provided to align module versions.
+Start the JVM with `--enable-preview --enable-native-access=ALL-UNNAMED`. [Getting started](https://parquetry.io/getting-started/) explains both flags, and [Modules](https://parquetry.io/reference/modules/) lists the other modules, such as multi-file datasets, the GeoTools data store and Arrow export.
 
-## Usage
+## Read a file
 
-### Reading with filter pushdown and projection
+The program reads the sample file of the GeoParquet specification, saved as `countries.parquet`, and prints the countries with at least 100 million inhabitants:
+
+```bash
+curl -L -o countries.parquet https://github.com/opengeospatial/geoparquet/raw/v2.0.0/examples/example.parquet
+```
 
 ```java
 import static io.tileverse.parquetry.filter.Pred.col;
 
-import io.tileverse.parquetry.dataset.ParquetSource;
+import io.tileverse.parquetry.data.ParquetFileReader;
 import io.tileverse.parquetry.data.ReadOptions;
+import io.tileverse.parquetry.filter.Predicate;
 import io.tileverse.parquetry.filter.Projection;
 import io.tileverse.parquetry.io.ByteRangeSource;
 import io.tileverse.parquetry.record.ParquetRecord;
 import io.tileverse.parquetry.schema.ColumnPath;
-import io.tileverse.storage.RangeReader;
-import io.tileverse.storage.Storage;
-import io.tileverse.storage.StorageFactory;
 import java.nio.file.Path;
-import java.util.Set;
+import java.util.List;
 import java.util.stream.Stream;
 
-Path file = Path.of("buildings.parquet");
-try (Storage storage = StorageFactory.open(file.getParent().toUri());
-        RangeReader reader = storage.openRangeReader(file.getFileName().toString())) {
+public class FirstRead {
 
-    ParquetSource dataset = ParquetSource.open(ByteRangeSource.of(reader));
-    try (Stream<ParquetRecord> records = dataset.read(
-            col("year").gtEq(2020).and(col("country").eq("AR")),
-            Projection.of(Set.of(ColumnPath.of("year"), ColumnPath.of("country"))),
-            ReadOptions.DEFAULTS)) {
-        records.forEach(System.out::println);
+    private static final ColumnPath NAME = ColumnPath.of("name");
+    private static final ColumnPath POPULATION = ColumnPath.of("pop_est");
+
+    public static void main(String[] args) {
+        Path path = Path.of("countries.parquet");
+        Predicate filter = col("pop_est").gtEq(100_000_000.0);
+        Projection columns = Projection.ofPhysical(List.of(NAME, POPULATION));
+
+        try (ByteRangeSource source = ByteRangeSource.ofFile(path)) {
+            ParquetFileReader reader = ParquetFileReader.open(source);
+            try (Stream<ParquetRecord> rows = reader.read(filter, columns, ReadOptions.DEFAULTS)) {
+                rows.forEach(FirstRead::printCountry);
+            }
+        }
+    }
+
+    private static void printCountry(ParquetRecord row) {
+        String name = row.getString(NAME);
+        double population = row.getDouble(POPULATION);
+        System.out.println(name + ": " + population);
     }
 }
 ```
 
-`StorageFactory.open(URI)` discovers the right `Storage` for `file://`, `s3://`, `https://`, `azure://`, and more through tileverse-storage's SPI. The reader is the caller's to close; the dataset does not own it.
-
-The S3, Azure and GCS backends are opt-in: add `io.tileverse.storage:tileverse-storage-all`, or a single provider module (`tileverse-storage-s3`, `-azure`, `-gcs`), next to parquetry. Local files and HTTP need nothing more.
-
-### Reading vectorized batches
-
-```java
-import io.tileverse.parquetry.columnar.ParquetRecordBatch;
-
-try (Stream<ParquetRecordBatch> batches = dataset.readBatches()) {
-    batches.forEach(batch -> {
-        try (batch) {
-            // columnar, off-heap access to one row group
-        }
-    });
-}
-```
-
-Each batch owns its own `Arena` and must be closed once consumed.
-
-### Writing
-
-```java
-import io.tileverse.parquetry.data.ParquetFileWriter;
-import io.tileverse.parquetry.io.ByteRangeSource;
-import io.tileverse.parquetry.data.WriteOptions;
-import java.io.OutputStream;
-import java.nio.file.Files;
-import java.util.Iterator;
-
-// Re-encode a file with the default profile (Parquet 2.0, ZSTD).
-try (ParquetSource source = ParquetSource.open(ByteRangeSource.of(reader));
-        OutputStream out = Files.newOutputStream(Path.of("copy.parquet"));
-        ParquetFileWriter writer = ParquetFileWriter.create(out, source.schema(), WriteOptions.defaults());
-        Stream<ParquetRecordBatch> batches = source.readBatches()) {
-
-    Iterator<ParquetRecordBatch> it = batches.iterator();
-    while (it.hasNext()) {
-        try (ParquetRecordBatch batch = it.next()) {
-            writer.writeBatch(batch);
-        }
-    }
-}
-```
-
-`WriteOptions.defaults()` emits the Parquet 2.0 page format. For older readers, build options with `parquetVersion(WriteOptions.ParquetVersion.V1_1)` to emit the 1.1 page format instead. The writer currently handles flat (non-nested) columns; nested and repeated-column writing is in progress.
-
-## Modules
-
-Modules are grouped by role. The foundation - the BOMs and the layered engine - sits flat at the root; three category directories absorb growth: ecosystem adapters, end-user applications, and modules the build needs but never publishes.
-
-```
-dependencies/, bom/                      # dependency and version management
-parquetry-format                         # the Parquet and Thrift wire model (read + write)
-parquetry-core                           # schema, codecs, reader/writer, filter pushdown, batch API, JTS geometry
-parquetry-encryption, parquetry-variant  # placeholders: modular encryption, the Variant logical type
-integrations/                            # adapters to other ecosystems
-  parquetry-geotools                     # a GeoTools DataStore reading GeoParquet
-apps/                                    # end-user applications (a CLI lands here), as they arrive
-internal/                                # not published; build and dev only
-  parquetry-coverage-report              # aggregated JaCoCo coverage (under the coverage profile)
-  parquetry-testkit                      # bundled test corpora + classpath extractor (git submodules)
-```
-
-Directories are for navigation; published artifact ids stay flat regardless (`io.tileverse.parquetry:parquetry-core`). Select a module by id with `-pl :parquetry-core`.
+It prints `United States of America: 3.28239523E8`. The read uses the filter to skip the parts of the file unable to match, and returns only the matching rows.
 
 ## Documentation
 
-- [Why pure-JVM GeoParquet access](docs/why-pure-jvm.md) - off-heap memory and why an embedded-native-engine reader (e.g. DuckDB) can OOM-kill a pod that a pure-JVM reader keeps within its limit.
-- [The read path](docs/read-path.md) - fetch and decode stages of a read.
-- [Memory and tuning](docs/memory-and-tuning.md) - the two budgets a read is bounded by and how to size them against a container limit.
-- [Native memory and spill](docs/native-memory-and-spill.md) - how parquetry bounds its off-heap fetch/decompression term, and the spill design.
-- [Spatial filtering](docs/spatial-filtering.md) - the bbox predicate family, covering-column and native-bounds pruning, and the exact gate.
-- [Counting](docs/counting.md) - count pushdown.
-- [Float statistics](docs/float-statistics.md) - NaN counts, signed zero bounds, the opt-in IEEE 754 total order and which readers support it.
+- [Why Parquetry?](https://parquetry.io/why/) explains the deployment targeted by Parquetry, and when another tool fits better.
+- [Getting started](https://parquetry.io/getting-started/) adds Parquetry to a project and walks through this read.
+- [Guides](https://parquetry.io/guides/read-records/) read, filter and write files, read from object storage, read many files as one dataset, and tune memory.
+- [GeoTools and GeoServer](https://parquetry.io/geoserver/) publishes GeoParquet files as layers in GeoServer and GeoServer Cloud.
+- [par CLI](https://parquetry.io/cli/), experimental, inspects, filters and copies files from the command line.
+- [Under the hood](https://parquetry.io/concepts/read-path/) explains the read path, memory budgets, spatial filtering and float statistics.
+- [Reference](https://parquetry.io/reference/modules/) lists the modules and the [Parquet and GeoParquet features supported](https://parquetry.io/reference/format-support/).
+- [Developer guide](https://parquetry.io/developer-guide/) covers the build, the architecture, the releases and the conventions of a contribution.
 
-## Building
+Parquetry has not reached 1.0. [Status](https://parquetry.io/#status) lists the stable and the experimental parts.
 
-The test corpora (`apache/parquet-testing` and `opengeospatial/geoparquet`) are git submodules under `parquetry-testkit`. Clone with them, or the conformance tests cannot run:
+## Build
+
+The tests read the `apache/parquet-testing` and GeoParquet test files, which are Git submodules. Clone with them:
 
 ```bash
-# Fresh clone, with submodules
-git clone --recurse-submodules <repo-url>
+git clone --recurse-submodules https://github.com/tileverse-io/parquetry.git
 
-# Already cloned without them
+# In a clone made without them
 git submodule update --init --recursive
 ```
 
+Build with the Maven wrapper and JDK 25:
+
 ```bash
-# Compile and run unit tests
+# Compile and run the unit tests
 ./mvnw test
 
-# Unit + integration tests (apache/parquet-testing corpus, LocalStack-backed S3 reader)
+# Unit and integration tests
 ./mvnw verify
-
-# Aggregated coverage at internal/parquetry-coverage-report/target/site/jacoco-aggregate/index.html
-./mvnw -Pcoverage clean verify
 ```
 
-## Releases
-
-Pushing a tag whose name starts with a digit (`1.0-M1`, `1.0.0`, `2.0-RC1`) builds, tests, and publishes that exact version to Maven Central, then creates the matching GitHub Release. Any other tag or arbitrary version is published by hand through the same release workflow's `workflow_dispatch` (select the ref, supply the version). SNAPSHOTs publish automatically from `main` once PR validation passes. See [.github/workflows](.github/workflows/README.md).
-
-## Status
-
-The read path is complete: Parquet 1.x and 2.x, full Dremel assembly, every standard codec, five-tier filter pushdown, GeoParquet 1.x and 2.0, the vectorized batch API, and parallel fetch and decode. The write path covers flat columns with statistics, indexes, and bloom filters; nested and repeated-column writing and parallel encoding are next. Modular encryption and the Variant logical type are reserved for future work.
+[Build from source](https://parquetry.io/developer-guide/build/) covers single modules, test coverage and the documentation site.
 
 ## License
 
