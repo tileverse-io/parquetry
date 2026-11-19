@@ -62,7 +62,7 @@ abstract class AbstractS3ProxyIcebergIT {
 
     @Container
     @SuppressWarnings("resource")
-    static GenericContainer<?> s3proxy = new GenericContainer<>(DockerImageName.parse("andrewgaul/s3proxy:2.6.0"))
+    static GenericContainer<?> s3proxy = new GenericContainer<>(DockerImageName.parse("andrewgaul/s3proxy:4.2.0"))
             .withExposedPorts(80)
             .withEnv("S3PROXY_AUTHORIZATION", "aws-v2-or-v4")
             .withEnv("S3PROXY_IDENTITY", IDENTITY)
